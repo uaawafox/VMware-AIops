@@ -1,3 +1,8 @@
+## v1.5.4 (2026-04-14)
+
+- Security: bump pytest 9.0.2→9.0.3 (CVE-2025-71176, insecure tmpdir handling)
+- Deps: update rich version constraint from <15.0 to <16.0 (rich 15.0 drops Python 3.8, project requires >=3.10)
+
 ## v1.5.0 (2026-04-12)
 
 ### Anthropic Best Practices Integration
