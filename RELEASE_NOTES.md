@@ -1,3 +1,8 @@
+## v1.5.6 (2026-04-15)
+
+- Fix: CRITICAL — `mcp_server` module missing from PyPI wheel due to missing hatch packages config. `vmware-aiops-mcp` failed with `ModuleNotFoundError: No module named 'mcp_server'`. Added `[tool.hatch.build.targets.wheel] packages = ["vmware_aiops", "mcp_server"]`
+- Align with VMware skill family v1.5.6
+
 ## v1.5.5 (2026-04-15)
 
 - Align with VMware skill family v1.5.5 (NSX critical `import re` hotfix)
