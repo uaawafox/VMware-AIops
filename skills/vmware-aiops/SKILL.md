@@ -15,6 +15,12 @@ allowed-tools:
 metadata: {"openclaw":{"requires":{"env":["VMWARE_AIOPS_CONFIG"],"bins":["vmware-aiops"],"config":["~/.vmware-aiops/config.yaml","~/.vmware-aiops/.env"]},"optional":{"env":["VMWARE_TARGET_PASSWORD","SLACK_WEBHOOK_URL","DISCORD_WEBHOOK_URL"],"bins":["vmware-policy"]},"primaryEnv":"VMWARE_AIOPS_CONFIG","homepage":"https://github.com/zw008/VMware-AIops","emoji":"🖥️","os":["macos","linux"]}}
 compatibility: >
   vmware-policy auto-installed as Python dependency (provides @vmware_tool decorator and audit logging). All write operations audited to ~/.vmware/audit.db.
+  Credentials: Each vCenter/ESXi target requires a per-target password env var in ~/.vmware-aiops/.env following the pattern VMWARE_<TARGET_NAME_UPPER>_PASSWORD. Passwords are never logged or echoed.
+  Destructive operations: All write tools require explicit parameters, pass through @vmware_tool decorator (pre-check + audit + sanitize), and CLI destructive commands require double confirmation + support --dry-run.
+  Guest operations: Require explicit vm_name, cmd (full path), args, user parameters — no implicit or background execution.
+  Webhooks: Disabled by default. When enabled, send only aggregated alert metadata (alarm counts, event types) to user-configured URLs. No credentials, IPs, or PII in payloads.
+  SSL bypass: disableSslCertValidation is off by default; exists only for self-signed certs in isolated lab environments.
+  Transitive dependencies: Only vmware-policy (audit/policy). No post-install scripts or background services.
 ---
 
 # VMware AIops
