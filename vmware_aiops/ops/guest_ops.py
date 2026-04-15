@@ -7,6 +7,7 @@ Uses the GuestOperationsManager API (VIX-like, over SOAP).
 from __future__ import annotations
 
 import logging
+import shlex
 import tempfile
 import time
 import uuid
@@ -192,15 +193,21 @@ def guest_exec_with_output(
     run_id = uuid.uuid4().hex[:8]
     if family == _FAMILY_WINDOWS:
         tmp_out = f"C:\\Windows\\Temp\\vmops_{run_id}.txt"
+        # Windows cmd.exe: redirect target doesn't need POSIX quoting.
+        # The entire /c argument is passed as a single double-quoted string.
         wrapped = f"{command} > {tmp_out} 2>&1"
+        shell_arg = f"{flag} \"{wrapped}\""
     else:
         tmp_out = f"/tmp/.vmops_{run_id}.txt"
-        wrapped = f"{command} > {tmp_out} 2>&1"
+        # POSIX: quote the redirect destination to guard against special chars,
+        # then quote the whole wrapped string as a single shell argument.
+        wrapped = f"{command} > {shlex.quote(tmp_out)} 2>&1"
+        shell_arg = f"{flag} {shlex.quote(wrapped)}"
 
     # Run command with output redirection
     result = guest_exec(
         si, vm_name, program, username, password,
-        arguments=f"{flag} \"{wrapped}\"",
+        arguments=shell_arg,
         timeout=timeout,
     )
     exit_code = result["exit_code"]
@@ -407,11 +414,12 @@ def guest_upload(
     )
 
     # Upload via HTTPS PUT
-    # The URL returned may use the vCenter/ESXi hostname; we need to handle
-    # self-signed certificates for lab environments
+    # The URL returned may use the vCenter/ESXi hostname; honour target SSL config.
+    verify_ssl = getattr(si, "_vmware_aiops_verify_ssl", True)
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE  # Lab/ESXi self-signed certs  # nosec B501
+    if not verify_ssl:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # nosec B501 — only when target.verify_ssl=false
 
     req = urllib.request.Request(transfer_url, data=file_data, method="PUT")
     req.add_header("Content-Type", "application/octet-stream")
@@ -460,9 +468,12 @@ def guest_download(
     transfer_info = fm.InitiateFileTransferFromGuest(vm, auth, guest_path)
 
     # Download via HTTPS GET
+    # Honour target SSL config carried on the ServiceInstance.
+    verify_ssl = getattr(si, "_vmware_aiops_verify_ssl", True)
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE  # Lab/ESXi self-signed certs  # nosec B501
+    if not verify_ssl:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # nosec B501 — only when target.verify_ssl=false
 
     resp = urllib.request.urlopen(transfer_info.url, context=ctx)  # nosec B310
     file_data = resp.read()

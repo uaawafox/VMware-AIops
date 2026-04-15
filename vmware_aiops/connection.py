@@ -91,6 +91,9 @@ class ConnectionManager:
             sslContext=context,
             disableSslCertValidation=not target.verify_ssl,
         )
+        # Tag the ServiceInstance so downstream guest-ops transport calls
+        # can honour the same SSL verification setting without re-reading config.
+        si._vmware_aiops_verify_ssl = target.verify_ssl
         atexit.register(Disconnect, si)
         return si
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import tarfile
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.request import Request, urlopen
 
@@ -44,10 +45,57 @@ _log = logging.getLogger("vmware-aiops.deploy")
 
 # ─── OVA Deploy ──────────────────────────────────────────────────────────────
 
+# Maximum uncompressed size per tar member (2 GiB) — prevents tar bombs
+# that claim a small compressed size but expand to huge files on extraction.
+_MAX_TAR_MEMBER_SIZE = 2 * 1024 * 1024 * 1024  # 2 GiB
 
-def _safe_tar_member(member: tarfile.TarInfo) -> bool:
-    """Reject tar members with path traversal attempts (CVE-2007-4559)."""
-    return not (member.name.startswith("/") or ".." in member.name)
+# Maximum aggregate uncompressed size across all members in one OVA (20 GiB).
+_MAX_TAR_TOTAL_SIZE = 20 * 1024 * 1024 * 1024  # 20 GiB
+
+
+def _safe_tar_member(member: tarfile.TarInfo, dest_dir: Path | None = None) -> bool:
+    """Check a tar member is safe to extract.
+
+    Rejects:
+    - Absolute paths or path traversal (CVE-2007-4559)
+    - Members exceeding the per-file size limit (tar bomb protection)
+    - Symlinks or hardlinks that point outside dest_dir
+    - Device files (block, character, FIFO)
+
+    Returns True if safe, False otherwise (caller should skip the member).
+    """
+    # Path traversal check
+    if member.name.startswith("/") or ".." in member.name:
+        return False
+
+    # Per-member size limit
+    if member.size > _MAX_TAR_MEMBER_SIZE:
+        _log.warning(
+            "Rejecting tar member %r: size %d bytes exceeds per-member limit %d",
+            member.name, member.size, _MAX_TAR_MEMBER_SIZE,
+        )
+        return False
+
+    # Symlink / hardlink pointing outside dest_dir
+    if dest_dir is not None and (member.issym() or member.islnk()):
+        try:
+            target = (dest_dir / member.linkname).resolve()
+            target.relative_to(dest_dir.resolve())
+        except ValueError:
+            _log.warning(
+                "Rejecting tar symlink/hardlink pointing outside dest: %r -> %r",
+                member.name, member.linkname,
+            )
+            return False
+
+    # Special device files (block, character, FIFO)
+    if member.isdev() or member.ischr() or member.isblk() or member.isfifo():
+        _log.warning(
+            "Rejecting tar special file: %r (type %r)", member.name, member.type
+        )
+        return False
+
+    return True
 
 
 def _read_ovf_from_ova(ova_path: str) -> tuple[str, dict[str, int]]:
@@ -63,7 +111,17 @@ def _read_ovf_from_ova(ova_path: str) -> tuple[str, dict[str, int]]:
     ovf_content = ""
 
     with tarfile.open(ova_path, "r") as tar:
-        for member in tar.getmembers():
+        members = tar.getmembers()
+
+        # Aggregate size check — guard against tar bombs before processing.
+        total_size = sum(m.size for m in members)
+        if total_size > _MAX_TAR_TOTAL_SIZE:
+            raise ValueError(
+                f"OVA total uncompressed size {total_size} bytes exceeds "
+                f"limit {_MAX_TAR_TOTAL_SIZE} bytes (20 GiB). Refusing to process."
+            )
+
+        for member in members:
             if not _safe_tar_member(member):
                 _log.warning("Skipping unsafe tar member: %s", member.name)
                 continue
@@ -92,6 +150,7 @@ def _upload_disk(
         member = tar.getmember(disk_name)
         if not _safe_tar_member(member):
             raise ValueError(f"Unsafe tar member path: {disk_name}")
+
         f = tar.extractfile(member)
         if f is None:
             raise ValueError(f"Cannot extract {disk_name} from OVA")

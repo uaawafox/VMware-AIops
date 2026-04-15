@@ -1,3 +1,11 @@
+## v1.5.8 (2026-04-15)
+
+- Fix: Security — `guest_ops.py` shell-wrapped commands for guest_exec_with_output did not quote the temp output path. Now uses `shlex.quote()` on both the temp path and the wrapped shell string to prevent command injection via special chars in either.
+- Fix: Security — OVA/tar extraction had no size limit (tar-bomb vulnerability). Added per-member cap of 2 GiB and aggregate cap of 20 GiB. Also rejects symlinks pointing outside the destination directory and rejects device/block/FIFO files.
+- Fix: Guest file upload/download SSL verification now honours `target.verify_ssl` config (previously hardcoded `CERT_NONE`). Connection manager tags `si._vmware_aiops_verify_ssl` at connect time for downstream use.
+- Refactor: monolithic `cli.py` (1726 lines, 47 commands) split into `cli/` package (12 focused modules: vm, deploy, cluster, scan, plan, alarm, hub, mcp_config, doctor + `_common`/`_root`/`__init__`). Entry point `vmware-aiops = "vmware_aiops.cli:app"` unchanged.
+- Align with VMware skill family v1.5.8
+
 ## v1.5.7 (2026-04-15)
 
 - Align with VMware skill family v1.5.7 (Pilot `__from_step_N__` fix + VKS SSL/timeout fix)
