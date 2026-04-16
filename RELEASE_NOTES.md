@@ -1,3 +1,8 @@
+## v1.5.10 (2026-04-16)
+
+- Security: bump python-multipart 0.0.22→0.0.26 (DoS via large multipart preamble/epilogue)
+- Align with VMware skill family v1.5.10
+
 ## v1.5.8 (2026-04-15)
 
 - Fix: Security — `guest_ops.py` shell-wrapped commands for guest_exec_with_output did not quote the temp output path. Now uses `shlex.quote()` on both the temp path and the wrapped shell string to prevent command injection via special chars in either.
