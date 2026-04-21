@@ -1,3 +1,11 @@
+## v1.5.13 (2026-04-21)
+
+**Bug fixes from code review 2026-04-20**
+
+- **fix(P0):** `vm_deploy.py` — SSL verification on OVA upload now correctly reads `_vmware_aiops_verify_ssl` from ServiceInstance instead of non-existent attribute on HttpNfcLease; self-signed cert environments no longer fail during VMDK upload
+- **fix(P0):** `vm_deploy.py` — disk upload loop no longer mutates dict during iteration; uses explicit list extraction instead
+- **fix:** `log_scanner.py` — `BrowseDiagnosticLog` now probes total line count first, then reads last N lines correctly (was passing line count as start offset)
+
 ## v1.5.12 (2026-04-17)
 
 **Bug fixes from code review by @yjs-2026**

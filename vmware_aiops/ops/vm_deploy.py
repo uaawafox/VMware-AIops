@@ -144,6 +144,7 @@ def _upload_disk(
     disk_name: str,
     upload_url: str,
     disk_size: int,
+    verify_ssl: bool = True,
 ) -> None:
     """Upload a VMDK from an OVA to the vSphere HTTP NFC lease URL."""
     with tarfile.open(ova_path, "r") as tar:
@@ -171,10 +172,9 @@ def _upload_disk(
         },
     )
 
-    # SSL context: respect verify_ssl from the lease's ServiceInstance.
+    # SSL context: respect verify_ssl passed from the ServiceInstance.
     # Only disable verification when the target uses self-signed certs.
     import ssl
-    verify_ssl = getattr(lease, "_vmware_verify_ssl", True)
     if verify_ssl:
         ctx = ssl.create_default_context()
     else:
@@ -283,6 +283,9 @@ def deploy_ova(
     if lease.state == vim.HttpNfcLease.State.error:
         return f"Import lease error: {lease.error.msg if lease.error else 'Unknown'}"
 
+    # Read SSL verify setting from the ServiceInstance (set by connection.py)
+    _ova_verify_ssl = getattr(si, "_vmware_aiops_verify_ssl", True)
+
     # Upload disks
     try:
         device_urls = lease.info.deviceUrl
@@ -290,12 +293,14 @@ def deploy_ova(
             target_url = device_url.url
 
             # Find the corresponding disk in OVA by order
-            for disk_name, disk_size in disks.items():
+            disk_items = list(disks.items())
+            if disk_items:
+                disk_name, disk_size = disk_items.pop(0)
                 _log.info("Uploading %s (%d MB)...", disk_name,
                           disk_size // (1024 * 1024))
-                _upload_disk(lease, ova_path, disk_name, target_url, disk_size)
-                disks.pop(disk_name)
-                break
+                _upload_disk(lease, ova_path, disk_name, target_url, disk_size,
+                             verify_ssl=_ova_verify_ssl)
+                del disks[disk_name]
 
         lease.Complete()
     except Exception as e:
