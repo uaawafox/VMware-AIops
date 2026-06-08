@@ -1,3 +1,29 @@
+## v1.5.32 (2026-06-08) — Invented pyVmomi methods fixed + alarm/sensor/migrate corrections
+
+A pyVmomi introspection audit found two invented SDK methods (passed import,
+lint, and --help; crashed at runtime) and two silent-logic bugs.
+
+### Fixed
+- `cluster remove-host`: `Folder.MoveIntoFolder_Task([host])` — the previously
+  called `Folder.MoveInto_Task` does not exist in pyVmomi (AttributeError on
+  every invocation).
+- `alarm reset`: rewritten on `AlarmManager.ClearTriggeredAlarms` with an
+  AlarmFilterSpec (`SetAlarmStatus` never existed in pyVmomi). Note the real
+  semantics: clears ALL triggered alarms matching the named alarm's entity
+  type and status — documented, and the CLI now requires double confirmation.
+- VM migrate: shared-datastore access check compares `HostMount.key`
+  (a HostSystem was compared against HostMount objects, so shared-storage
+  vMotion was always refused).
+- Hardware sensors: health from `healthState.key` (green/yellow/red); the
+  previous code reported the sensor *category* as its status, so degraded
+  sensors could never be detected. Sensor type kept as a separate column.
+- Event severity sets: `DVPortgroupReconfiguredEvent` casing (never matched).
+
+### Defense
+- New vim-attribute conformance regression: 121 property chains + ~50 method
+  names validated against pyVmomi metadata, plus a source scan that fails the
+  build if the invented names reappear.
+
 ## v1.5.30 (2026-06-07) — Tool description quality (Glama TDQS)
 
 ### Improved
