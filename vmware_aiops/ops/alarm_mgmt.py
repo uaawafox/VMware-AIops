@@ -1,7 +1,9 @@
 """vCenter alarm management: list, acknowledge, reset.
 
 Acknowledge marks an alarm as seen without clearing it.
-Reset sets alarm status back to gray (cleared).
+Reset clears triggered alarms back to normal via
+AlarmManager.ClearTriggeredAlarms (the vSphere API has no per-alarm
+status setter).
 Both write operations are audit-logged.
 """
 
@@ -150,10 +152,14 @@ def reset_alarm(
     audit_logger: AuditLogger | None = None,
     target_name: str = "default",
 ) -> dict:
-    """Reset a triggered vCenter alarm to green/gray (cleared).
+    """Clear triggered vCenter alarms back to normal state.
 
-    Sets the alarm status to 'gray' via AlarmManager.SetAlarmStatus,
-    which clears the alarm from the triggered list.
+    Uses AlarmManager.ClearTriggeredAlarms with a vim.alarm.AlarmFilterSpec.
+    The vSphere API has no per-alarm clear: the filter can only scope by
+    entity type (host/VM/all) and alarm status, so this clears ALL triggered
+    alarms matching the named alarm's entity type and current status —
+    including the one requested. The named alarm is looked up first, so a
+    typo'd entity/alarm name fails fast instead of clearing anything.
 
     Args:
         si: pyVmomi ServiceInstance.
@@ -163,21 +169,35 @@ def reset_alarm(
         target_name: Target name for audit log.
 
     Returns:
-        Dict with entity_name, alarm_name, action, status.
+        Dict with entity_name, alarm_name, action, status, scope.
     """
     entity, alarm_state = _find_triggered_alarm(si, entity_name, alarm_name)
     content = si.RetrieveContent()
-    content.alarmManager.SetAlarmStatus(
-        alarm=alarm_state.alarm,
-        entity=entity,
-        status="gray",
+
+    entity_types = vim.alarm.AlarmFilterSpec.AlarmTypeByEntity
+    if isinstance(entity, vim.HostSystem):
+        type_entity = entity_types.entityTypeHost
+    elif isinstance(entity, vim.VirtualMachine):
+        type_entity = entity_types.entityTypeVm
+    else:
+        type_entity = entity_types.entityTypeAll
+
+    filter_spec = vim.alarm.AlarmFilterSpec(
+        status=[alarm_state.overallStatus],
+        typeEntity=type_entity,
+        typeTrigger=vim.alarm.AlarmFilterSpec.AlarmTypeByTrigger.triggerTypeAll,
     )
+    content.alarmManager.ClearTriggeredAlarms(filter=filter_spec)
 
     result = {
         "entity_name": sanitize(entity_name),
         "alarm_name": sanitize(alarm_name),
         "action": "reset",
-        "status": "gray",
+        "status": "cleared",
+        "scope": (
+            f"all triggered alarms with status={alarm_state.overallStatus} "
+            f"on {type_entity} entities (vSphere has no per-alarm clear)"
+        ),
     }
 
     if audit_logger:

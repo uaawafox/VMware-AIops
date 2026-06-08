@@ -78,7 +78,7 @@ vmware-aiops is the entry point. Add modules for additional capabilities:
 - Create/configure clusters (HA/DRS)
 - Browse datastores for deployable images
 - Plan and execute multi-step operations with rollback
-- List, acknowledge, and reset vCenter triggered alarms
+- List, acknowledge, and clear vCenter triggered alarms (clear matches by entity type + status — see MCP Tools section)
 
 **Use companion skills for**:
 - Inventory, health, alarms, VM info → `vmware-monitor`
@@ -176,7 +176,9 @@ vmware-aiops is the entry point. Add modules for additional capabilities:
 | Alarm Management (3) | `list_vcenter_alarms` | Read |
 | | `acknowledge_vcenter_alarm`, `reset_vcenter_alarm` | Write |
 
-**Read/write split**: 8 tools are read-only (per `[READ]` docstring marker), 33 modify state. All write tools require explicit parameters and are audit-logged. Destructive operations (`vm_delete`, `vm_revert_snapshot`, `vm_delete_snapshot`, force power-off, cluster delete/remove-host) require double confirmation at the CLI layer.
+**Read/write split**: 8 tools are read-only (per `[READ]` docstring marker), 33 modify state. All write tools require explicit parameters and are audit-logged. Destructive operations (`vm_delete`, `vm_revert_snapshot`, `vm_delete_snapshot`, force power-off, cluster delete/remove-host, alarm reset) require double confirmation at the CLI layer.
+
+**Alarm reset blast radius**: vSphere has no per-alarm clear API. `reset_vcenter_alarm` uses `AlarmManager.ClearTriggeredAlarms`, which clears **all** triggered alarms matching the named alarm's entity type (host/VM/all) and current status (red/yellow) — not just the one named. The response's `scope` field states exactly what was cleared. The named alarm is looked up first, so a typo fails fast without clearing anything.
 
 ## CLI Quick Reference
 
@@ -211,7 +213,7 @@ vmware-aiops datastore browse <ds> --pattern "*.ova"
 # Alarm management
 vmware-aiops alarm list [--target <t>]
 vmware-aiops alarm acknowledge <entity_name> <alarm_name> [--target <t>]
-vmware-aiops alarm reset <entity_name> <alarm_name> [--target <t>]
+vmware-aiops alarm reset <entity_name> <alarm_name> [--target <t>]   # double confirm; clears ALL alarms matching entity type + status
 
 # Family
 vmware-aiops hub status        # show installed family members + install commands

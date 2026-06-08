@@ -155,7 +155,7 @@ def cluster_remove_host_cmd(
     if dry_run:
         _dry_run_print(
             target=_resolve_target(target), vm_name=name, operation="cluster_remove_host",
-            api_call="datacenter.hostFolder.MoveInto_Task()",
+            api_call="datacenter.hostFolder.MoveIntoFolder_Task(list=[host])",
             parameters={"host": host},
             resource_label="Cluster",
         )

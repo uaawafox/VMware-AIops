@@ -212,8 +212,10 @@ def remove_host_from_cluster(
         raise ClusterError(f"Cannot determine datacenter for cluster '{cluster_name}'")
     dc = parent
 
-    # Move host to datacenter's host folder as standalone
-    task = dc.hostFolder.MoveInto_Task(host=[host])
+    # Move host to datacenter's host folder as standalone.
+    # vim.Folder's method is MoveIntoFolder_Task (single 'list' param);
+    # MoveInto_Task only exists on ClusterComputeResource.
+    task = dc.hostFolder.MoveIntoFolder_Task([host])
     _wait_for_task(task, timeout=300)
     return f"Host '{host_name}' removed from cluster '{cluster_name}'."
 

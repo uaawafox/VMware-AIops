@@ -530,7 +530,8 @@ def migrate_vm(
                 f"Target datastore '{target_datastore}' not found. "
                 f"List: vmware-aiops datastore list"
             )
-    elif src_ds is not None and target_host not in src_ds.host:
+    # Datastore.host is HostMount[] — the HostSystem is in each mount's .key
+    elif src_ds is not None and target_host not in [m.key for m in src_ds.host]:
         return (
             f"Target host '{target_host_name}' has no access to source datastore "
             f"'{src_ds.name}'. Cross-host vMotion requires shared storage OR "

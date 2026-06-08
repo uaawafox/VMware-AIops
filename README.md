@@ -217,6 +217,18 @@ Plans stored in `~/.vmware-aiops/plans/`, auto-deleted on success, auto-cleaned 
 | Remove Host | `cluster remove-host <cluster> --host <host>` | Double | ✅ | ❌ |
 | Configure HA/DRS | `cluster configure <name> [--ha/--no-ha] [--drs/--no-drs]` | Double | ✅ | ❌ |
 
+> `remove-host` requires the host to be in **maintenance mode** first; the host is moved out of the cluster into the datacenter's host folder as a standalone host.
+
+## Alarm Management
+
+| Operation | Command | Confirmation | vCenter | ESXi |
+|-----------|---------|:------------:|:-------:|:----:|
+| List Triggered Alarms | `alarm list [--target <t>]` | — | ✅ | ❌ |
+| Acknowledge Alarm | `alarm acknowledge <entity> <alarm>` | — | ✅ | ❌ |
+| Clear (Reset) Alarms | `alarm reset <entity> <alarm>` | Double | ✅ | ❌ |
+
+> **Blast radius**: vSphere has no per-alarm clear API. `alarm reset` uses `AlarmManager.ClearTriggeredAlarms`, which clears **all** triggered alarms matching the named alarm's entity type (host/VM/all) and current status (red/yellow) — not just the named one. The named alarm is looked up first (typos fail fast), and the output's `scope` field reports exactly what was cleared. Cleared alarms re-trigger automatically if their underlying condition persists.
+
 ## Datastore Browser
 
 | Feature | vCenter | ESXi | Details |
@@ -864,6 +876,11 @@ vmware-aiops cluster delete my-cluster                                 # Delete 
 vmware-aiops cluster add-host my-cluster --host esxi-03                # Add host to cluster (2x confirm)
 vmware-aiops cluster remove-host my-cluster --host esxi-03             # Remove host (2x confirm)
 vmware-aiops cluster configure my-cluster --ha --drs                   # Configure HA/DRS (2x confirm)
+
+# Alarm management
+vmware-aiops alarm list                                                # List triggered alarms
+vmware-aiops alarm acknowledge esxi-01 "Host memory usage"             # Acknowledge alarm
+vmware-aiops alarm reset esxi-01 "Host memory usage"                   # Clear alarms (2x confirm; clears ALL matching entity type + status)
 
 # Datastore (browse and scan only — iSCSI/vSAN moved to vmware-storage)
 vmware-aiops datastore browse datastore1 --path "iso/"                 # Browse datastore

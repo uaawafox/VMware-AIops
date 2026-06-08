@@ -1274,11 +1274,15 @@ def reset_vcenter_alarm(
     alarm_name: str,
     target: Optional[str] = None,
 ) -> dict:
-    """[WRITE] Reset a triggered vCenter alarm to cleared state (gray).
+    """[WRITE] Clear triggered vCenter alarms back to normal state.
 
-    Clears the alarm completely — it will no longer appear in the active alarm list.
-    Use this after resolving the underlying issue. Use list_vcenter_alarms to find
-    entity_name and alarm_name values.
+    Uses AlarmManager.ClearTriggeredAlarms. The named alarm no longer appears in
+    the active alarm list. Use this after resolving the underlying issue. Use
+    list_vcenter_alarms to find entity_name and alarm_name values.
+
+    Gotcha: vSphere has no per-alarm clear — this clears ALL triggered alarms
+    matching the named alarm's entity type (host/VM/all) and current status
+    (red/yellow). The response's 'scope' field states exactly what was cleared.
 
     Args:
         entity_name: Name of the entity with the alarm (VM name, host name, or cluster name).

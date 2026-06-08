@@ -12,6 +12,7 @@ from vmware_aiops.cli._common import (
     DryRunOption,
     TargetOption,
     _audit,
+    _double_confirm,
     _dry_run_print,
     _get_connection,
     _resolve_target,
@@ -96,7 +97,11 @@ def alarm_reset(
     config: ConfigOption = None,
     dry_run: DryRunOption = False,
 ) -> None:
-    """Reset a triggered alarm to cleared state (gray). Removes it from active list."""
+    """Clear triggered alarms back to normal state (removes from active list).
+
+    Note: vSphere has no per-alarm clear — this clears all triggered alarms
+    matching the named alarm's entity type and current status.
+    """
     from vmware_aiops.ops.alarm_mgmt import reset_alarm
 
     if dry_run:
@@ -104,14 +109,19 @@ def alarm_reset(
             target=_resolve_target(target),
             vm_name=entity_name,
             operation="reset_alarm",
-            api_call="alarmManager.SetAlarmStatus(alarm, entity, status='gray')",
+            api_call="alarmManager.ClearTriggeredAlarms(filter=AlarmFilterSpec(status, typeEntity))",
             parameters={"alarm_name": alarm_name},
             resource_label="Entity",
         )
         return
+    # Clearing affects ALL triggered alarms matching entity type + status —
+    # broader blast radius than a single alarm, so require double confirm.
+    _double_confirm("清除告警", f"{entity_name}/{alarm_name}", _resolve_target(target), resource_type="Alarm")
     si, _ = _get_connection(target, config)
     result = reset_alarm(si, entity_name, alarm_name, _audit, _resolve_target(target))
-    console.print(f"[green]✓ Reset alarm '{alarm_name}' on '{entity_name}' → cleared[/]")
+    console.print(f"[green]✓ Cleared triggered alarm '{alarm_name}' on '{entity_name}'[/]")
+    if result.get("scope"):
+        console.print(f"[dim]Scope: {result['scope']}[/]")
     _audit.log(
         target=_resolve_target(target),
         operation="reset_alarm",
