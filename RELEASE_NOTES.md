@@ -1,3 +1,13 @@
+## v1.5.38 (2026-06-12) — backlog finish: MCP create/reconfigure, server split
+
+### Added
+- `vm_create` and `vm_reconfigure` MCP tools (CLI had them, MCP didn't). Tool count 41 → 43. (#23)
+
+### Changed
+- Refactored the oversized MCP server and OVA deploy module under the 800-line cap (split into
+  `mcp_server/tools/*` + `ops/ova_deploy.py`); collapsed ~41 duplicated tool error-handlers into one
+  decorator. Behavior-preserving — the 41 prior tools are byte-for-byte identical. (#22)
+
 ## v1.5.37 (2026-06-12) — backlog: OVA deploy robustness, multi-DC, snapshot/TTL safety
 
 ### Fixed

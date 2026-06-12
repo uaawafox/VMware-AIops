@@ -17,7 +17,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -63,32 +63,51 @@ def test_safe_error_still_masks_unknown_exceptions() -> None:
     assert "operation failed" in out
 
 
-# ── R2: _safe_error call sites pass the actual tool name ──
+# ── R2: error handling labels errors with the enclosing tool name ──
 
 
-def test_safe_error_call_sites_use_enclosing_tool_name() -> None:
-    src = (_REPO / "mcp_server" / "server.py").read_text()
-    tree = ast.parse(src)
-    checked = 0
-    for func in tree.body:
-        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if func.name == "_safe_error":
-            continue
-        for node in ast.walk(func):
+def test_tool_errors_decorator_labels_with_function_name() -> None:
+    """The repeated try/except → _safe_error blocks are collapsed into the
+    @tool_errors decorator, which derives the label from func.__name__ — so the
+    R2 invariant (label == tool name) now holds by construction, for every shape.
+    """
+    from mcp_server._shared import tool_errors
+
+    captured = {}
+
+    def _probe_safe_error(exc, tool):
+        captured["tool"] = tool
+        return "boom"
+
+    with patch("mcp_server._shared._safe_error", side_effect=_probe_safe_error):
+        @tool_errors("str")
+        def vm_power_on(vm_name: str):  # name must reach _safe_error verbatim
+            raise RuntimeError("x")
+
+        out = vm_power_on("v")
+
+    assert captured["tool"] == "vm_power_on"
+    assert out == "Error: boom Run 'vmware-aiops doctor' to verify connectivity and credentials."
+
+
+def test_no_tool_module_passes_a_hardcoded_safe_error_label() -> None:
+    """Defence in depth: tool modules must rely on @tool_errors (no inline
+    _safe_error(e, '...') call sites that could drift from the tool name)."""
+    tools_dir = _REPO / "mcp_server" / "tools"
+    offenders = []
+    for path in sorted(tools_dir.glob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
                 and node.func.id == "_safe_error"
             ):
-                label = node.args[1]
-                assert isinstance(label, ast.Constant), f"{func.name}: non-constant label"
-                assert label.value == func.name, (
-                    f"{func.name}: _safe_error label is {label.value!r}, "
-                    f"expected the tool name {func.name!r}"
-                )
-                checked += 1
-    assert checked > 30, f"expected to verify many call sites, found {checked}"
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, (
+        "tool modules must use @tool_errors, not inline _safe_error(): "
+        + ", ".join(offenders)
+    )
 
 
 # ── R3: TTL entry survives a transient deletion failure ──
@@ -272,7 +291,7 @@ def test_find_triggered_alarm_destroys_container_exactly_once() -> None:
     "rel_path",
     [
         "vmware_aiops/ops/guest_ops.py",
-        "vmware_aiops/ops/vm_deploy.py",
+        "vmware_aiops/ops/ova_deploy.py",
     ],
 )
 def test_urlopen_calls_have_timeout(rel_path: str) -> None:

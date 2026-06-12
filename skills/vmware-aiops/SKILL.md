@@ -27,7 +27,7 @@ compatibility: >
 
 > **Disclaimer**: This is a community-maintained open-source project and is **not affiliated with, endorsed by, or sponsored by VMware, Inc. or Broadcom Inc.** "VMware" and "vSphere" are trademarks of Broadcom. Source code is publicly auditable at [github.com/zw008/VMware-AIops](https://github.com/zw008/VMware-AIops) under the MIT license.
 
-VMware family entry point — AI-powered VM lifecycle, deployment, and alarm management — 41 MCP tools.
+VMware family entry point — AI-powered VM lifecycle, deployment, and alarm management — 43 MCP tools.
 
 > **Start here**: install vmware-aiops first, then add modules as needed.
 > Run `vmware-aiops hub status` to see which family members are installed.
@@ -38,7 +38,7 @@ VMware family entry point — AI-powered VM lifecycle, deployment, and alarm man
 
 | Category | Tools | Count |
 |----------|-------|:-----:|
-| **VM Lifecycle** | power on/off, clone, migrate, delete, snapshot CRUD, TTL auto-delete, clean slate | 13 |
+| **VM Lifecycle** | power on/off, create, reconfigure, clone, migrate, delete, snapshot CRUD, TTL auto-delete, clean slate | 15 |
 | **Deployment** | OVA, template, linked clone, batch clone/deploy | 8 |
 | **Guest Ops** | exec commands, upload/download files, provision | 5 |
 | **Plan/Apply** | multi-step planning with rollback | 4 |
@@ -159,12 +159,12 @@ vmware-aiops is the entry point. Add modules for additional capabilities:
 | Cloud models (Claude, GPT-4o) | Either | MCP gives structured JSON I/O |
 | Automated pipelines | **MCP** | Type-safe parameters, structured output |
 
-## MCP Tools (41 — 8 read, 33 write)
+## MCP Tools (43 — 8 read, 35 write)
 
 | Category | Tools | R/W |
 |----------|-------|:---:|
-| VM Lifecycle (13) | `vm_list_ttl`, `vm_list_snapshots` | Read |
-| | `vm_power_on`, `vm_power_off`, `vm_clone`, `vm_migrate`, `vm_delete`, `vm_create_snapshot`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl`, `vm_cancel_ttl`, `vm_clean_slate` | Write |
+| VM Lifecycle (15) | `vm_list_ttl`, `vm_list_snapshots` | Read |
+| | `vm_power_on`, `vm_power_off`, `vm_create`, `vm_reconfigure`, `vm_clone`, `vm_migrate`, `vm_delete`, `vm_create_snapshot`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl`, `vm_cancel_ttl`, `vm_clean_slate` | Write |
 | Deployment (8) | `deploy_vm_from_ova`, `deploy_vm_from_template`, `deploy_linked_clone`, `attach_iso_to_vm`, `convert_vm_to_template`, `batch_clone_vms`, `batch_linked_clone_vms`, `batch_deploy_from_spec` | Write |
 | Guest Ops (5) | `vm_guest_download` | Read |
 | | `vm_guest_exec`, `vm_guest_exec_output`, `vm_guest_upload`, `vm_guest_provision` | Write |
@@ -176,7 +176,7 @@ vmware-aiops is the entry point. Add modules for additional capabilities:
 | Alarm Management (3) | `list_vcenter_alarms` | Read |
 | | `acknowledge_vcenter_alarm`, `reset_vcenter_alarm` | Write |
 
-**Read/write split**: 8 tools are read-only (per `[READ]` docstring marker), 33 modify state. All write tools require explicit parameters and are audit-logged. Destructive operations (`vm_delete`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl` (schedules an unattended auto-delete), force power-off, cluster delete/remove-host, alarm reset) require double confirmation at the CLI layer and support `--dry-run`.
+**Read/write split**: 8 tools are read-only (per `[READ]` docstring marker), 35 modify state. All write tools require explicit parameters and are audit-logged. Destructive operations (`vm_delete`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl` (schedules an unattended auto-delete), force power-off, cluster delete/remove-host, alarm reset) require double confirmation at the CLI layer and support `--dry-run`.
 
 **Alarm reset blast radius**: vSphere has no per-alarm clear API. `reset_vcenter_alarm` uses `AlarmManager.ClearTriggeredAlarms`, which clears **all** triggered alarms matching the named alarm's entity type (host/VM/all) and current status (red/yellow) — not just the one named. The response's `scope` field states exactly what was cleared. The named alarm is looked up first, so a typo fails fast without clearing anything.
 

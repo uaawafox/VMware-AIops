@@ -179,17 +179,28 @@ def test_mcp_cmd_guards_python_version() -> None:
 
 
 def test_mcp_server_uses_optional_not_pep604() -> None:
-    """Suspenders: server.py tool signatures should use Optional[X], not X | None,
-    so install on Python 3.10 doesn't crash at decorator time."""
+    """Suspenders: FastMCP-reflected tool signatures should use Optional[X], not
+    X | None, so install on Python 3.10 doesn't crash at decorator time.
+
+    Tool signatures now live in mcp_server/tools/*.py plus the shared helpers in
+    _shared.py; scan all of them, not just the (now thin) server.py entrypoint.
+    """
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parents[3] / "mcp_server" / "server.py").read_text()
-    # exclude comments / docstrings — look only at type annotations
+    mcp_dir = Path(__file__).resolve().parents[3] / "mcp_server"
+    files = [mcp_dir / "server.py", mcp_dir / "_shared.py"]
+    files += sorted((mcp_dir / "tools").glob("*.py"))
+
     bad = []
-    for i, line in enumerate(src.splitlines(), 1):
-        stripped = line.strip()
-        if stripped.startswith("#") or stripped.startswith('"'):
-            continue
-        if " | None" in line and ":" in line and ("def " in line or stripped.endswith(",")):
-            bad.append(f"line {i}: {line.strip()}")
-    assert not bad, "mcp_server/server.py must not use PEP 604 `X | None` in tool signatures:\n" + "\n".join(bad)
+    for path in files:
+        src = path.read_text()
+        # exclude comments / docstrings — look only at type annotations
+        for i, line in enumerate(src.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"'):
+                continue
+            if " | None" in line and ":" in line and ("def " in line or stripped.endswith(",")):
+                bad.append(f"{path.name}:{i}: {line.strip()}")
+    assert not bad, (
+        "mcp_server tool signatures must not use PEP 604 `X | None`:\n" + "\n".join(bad)
+    )

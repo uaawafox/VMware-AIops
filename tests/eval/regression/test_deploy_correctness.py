@@ -155,7 +155,7 @@ def test_create_vm_uses_resolve_datacenter_helper() -> None:
 def test_upload_disk_streams_in_chunks_and_reports_progress() -> None:
     """_upload_disk must read the tar member in chunks (size arg, multiple
     reads) and call HttpNfcLeaseProgress at least once."""
-    from vmware_aiops.ops import vm_deploy
+    from vmware_aiops.ops import ova_deploy
 
     # Fake extracted file: 3 chunk reads then EOF.
     extracted = MagicMock()
@@ -180,10 +180,10 @@ def test_upload_disk_streams_in_chunks_and_reports_progress() -> None:
         cm.__enter__.return_value = MagicMock()
         return cm
 
-    with patch.object(vm_deploy.tarfile, "open", return_value=tar_cm), \
-         patch.object(vm_deploy, "_safe_tar_member", return_value=True), \
-         patch.object(vm_deploy, "urlopen", side_effect=_fake_urlopen):
-        vm_deploy._upload_disk(
+    with patch.object(ova_deploy.tarfile, "open", return_value=tar_cm), \
+         patch.object(ova_deploy, "_safe_tar_member", return_value=True), \
+         patch.object(ova_deploy, "urlopen", side_effect=_fake_urlopen):
+        ova_deploy._upload_disk(
             lease, "/tmp/x.ova", "disk1.vmdk",
             "https://esxi/nfc/disk1.vmdk", 20, verify_ssl=False,
         )
@@ -205,7 +205,7 @@ def test_upload_disk_streams_in_chunks_and_reports_progress() -> None:
 def test_deploy_ova_maps_device_urls_by_importkey_out_of_order() -> None:
     """A 2-disk OVA whose device URLs arrive out of order must map each disk to
     the correct device via importKey, not the next remaining disk."""
-    from vmware_aiops.ops import vm_deploy
+    from vmware_aiops.ops import ova_deploy
 
     # OVA disks: keyed by file path inside the archive.
     disks = {"disk-A.vmdk": 100, "disk-B.vmdk": 200}
@@ -247,13 +247,13 @@ def test_deploy_ova_maps_device_urls_by_importkey_out_of_order() -> None:
     def _record_upload(lease_, ova_path, disk_name, target_url, disk_size, **kw):
         uploads.append((disk_name, target_url))
 
-    with patch.object(vm_deploy, "find_datastore_by_name", return_value=MagicMock()), \
-         patch.object(vm_deploy, "resolve_datacenter", return_value=dc), \
-         patch.object(vm_deploy, "find_compute_resource", return_value=cr), \
-         patch.object(vm_deploy, "_read_ovf_from_ova", return_value=("<ovf/>", disks)), \
-         patch.object(vm_deploy, "get_verify_ssl", return_value=False), \
-         patch.object(vm_deploy, "_upload_disk", side_effect=_record_upload):
-        vm_deploy.deploy_ova(si, "/tmp/x.ova", "vm1", "ds1")
+    with patch.object(ova_deploy, "find_datastore_by_name", return_value=MagicMock()), \
+         patch.object(ova_deploy, "resolve_datacenter", return_value=dc), \
+         patch.object(ova_deploy, "find_compute_resource", return_value=cr), \
+         patch.object(ova_deploy, "_read_ovf_from_ova", return_value=("<ovf/>", disks)), \
+         patch.object(ova_deploy, "get_verify_ssl", return_value=False), \
+         patch.object(ova_deploy, "_upload_disk", side_effect=_record_upload):
+        ova_deploy.deploy_ova(si, "/tmp/x.ova", "vm1", "ds1")
 
     by_url = dict((u, d) for d, u in uploads)
     assert by_url["https://esxi/nfc/A"] == "disk-A.vmdk", (
