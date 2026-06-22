@@ -42,12 +42,17 @@ def _cli_error_types() -> tuple[type[BaseException], ...]:
 
     from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
     from vmware_aiops.ops.guest_ops import GuestOpsError
-    from vmware_aiops.ops.vm_lifecycle import TaskFailedError, VMNotFoundError
+    from vmware_aiops.ops.vm_lifecycle import (
+        TaskFailedError,
+        TaskStillRunning,
+        VMNotFoundError,
+    )
 
     return (
         VMNotFoundError,
         GuestOpsError,
         TaskFailedError,
+        TaskStillRunning,
         ClusterNotFoundError,
         ClusterError,
         KeyError,

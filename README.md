@@ -167,7 +167,8 @@ ESXi Standalone Host ──→ VM
 | Create Snapshot | `vm snapshot-create <name> --name <snap>` | — | ✅ | ✅ |
 | List Snapshots | `vm snapshot-list <name>` | — | ✅ | ✅ |
 | Revert Snapshot | `vm snapshot-revert <name> --name <snap>` | — | ✅ | ✅ |
-| Delete Snapshot | `vm snapshot-delete <name> --name <snap>` | — | ✅ | ✅ |
+| Delete Snapshot | `vm snapshot-delete <name> --name <snap> [--no-wait]` | — | ✅ | ✅ |
+| Task Status | `vm task-status <task-id>` | — | ✅ | ✅ |
 | Clone VM | `vm clone <name> --new-name <new>` | — | ✅ | ✅ |
 | vMotion | `vm migrate <name> --to-host <host>` | — | ✅ | ❌ |
 | **Set TTL** | `vm set-ttl <name> --minutes <n>` | — | ✅ | ✅ |
@@ -844,7 +845,9 @@ vmware-aiops vm reconfigure my-vm --cpu 4 --memory 8192        # Reconfigure (2x
 vmware-aiops vm snapshot-create my-vm --name "before-upgrade"  # Create snapshot
 vmware-aiops vm snapshot-list my-vm                            # List snapshots
 vmware-aiops vm snapshot-revert my-vm --name "before-upgrade"  # Revert snapshot
-vmware-aiops vm snapshot-delete my-vm --name "before-upgrade"  # Delete snapshot
+vmware-aiops vm snapshot-delete my-vm --name "before-upgrade"  # Delete snapshot (waits ≤30 min for consolidation)
+vmware-aiops vm snapshot-delete my-vm --name "old-big" --no-wait  # Fire async, return a task id
+vmware-aiops vm task-status task-1234                          # Poll an async task by id
 vmware-aiops vm clone my-vm --new-name my-vm-clone             # Clone VM
 vmware-aiops vm migrate my-vm --to-host esxi-02                # vMotion
 vmware-aiops vm set-ttl my-vm --minutes 60                     # Auto-delete in 60 min

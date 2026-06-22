@@ -27,7 +27,7 @@ compatibility: >
 
 > **Disclaimer**: This is a community-maintained open-source project and is **not affiliated with, endorsed by, or sponsored by VMware, Inc. or Broadcom Inc.** "VMware" and "vSphere" are trademarks of Broadcom. Source code is publicly auditable at [github.com/zw008/VMware-AIops](https://github.com/zw008/VMware-AIops) under the MIT license.
 
-VMware family entry point — AI-powered VM lifecycle, deployment, and alarm management — 43 MCP tools.
+VMware family entry point — AI-powered VM lifecycle, deployment, and alarm management — 44 MCP tools.
 
 > **Start here**: install vmware-aiops first, then add modules as needed.
 > Run `vmware-aiops hub status` to see which family members are installed.
@@ -159,11 +159,11 @@ vmware-aiops is the entry point. Add modules for additional capabilities:
 | Cloud models (Claude, GPT-4o) | Either | MCP gives structured JSON I/O |
 | Automated pipelines | **MCP** | Type-safe parameters, structured output |
 
-## MCP Tools (43 — 8 read, 35 write)
+## MCP Tools (44 — 9 read, 35 write)
 
 | Category | Tools | R/W |
 |----------|-------|:---:|
-| VM Lifecycle (15) | `vm_list_ttl`, `vm_list_snapshots` | Read |
+| VM Lifecycle (16) | `vm_list_ttl`, `vm_list_snapshots`, `vm_task_status` | Read |
 | | `vm_power_on`, `vm_power_off`, `vm_create`, `vm_reconfigure`, `vm_clone`, `vm_migrate`, `vm_delete`, `vm_create_snapshot`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl`, `vm_cancel_ttl`, `vm_clean_slate` | Write |
 | Deployment (8) | `deploy_vm_from_ova`, `deploy_vm_from_template`, `deploy_linked_clone`, `attach_iso_to_vm`, `convert_vm_to_template`, `batch_clone_vms`, `batch_linked_clone_vms`, `batch_deploy_from_spec` | Write |
 | Guest Ops (5) | `vm_guest_download` | Read |
@@ -176,7 +176,7 @@ vmware-aiops is the entry point. Add modules for additional capabilities:
 | Alarm Management (3) | `list_vcenter_alarms` | Read |
 | | `acknowledge_vcenter_alarm`, `reset_vcenter_alarm` | Write |
 
-**Read/write split**: 8 tools are read-only (per `[READ]` docstring marker), 35 modify state. All write tools require explicit parameters and are audit-logged. Destructive operations (`vm_delete`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl` (schedules an unattended auto-delete), force power-off, cluster delete/remove-host, alarm reset) require double confirmation at the CLI layer and support `--dry-run`.
+**Read/write split**: 9 tools are read-only (per `[READ]` docstring marker), 35 modify state. All write tools require explicit parameters and are audit-logged. Destructive operations (`vm_delete`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl` (schedules an unattended auto-delete), force power-off, cluster delete/remove-host, alarm reset) require double confirmation at the CLI layer and support `--dry-run`.
 
 **Alarm reset blast radius**: vSphere has no per-alarm clear API. `reset_vcenter_alarm` uses `AlarmManager.ClearTriggeredAlarms`, which clears **all** triggered alarms matching the named alarm's entity type (host/VM/all) and current status (red/yellow) — not just the one named. The response's `scope` field states exactly what was cleared. The named alarm is looked up first, so a typo fails fast without clearing anything.
 
@@ -193,7 +193,10 @@ vmware-aiops vm migrate <name> --to-host <host> [--to-datastore <ds>]
 vmware-aiops vm snapshot-create <name> --name <snap> [--description <text>] [--memory]
 vmware-aiops vm snapshot-list <name>
 vmware-aiops vm snapshot-revert <name> --name <snap>
-vmware-aiops vm snapshot-delete <name> --name <snap> [--remove-children]
+vmware-aiops vm snapshot-delete <name> --name <snap> [--remove-children] [--no-wait]
+                                                            # waits up to 30 min for delta consolidation;
+                                                            # --no-wait returns a task id immediately
+vmware-aiops vm task-status <task-id>                      # poll an async (--no-wait) operation by id
 vmware-aiops vm set-ttl <name> --minutes 480 [--dry-run]   # double confirm; daemon auto-deletes VM on expiry
 
 # Guest operations (requires VMware Tools)
@@ -232,6 +235,13 @@ Use `vm_guest_exec_output` instead of `vm_guest_exec` — it auto-captures stdou
 
 ### Deploy OVA times out
 Large OVA files (>10GB) may exceed the default 120s timeout. The upload happens via HTTP NFC lease — ensure network between the machine running vmware-aiops and ESXi is stable.
+
+### Snapshot delete is slow / "still running after Ns"
+Deleting an old or large snapshot consolidates its delta disk into the parent — the slowest write
+operation, often several minutes. `vm snapshot-delete` waits up to 30 min by default; if it still
+returns a "still running, NOT failed" message with a task id, the delete did **not** fail — poll it with
+`vm task-status <task-id>`. Do not re-issue the delete or hand-roll polling. For very large snapshots,
+prefer `vm snapshot-delete <name> --name <snap> --no-wait` to get the task id immediately and poll.
 
 ### Plan apply fails mid-way
 Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to rollback with `vm_rollback_plan`. Irreversible steps (delete_vm) are skipped during rollback.

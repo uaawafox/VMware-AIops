@@ -358,8 +358,20 @@ def vm_snapshot_delete(
     target: TargetOption = None,
     config: ConfigOption = None,
     dry_run: DryRunOption = False,
+    no_wait: Annotated[
+        bool,
+        typer.Option(
+            "--no-wait",
+            help="Fire the delete and return the task id immediately instead of "
+            "blocking up to 30 min on consolidation. Poll with 'vm task-status'.",
+        ),
+    ] = False,
+    timeout: Annotated[
+        int,
+        typer.Option(help="Seconds to wait for consolidation before returning the task id."),
+    ] = 1800,
 ) -> None:
-    """Delete a VM snapshot."""
+    """Delete a VM snapshot (waits up to 30 min for delta consolidation)."""
     from vmware_aiops.ops.vm_lifecycle import delete_snapshot
 
     if dry_run:
@@ -372,7 +384,7 @@ def vm_snapshot_delete(
     si, _ = _get_connection(target, config)
     console.print(f"[bold yellow]⚠️  即将删除 VM '{vm_name}' 的快照 '{snap_name}'[/]")
     _double_confirm(f"删除快照 '{snap_name}'", vm_name, _resolve_target(target))
-    result = delete_snapshot(si, vm_name, snap_name)
+    result = delete_snapshot(si, vm_name, snap_name, wait=not no_wait, timeout=timeout)
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -381,6 +393,26 @@ def vm_snapshot_delete(
         parameters={"snap_name": snap_name},
         result=result,
     )
+
+
+@vm_app.command("task-status")
+@cli_errors
+def vm_task_status(
+    task_id: Annotated[str, typer.Argument(help="Task id from a --no-wait operation")],
+    target: TargetOption = None,
+    config: ConfigOption = None,
+) -> None:
+    """Poll a long-running task (e.g. an async snapshot delete) by its id."""
+    from vmware_aiops.ops.vm_lifecycle import get_task_status
+
+    si, _ = _get_connection(target, config)
+    status = get_task_status(si, task_id)
+    state = status.get("state")
+    colour = {"success": "green", "error": "red", "gone": "yellow"}.get(state, "cyan")
+    console.print(f"[bold {colour}]Task {task_id}: {state}[/]")
+    for key in ("operation", "entity", "progress_pct", "error", "note"):
+        if status.get(key) is not None:
+            console.print(f"  {key}: {status[key]}")
 
 
 # ─── Clone & Migrate ──────────────────────────────────────────────────────────

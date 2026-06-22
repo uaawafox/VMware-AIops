@@ -30,12 +30,40 @@ class TaskFailedError(Exception):
     """Raised when a vSphere task fails."""
 
 
+class TaskStillRunning(Exception):
+    """Raised when a task outlives its wait budget but is still progressing.
+
+    Carries the task moref id so callers can keep polling instead of treating
+    the timeout as a failure (the vCenter task is NOT cancelled).
+    """
+
+    def __init__(self, task_id: str, timeout: int) -> None:
+        self.task_id = task_id
+        self.timeout = timeout
+        super().__init__(
+            f"Task still running after {timeout}s — this is NOT a failure. "
+            f"The vCenter task is still progressing (large snapshot consolidation "
+            f"or clone can take many minutes). Task id: {task_id}. "
+            f"Poll with: vm task-status {task_id} --target <target>"
+        )
+
+
+def _task_moid(task) -> str:
+    """Return the managed-object id of a task for later reconnection."""
+    return task._moId
+
+
 def _wait_for_task(task, timeout: int = 300) -> object:
-    """Wait for a vSphere task to complete."""
+    """Wait for a vSphere task to complete.
+
+    Raises TaskStillRunning (not TimeoutError) when the budget is exceeded so
+    callers can surface the task id and keep polling — a slow snapshot
+    consolidation is not a failure.
+    """
     start = time.time()
     while task.info.state in (vim.TaskInfo.State.running, vim.TaskInfo.State.queued):
         if time.time() - start > timeout:
-            raise TimeoutError(f"Task timed out after {timeout}s")
+            raise TaskStillRunning(_task_moid(task), timeout)
         time.sleep(2)
 
     if task.info.state == vim.TaskInfo.State.success:
@@ -419,8 +447,18 @@ def delete_snapshot(
     vm_name: str,
     snap_name: str,
     remove_children: bool = False,
+    *,
+    wait: bool = True,
+    timeout: int = 1800,
 ) -> str:
-    """Delete a named snapshot."""
+    """Delete a named snapshot, consolidating its delta disk into the parent.
+
+    Snapshot consolidation is the slowest write operation: old or large delta
+    disks can take many minutes. ``timeout`` defaults to 1800s (30 min) rather
+    than the 300s used by metadata ops. When ``wait`` is False the task is fired
+    and the task id returned immediately (use ``get_task_status`` to poll) — this
+    avoids blocking an agent's context window on a long consolidation.
+    """
     snaps = list_snapshots(si, vm_name)
     target = next((s for s in snaps if s["name"] == snap_name), None)
     if target is None:
@@ -428,8 +466,58 @@ def delete_snapshot(
         return f"Snapshot '{snap_name}' not found. Available: {available}"
 
     task = target["snapshot_ref"].RemoveSnapshot_Task(removeChildren=remove_children)
-    _wait_for_task(task)
+    task_id = _task_moid(task)
+
+    if not wait:
+        return (
+            f"Snapshot delete started for '{snap_name}' on VM '{vm_name}'. "
+            f"Task id: {task_id}. Poll with: vm task-status {task_id}"
+        )
+
+    try:
+        _wait_for_task(task, timeout=timeout)
+    except TaskStillRunning as e:
+        return (
+            f"Snapshot '{snap_name}' delete on VM '{vm_name}' is still running "
+            f"after {e.timeout}s (large delta consolidation) — NOT failed. "
+            f"Task id: {task_id}. Poll with: vm task-status {task_id}"
+        )
     return f"Snapshot '{snap_name}' deleted from VM '{vm_name}'."
+
+
+def get_task_status(si: ServiceInstance, task_id: str) -> dict:
+    """Poll a previously-started vSphere task by its managed-object id.
+
+    Returns a structured status so an agent can check a long-running async
+    operation (e.g. snapshot delete fired with wait=False) without re-running
+    it. A task id that vCenter has already garbage-collected after completion
+    surfaces as state 'gone' with guidance, not an exception.
+    """
+    task = vim.Task(task_id, si._stub)
+    try:
+        info = task.info
+    except Exception:  # noqa: BLE001 — translated to a teaching status
+        return {
+            "task_id": task_id,
+            "state": "gone",
+            "note": (
+                "vCenter no longer knows this task id. Completed tasks are "
+                "garbage-collected after a while — if the operation finished "
+                "successfully this is expected. Re-list the resource to confirm."
+            ),
+        }
+
+    state = str(info.state)
+    result: dict = {
+        "task_id": task_id,
+        "state": state,
+        "progress_pct": getattr(info, "progress", None),
+        "operation": getattr(info, "descriptionId", None),
+        "entity": getattr(info, "entityName", None),
+    }
+    if state == "error" and info.error is not None:
+        result["error"] = getattr(info.error, "msg", None) or type(info.error).__name__
+    return result
 
 
 # ─── Clone ────────────────────────────────────────────────────────────────────

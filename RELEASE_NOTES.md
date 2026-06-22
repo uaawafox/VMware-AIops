@@ -1,3 +1,22 @@
+## v1.5.39 (2026-06-22) — snapshot delete: async + honest timeout (token-burn fix)
+
+### Fixed
+- **Snapshot delete no longer burns the agent's context on slow consolidations.** `vm snapshot-delete`
+  used the 300s wait meant for metadata ops while clone/migrate already used 600s — old/large delta
+  disks (e.g. a ~3-year EVE-NG snapshot) always blew 300s and raised, so the agent thought the delete
+  FAILED and improvised foreground polling, costing tens of thousands of tokens. Now:
+  - default wait budget is 1800s (snapshot consolidation is the slowest write op);
+  - timeout is honest — `_wait_for_task` raises `TaskStillRunning` carrying the task id (not a bare
+    `TimeoutError`), and `delete_snapshot(wait=True)` returns a "still running, NOT failed — poll with
+    vm task-status <id>" message instead of raising;
+  - async mode — `vm snapshot-delete --no-wait` (CLI) and `vm_delete_snapshot(wait=False)` (MCP, now the
+    default) fire the delete and return a task id immediately, so the operation never blocks the context.
+
+### Added
+- `vm task-status <task-id>` CLI command and `vm_task_status` MCP tool — poll a long-running async task
+  (e.g. an async snapshot delete) by id; a garbage-collected task degrades to state `gone`, not an error.
+  MCP tool count 43 → 44.
+
 ## v1.5.38 (2026-06-12) — backlog finish: MCP create/reconfigure, server split
 
 ### Added

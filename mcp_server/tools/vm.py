@@ -11,6 +11,7 @@ from vmware_aiops.ops.vm_lifecycle import (
     create_vm,
     delete_snapshot,
     delete_vm,
+    get_task_status,
     list_snapshots,
     migrate_vm,
     power_off_vm,
@@ -253,6 +254,7 @@ def vm_delete_snapshot(
     vm_name: str,
     snapshot_name: str,
     remove_children: bool = False,
+    wait: bool = False,
     target: Optional[str] = None,
 ) -> str:
     """[WRITE] Permanently delete a named snapshot, consolidating its delta disk into the parent.
@@ -262,18 +264,48 @@ def vm_delete_snapshot(
     vm_list_snapshots first for exact names — unknown names return the available list.
     Irreversible: confirm with the user before calling. Audited to ~/.vmware/audit.db.
 
+    Snapshot consolidation is slow for old/large delta disks (often minutes). By default
+    (wait=False) this fires the delete and returns a task id immediately so it does not block
+    your context — poll completion with vm_task_status. Set wait=True only for small snapshots
+    where you want the final confirmation inline (blocks up to 30 min, then returns the task id).
+
     Args:
         vm_name: Exact name of the VM owning the snapshot.
         snapshot_name: Exact snapshot name from vm_list_snapshots output.
         remove_children: False (default) = children are kept and consolidated;
             True = delete the entire snapshot subtree below this one as well.
+        wait: False (default) = async, return task id immediately; True = block on consolidation.
         target: vCenter/ESXi target name from config.yaml; omit to use the default target.
 
     Returns:
-        Status string confirming deletion, or a not-found message listing available snapshots.
+        Status string with a task id (poll via vm_task_status), or a not-found message.
     """
     si = _get_connection(target)
-    return delete_snapshot(si, vm_name, snapshot_name, remove_children=remove_children)
+    return delete_snapshot(
+        si, vm_name, snapshot_name, remove_children=remove_children, wait=wait
+    )
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
+@vmware_tool(risk_level="low")
+@tool_errors("dict")
+def vm_task_status(task_id: str, target: Optional[str] = None) -> dict:
+    """[READ] Poll a long-running vSphere task by its id (from an async vm_delete_snapshot).
+
+    Use after vm_delete_snapshot returns a task id to check whether the consolidation has
+    finished, instead of re-running the delete. Returns state (queued/running/success/error/
+    gone), progress percent, and the entity name. 'gone' means vCenter already garbage-collected
+    a completed task — re-list the resource to confirm the final state.
+
+    Args:
+        task_id: The task id string returned by an async write operation.
+        target: vCenter/ESXi target name from config.yaml; omit to use the default target.
+
+    Returns:
+        Dict with task_id, state, progress_pct, operation, entity, and error/note when relevant.
+    """
+    si = _get_connection(target)
+    return get_task_status(si, task_id)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})

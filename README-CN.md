@@ -159,7 +159,8 @@ ESXi 独立主机 ──→ VM
 | 创建快照 | `vm snapshot-create <name> --name <snap>` | — | ✅ | ✅ |
 | 列出快照 | `vm snapshot-list <name>` | — | ✅ | ✅ |
 | 恢复快照 | `vm snapshot-revert <name> --name <snap>` | — | ✅ | ✅ |
-| 删除快照 | `vm snapshot-delete <name> --name <snap>` | — | ✅ | ✅ |
+| 删除快照 | `vm snapshot-delete <name> --name <snap> [--no-wait]` | — | ✅ | ✅ |
+| 任务状态 | `vm task-status <task-id>` | — | ✅ | ✅ |
 | 克隆 | `vm clone <name> --new-name <new>` | — | ✅ | ✅ |
 | 迁移 | `vm migrate <name> --to-host <host>` | — | ✅ | ❌ |
 | **设置 TTL** | `vm set-ttl <name> --minutes <n>` | — | ✅ | ✅ |
@@ -565,6 +566,8 @@ vmware-aiops vm create <name> --cpu 4 --memory 8192 --disk 100
 vmware-aiops vm delete <name> --confirm
 vmware-aiops vm reconfigure <name> --cpu 4 --memory 8192
 vmware-aiops vm snapshot-create|snapshot-list|snapshot-revert|snapshot-delete <name>
+vmware-aiops vm snapshot-delete <name> --name <snap> --no-wait   # 异步发起，立即返回 task id
+vmware-aiops vm task-status <task-id>                            # 轮询异步任务状态
 vmware-aiops vm clone <name> --new-name <new>
 vmware-aiops vm migrate <name> --to-host <host>
 vmware-aiops vm set-ttl <name> --minutes 60     # 60 分钟后自动删除
