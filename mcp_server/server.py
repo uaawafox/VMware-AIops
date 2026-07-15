@@ -829,6 +829,86 @@ def cluster_info(name: str, target: Optional[str] = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Network tools (dvSwitch portgroups)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
+@vmware_tool(risk_level="low")
+def list_dvs_portgroups(
+    dvs_name: Optional[str] = None,
+    target: Optional[str] = None,
+) -> dict:
+    """List distributed virtual portgroups, optionally scoped to one dvSwitch.
+
+    Per portgroup: name, parent dvSwitch, binding type (earlyBinding /
+    ephemeral), VLAN setting (id, trunk ranges, or pvlan), configured port
+    count, and whether it is the switch's uplink portgroup. Use to verify
+    create_dvs_portgroup results or to survey network config before changes.
+
+    Args:
+        dvs_name: dvSwitch name to scope to; omit to list across all switches.
+        target: vCenter target name from config.yaml; omit to use the default target.
+
+    Returns:
+        Dict with total and portgroups list. Errors return a dict with "error" + hint.
+    """
+    try:
+        from vmware_aiops.ops import network_mgmt
+        si = _get_connection(target)
+        return network_mgmt.list_dvs_portgroups(si, dvs_name=dvs_name)
+    except Exception as e:
+        return {"error": str(e), "hint": "Run 'vmware-aiops doctor' to verify connectivity and credentials."}
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
+@vmware_tool(risk_level="medium")
+def create_dvs_portgroup(
+    name: str,
+    dvs_name: str,
+    vlan_id: int,
+    binding: str = "earlyBinding",
+    num_ports: int = 8,
+    confirm: bool = False,
+    target: Optional[str] = None,
+) -> dict:
+    """[WRITE] Create a VLAN-tagged portgroup on a dvSwitch - preview/confirm gated.
+
+    confirm=False (default) validates everything (switch exists, name free,
+    binding and VLAN legal) and returns the exact spec that WOULD be created
+    without writing anything. confirm=True creates the portgroup and waits
+    for the task. Verify afterwards with list_dvs_portgroups. Audited.
+
+    binding="ephemeral" creates a portgroup with no pre-created port pool,
+    attachable from the ESXi host client even when vCenter is down - use for
+    a self-hosted VCSA's own management portgroup. num_ports is ignored for
+    ephemeral. lateBinding is deprecated by vSphere and not offered.
+
+    Args:
+        name: Name for the new portgroup; must be unique on the switch.
+        dvs_name: Name of the distributed virtual switch to create it on.
+        vlan_id: VLAN ID to tag (0-4094; 0 = none).
+        binding: "earlyBinding" (default) or "ephemeral".
+        num_ports: Port count for earlyBinding portgroups (default 8).
+        confirm: False previews; True creates.
+        target: vCenter target name from config.yaml; omit to use the default target.
+
+    Returns:
+        Preview dict (action="preview", would_create) or result dict
+        (action="created", created). Errors return a dict with "error" + hint.
+    """
+    try:
+        from vmware_aiops.ops import network_mgmt
+        si = _get_connection(target)
+        return network_mgmt.create_dvs_portgroup(
+            si, name=name, dvs_name=dvs_name, vlan_id=vlan_id,
+            binding=binding, num_ports=num_ports, confirm=confirm,
+        )
+    except Exception as e:
+        return {"error": str(e), "hint": "Run 'vmware-aiops doctor' to verify connectivity and credentials."}
+
+
+# ---------------------------------------------------------------------------
 # TTL & Clean Slate
 # ---------------------------------------------------------------------------
 
