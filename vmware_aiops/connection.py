@@ -50,6 +50,13 @@ def get_verify_ssl(si: ServiceInstance) -> bool:
     return _SI_VERIFY_SSL.get(id(si), True)
 
 
+# config.yaml target name -> hub-routing backend name. Per-role cred items are
+# per-vCenter ("MCP - <role> - <backend>"); resolving the prod backend for a
+# non-prod target would apply prod creds to the wrong host. Approved by Allen
+# in-session 2026-07-15. Unmapped targets use the prod backend (the default).
+_ROUTING_BACKENDS = {"v9-vcenter": "vcenter-v9"}
+
+
 class ConnectionManager:
     """Manages connections to multiple vCenter/ESXi targets."""
 
@@ -80,8 +87,9 @@ class ConnectionManager:
             else self._config.default_target
         )
 
+        backend = _ROUTING_BACKENDS.get(target.name, "vcenter-prod")
         routed = (
-            uaa_hub_routing.routing_item("vcenter-prod", _VCENTER_SELECTOR)
+            uaa_hub_routing.routing_item(backend, _VCENTER_SELECTOR)
             if _HUB_ROUTING
             else None
         )
