@@ -9,7 +9,7 @@ import atexit
 import ssl
 from typing import TYPE_CHECKING
 
-from pyVmomi import vim, vmodl
+from pyVmomi import vim
 from pyVmomi.VmomiSupport import VmomiJSONEncoder  # noqa: F401
 
 if TYPE_CHECKING:
@@ -89,12 +89,22 @@ class ConnectionManager:
 
         if cache_key in self._connections:
             si = self._connections[cache_key]
+            # Liveness probe. Dead sessions either RAISE on access (the real
+            # fault is vim.fault.NotAuthenticated) or return currentSession
+            # None without raising. Catch bare Exception - NotAuthenticated
+            # does NOT exist under vmodl.fault, and Python evaluates
+            # except-tuples at catch time, so naming it there raised
+            # AttributeError DURING handling, skipped the eviction, and
+            # permafailed the target until restart (vmware-monitor v9
+            # defect, 2026-07-15).
+            alive = False
             try:
-                # Test if session is still alive
-                _ = si.content.sessionManager.currentSession
+                alive = si.content.sessionManager.currentSession is not None
+            except Exception:
+                alive = False
+            if alive:
                 return si
-            except (vmodl.fault.NotAuthenticated, Exception):
-                del self._connections[cache_key]
+            del self._connections[cache_key]
 
         if routed is None:
             si = self._create_connection(target)
