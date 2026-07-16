@@ -402,8 +402,14 @@ def vmk_ping(
 
     summary = _parse_ping_xml(unescape(resp.group(1)) if resp else xml)
     received = summary.get("received", 0)
-    return {
+    out = {
         "request": request,
         "success": isinstance(received, int) and received > 0,
         "summary": summary,
     }
+    if not summary:
+        # Unrecognized response shape - never swallow it silently; the raw
+        # excerpt is the only way to adapt the parser to a new ACOS/ESXi
+        # schema without SSHing anywhere.
+        out["raw_response"] = xml[-1200:]
+    return out
