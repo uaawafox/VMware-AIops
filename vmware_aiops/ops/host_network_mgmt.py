@@ -224,12 +224,21 @@ def _soap_post(si: ServiceInstance, body: str) -> str:
     """POST one SOAP body to the connected vCenter's /sdk, reusing the live
     pyVmomi session cookie. Returns the raw response XML; raises
     HostNetworkError on transport errors or SOAP faults."""
+    import ssl
+
     import httpx
 
     stub = si._stub
     hostport = stub.host if ":" in stub.host else f"{stub.host}:443"
     ssl_ctx = getattr(stub, "sslContext", None)
-    verify = False if (ssl_ctx is not None and ssl_ctx.verify_mode == 0) else True
+    if ssl_ctx is not None and ssl_ctx.verify_mode == 0:
+        verify = False  # ignore_ssl target - match the pyVmomi session's posture
+    else:
+        # Verify against the SYSTEM CA store (where hub-installed roots like
+        # the v9 VMCA live). httpx's default is the bundled certifi store,
+        # which does NOT see system-added roots - pyVmomi verifies via the
+        # system store, and this SOAP call must trust exactly what it trusts.
+        verify = ssl.create_default_context()
     try:
         r = httpx.post(
             f"https://{hostport}/sdk",
