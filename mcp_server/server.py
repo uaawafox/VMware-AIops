@@ -909,6 +909,165 @@ def create_dvs_portgroup(
 
 
 # ---------------------------------------------------------------------------
+# Host network tools (VMkernel adapters + MTU diagnostics)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
+@vmware_tool(risk_level="low")
+def list_host_vmks(
+    host_name: Optional[str] = None,
+    target: Optional[str] = None,
+) -> dict:
+    """List VMkernel adapters, optionally scoped to one ESXi host.
+
+    Per vmk: device, IP/netmask/dhcp, MTU, MAC, portgroup (standard or DVS),
+    netstack, and which host services it is selected for (management,
+    vmotion, vsan, ...). The verify pair for add_host_vmk/remove_host_vmk.
+
+    Args:
+        host_name: ESXi host name; omit to list across all hosts.
+        target: vCenter target name from config.yaml; omit to use the default target.
+
+    Returns:
+        Dict with total and vmks list. Errors return a dict with "error" + hint.
+    """
+    try:
+        from vmware_aiops.ops import host_network_mgmt
+        si = _get_connection(target)
+        return host_network_mgmt.list_host_vmks(si, host_name=host_name)
+    except Exception as e:
+        return {"error": str(e), "hint": "Run 'vmware-aiops doctor' to verify connectivity and credentials."}
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
+@vmware_tool(risk_level="medium")
+def add_host_vmk(
+    host_name: str,
+    portgroup: str,
+    ip: str,
+    netmask: str,
+    mtu: int = 1500,
+    confirm: bool = False,
+    target: Optional[str] = None,
+) -> dict:
+    """[WRITE] Add a static-IP VMkernel adapter on a DVS portgroup - preview/confirm gated.
+
+    Deliberately minimal shape for throwaway test vmks on L2-only segments
+    (e.g. a TEP VLAN): static IPv4, NO gateway, NO services enabled. The DVS
+    port allocation is handled internally - pass the distributed portgroup
+    name. confirm=False validates (host + portgroup exist, IP/netmask/MTU
+    legal, IP not already on the host) and returns the exact spec without
+    writing; confirm=True creates and returns the assigned device name.
+    Verify with list_host_vmks; remove with remove_host_vmk. Audited.
+
+    Args:
+        host_name: ESXi host to add the vmk on.
+        portgroup: Distributed portgroup name to connect to.
+        ip: Static IPv4 address for the vmk.
+        netmask: Subnet mask (e.g. 255.255.255.0).
+        mtu: MTU for the vmk (default 1500; 9000 for jumbo tests).
+        confirm: False previews; True creates.
+        target: vCenter target name from config.yaml; omit to use the default target.
+
+    Returns:
+        Preview dict (action="preview") or result dict (action="created",
+        device=e.g. "vmk2"). Errors return a dict with "error" + hint.
+    """
+    try:
+        from vmware_aiops.ops import host_network_mgmt
+        si = _get_connection(target)
+        return host_network_mgmt.add_host_vmk(
+            si, host_name=host_name, portgroup=portgroup, ip=ip,
+            netmask=netmask, mtu=mtu, confirm=confirm,
+        )
+    except Exception as e:
+        return {"error": str(e), "hint": "Run 'vmware-aiops doctor' to verify connectivity and credentials."}
+
+
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
+@vmware_tool(risk_level="high")
+def remove_host_vmk(
+    host_name: str,
+    vmk: str,
+    confirm: bool = False,
+    target: Optional[str] = None,
+) -> dict:
+    """[WRITE] Remove a VMkernel adapter - confirm-gated and service-guarded.
+
+    REFUSES to remove a vmk that is selected for any host service
+    (management/vmotion/vsan/...) - removing a management vmk severs the
+    host. Test vmks created by add_host_vmk have no services and remove
+    cleanly. confirm=False previews what would be removed.
+
+    Args:
+        host_name: ESXi host the vmk lives on.
+        vmk: Device name to remove (e.g. "vmk2").
+        confirm: False previews; True removes.
+        target: vCenter target name from config.yaml; omit to use the default target.
+
+    Returns:
+        Preview dict (action="preview") or result dict (action="removed").
+        Errors return a dict with "error" + hint.
+    """
+    try:
+        from vmware_aiops.ops import host_network_mgmt
+        si = _get_connection(target)
+        return host_network_mgmt.remove_host_vmk(
+            si, host_name=host_name, vmk=vmk, confirm=confirm,
+        )
+    except Exception as e:
+        return {"error": str(e), "hint": "Run 'vmware-aiops doctor' to verify connectivity and credentials."}
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
+@vmware_tool(risk_level="low")
+def vmk_ping(
+    host_name: str,
+    source_vmk: str,
+    dest_ip: str,
+    size: int = 56,
+    df: bool = False,
+    count: int = 3,
+    netstack: Optional[str] = None,
+    target: Optional[str] = None,
+) -> dict:
+    """DF-bit-capable ping sourced from a host vmk - MTU path validation.
+
+    Runs `esxcli network diag ping` on the ESXi host through the vSphere API
+    (no host SSH). df=True sets Don't-Fragment so an oversized packet FAILS
+    instead of fragmenting - that failure is the diagnostic:
+    - df=True size=1572 proves a >=1600 MTU path (overlay/TEP floor)
+    - df=True size=8972 proves full jumbo (9000 minus 28 bytes overhead)
+    A too-big result reports 'Message too long' in the fault field rather
+    than erroring - read success + fault together.
+
+    Args:
+        host_name: ESXi host to source the ping from.
+        source_vmk: VMkernel device to source from (e.g. "vmk2").
+        dest_ip: IPv4 address to ping.
+        size: ICMP payload bytes (default 56). Path proves size+28 MTU.
+        df: True sets the Don't-Fragment bit (the MTU probe mode).
+        count: Packets to send (default 3, max 60).
+        netstack: Optional netstack instance (e.g. "vxlan" for real TEP vmks).
+        target: vCenter target name from config.yaml; omit to use the default target.
+
+    Returns:
+        Dict with request, success, and summary (transmitted/received/loss/
+        rtt) or fault (the esxcli failure text). Errors return "error" + hint.
+    """
+    try:
+        from vmware_aiops.ops import host_network_mgmt
+        si = _get_connection(target)
+        return host_network_mgmt.vmk_ping(
+            si, host_name=host_name, source_vmk=source_vmk, dest_ip=dest_ip,
+            size=size, df=df, count=count, netstack=netstack,
+        )
+    except Exception as e:
+        return {"error": str(e), "hint": "Run 'vmware-aiops doctor' to verify connectivity and credentials."}
+
+
+# ---------------------------------------------------------------------------
 # TTL & Clean Slate
 # ---------------------------------------------------------------------------
 
