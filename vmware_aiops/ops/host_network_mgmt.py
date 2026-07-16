@@ -387,8 +387,12 @@ def vmk_ping(
     }
     # esxcli-level failure comes back inside the result as <fault><faultMsg>
     # (e.g. every DF'd packet oversized, bad netstack). For MTU probing this
-    # IS the answer - return it structured, not as an error.
-    fault_msgs = re.findall(r"<faultMsg>\s*(.*?)\s*</faultMsg>", xml, re.DOTALL)
+    # IS the answer - return it structured, not as an error. vCenter
+    # serializes the reflect types WITH a namespace prefix
+    # (<reflect:response>, live-verified 2026-07-16) - match both.
+    fault_msgs = re.findall(
+        r"<(?:\w+:)?faultMsg>\s*(.*?)\s*</(?:\w+:)?faultMsg>", xml, re.DOTALL
+    )
     if fault_msgs:
         return {
             "request": request,
@@ -396,8 +400,11 @@ def vmk_ping(
             "fault": "; ".join(fault_msgs)[:500],
             "hint": "For df=True, 'Message too long' means the path MTU is below size+28.",
         }
-    # The PingOutput arrives XML-escaped inside <response>; unescape once.
-    resp = re.search(r"<response>(.*)</response>", xml, re.DOTALL)
+    # The PingOutput arrives XML-escaped inside <response> (possibly
+    # namespace-prefixed); unescape once.
+    resp = re.search(
+        r"<(?:\w+:)?response[^>]*>(.*)</(?:\w+:)?response>", xml, re.DOTALL
+    )
     from xml.sax.saxutils import unescape
 
     summary = _parse_ping_xml(unescape(resp.group(1)) if resp else xml)

@@ -226,6 +226,35 @@ def test_ping_netstack_arg_included_when_set(env, monkeypatch):
     assert "&lt;netstack&gt;vxlan&lt;/netstack&gt;" in bodies[1]
 
 
+# Live-verified vCenter shape (2026-07-16): reflect-namespaced <reflect:response>
+PING_NS_XML = (
+    "<ExecuteSoapResponse><returnval><reflect:response>"
+    "&lt;obj&gt;&lt;DataObject&gt;&lt;Summary&gt;"
+    "&lt;PacketLost&gt;0&lt;/PacketLost&gt;&lt;Recieved&gt;3&lt;/Recieved&gt;"
+    "&lt;RoundtripAvgMS&gt;0&lt;/RoundtripAvgMS&gt;"
+    "&lt;Transmitted&gt;3&lt;/Transmitted&gt;&lt;/Summary&gt;"
+    "&lt;/DataObject&gt;&lt;/obj&gt;"
+    "</reflect:response></returnval></ExecuteSoapResponse>"
+)
+
+
+def test_ping_parses_namespace_prefixed_response(env, monkeypatch):
+    _wire_soap(monkeypatch, PING_NS_XML)
+    out = vmk_ping(env.si, env.host.name, "vmk1", "192.168.253.2")
+    assert out["success"] is True
+    assert out["summary"]["received"] == 3
+    assert "raw_response" not in out
+
+
+def test_ping_ns_prefixed_fault_still_detected(env, monkeypatch):
+    _wire_soap(monkeypatch,
+               "<returnval><reflect:fault><reflect:faultMsg>sendto() failed "
+               "(Message too long)</reflect:faultMsg></reflect:fault></returnval>")
+    out = vmk_ping(env.si, env.host.name, "vmk1", "192.168.253.2", df=True, size=8972)
+    assert out["success"] is False
+    assert "Message too long" in out["fault"]
+
+
 def test_ping_soap_fault_raises(env, monkeypatch):
     def fake_post(si, body):
         raise HostNetworkError("SOAP fault: The session is not authenticated")
