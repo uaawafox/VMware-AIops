@@ -344,16 +344,21 @@ def vmk_ping(
     from xml.sax.saxutils import escape
 
     args = [
+        ("count", count),
         ("host", dest_ip),
         ("interface", source_vmk),
         ("size", size),
-        ("count", count),
-        ("ipv4", "true"),
     ]
     if df:
         args.append(("df", "true"))
     if netstack:
         args.append(("netstack", netstack))
+    # The CLI handler validates the argument array against the method's
+    # declared parameter order, which follows the esxcli metadata's
+    # alphabetical convention - an out-of-order array faults with
+    # "A specified parameter was not correct: argument[N]" (govmomi solves
+    # this by fetching the param metadata; sorted names match it for ping).
+    args.sort(key=lambda kv: kv[0])
 
     mme_moid = _retrieve_mme_moid(si, host)
     argument_xml = "".join(
