@@ -49,7 +49,7 @@ def _nic_mgr(selected=()):
 def _host(vnics, selected_services=("management",)):
     ns = FakeNetworkSystem()
     host = types.SimpleNamespace(
-        name="anc-ucs01.uaa.alaska.edu",
+        name="esxi01.lab.example.com",
         _moId="host-123",
         config=types.SimpleNamespace(network=types.SimpleNamespace(vnic=vnics)),
         configManager=types.SimpleNamespace(
@@ -59,7 +59,7 @@ def _host(vnics, selected_services=("management",)):
     return host, ns
 
 
-def _pg(name="VLAN3830-TEP-TEST"):
+def _pg(name="pg-tep-test"):
     return types.SimpleNamespace(
         name=name,
         key="dvportgroup-42",
@@ -71,7 +71,7 @@ def _pg(name="VLAN3830-TEP-TEST"):
 
 @pytest.fixture
 def env(monkeypatch):
-    host, ns = _host([_vnic("vmk0", ip="10.138.4.11"), _vnic("vmk1", ip="192.168.90.11")])
+    host, ns = _host([_vnic("vmk0", ip="192.0.2.11"), _vnic("vmk1", ip="192.0.2.21")])
     monkeypatch.setattr(hnm, "find_host_by_name", lambda si, n: host if n == host.name else None)
     monkeypatch.setattr(hnm, "_get_objects", lambda si, t: [_pg()])
     return types.SimpleNamespace(host=host, ns=ns, si=object())
@@ -82,28 +82,28 @@ def env(monkeypatch):
 def test_add_validates_before_any_write(env):
     cases = [
         dict(ip="not-an-ip", netmask="255.255.255.0", mtu=9000),
-        dict(ip="192.168.253.1", netmask="255.0.255.0", mtu=9000),   # non-contiguous mask
-        dict(ip="192.168.253.1", netmask="255.255.255.0", mtu=10),   # mtu too small
-        dict(ip="192.168.253.1", netmask="255.255.255.0", mtu=10000),
-        dict(ip="10.138.4.11", netmask="255.255.255.0", mtu=9000),   # duplicate host IP
+        dict(ip="198.51.100.1", netmask="255.0.255.0", mtu=9000),   # non-contiguous mask
+        dict(ip="198.51.100.1", netmask="255.255.255.0", mtu=10),   # mtu too small
+        dict(ip="198.51.100.1", netmask="255.255.255.0", mtu=10000),
+        dict(ip="192.0.2.11", netmask="255.255.255.0", mtu=9000),   # duplicate host IP
     ]
     for kw in cases:
         with pytest.raises(HostNetworkError):
-            add_host_vmk(env.si, env.host.name, "VLAN3830-TEP-TEST", confirm=True, **kw)
+            add_host_vmk(env.si, env.host.name, "pg-tep-test", confirm=True, **kw)
     assert env.ns.added == []
 
 
 def test_add_unknown_host_and_portgroup(env):
     with pytest.raises(HostNotFoundError):
-        add_host_vmk(env.si, "nope-host", "VLAN3830-TEP-TEST", "192.168.253.1", "255.255.255.0")
+        add_host_vmk(env.si, "nope-host", "pg-tep-test", "198.51.100.1", "255.255.255.0")
     with pytest.raises(HostNetworkError, match="portgroup"):
-        add_host_vmk(env.si, env.host.name, "nope-pg", "192.168.253.1", "255.255.255.0")
+        add_host_vmk(env.si, env.host.name, "nope-pg", "198.51.100.1", "255.255.255.0")
     assert env.ns.added == []
 
 
 def test_add_preview_never_writes(env):
-    out = add_host_vmk(env.si, env.host.name, "VLAN3830-TEP-TEST",
-                       "192.168.253.1", "255.255.255.0", mtu=9000)
+    out = add_host_vmk(env.si, env.host.name, "pg-tep-test",
+                       "198.51.100.1", "255.255.255.0", mtu=9000)
     assert out["action"] == "preview"
     assert out["would_create"]["mtu"] == 9000
     assert out["would_create"]["gateway"] is None
@@ -112,13 +112,13 @@ def test_add_preview_never_writes(env):
 
 
 def test_add_confirm_sends_exact_dvs_spec(env):
-    out = add_host_vmk(env.si, env.host.name, "VLAN3830-TEP-TEST",
-                       "192.168.253.1", "255.255.255.0", mtu=9000, confirm=True)
+    out = add_host_vmk(env.si, env.host.name, "pg-tep-test",
+                       "198.51.100.1", "255.255.255.0", mtu=9000, confirm=True)
     assert out["action"] == "created"
     assert out["device"] == "vmk2"
     (portgroup_arg, nic), = env.ns.added
     assert portgroup_arg == ""                       # DVS contract: empty std portgroup
-    assert nic.ip.ipAddress == "192.168.253.1"
+    assert nic.ip.ipAddress == "198.51.100.1"
     assert nic.ip.subnetMask == "255.255.255.0"
     assert nic.ip.dhcp is False
     assert nic.mtu == 9000
@@ -156,7 +156,7 @@ def test_list_reports_services_and_shape(env, monkeypatch):
     by_dev = {v["device"]: v for v in out["vmks"]}
     assert by_dev["vmk0"]["services"] == ["management"]
     assert by_dev["vmk1"]["services"] == []
-    assert by_dev["vmk1"]["ip"] == "192.168.90.11"
+    assert by_dev["vmk1"]["ip"] == "192.0.2.21"
 
 
 # --- vmk_ping --------------------------------------------------------------------
@@ -169,7 +169,7 @@ PING_OK_XML = (
     "<ExecuteSoapResponse><returnval><response>"
     "&lt;output xsi:type=&quot;vim.EsxCLI.network.diag.ping.PingOutput&quot;&gt;"
     "&lt;Summary&gt;&lt;Duplicated&gt;0&lt;/Duplicated&gt;"
-    "&lt;HostAddr&gt;192.168.253.2&lt;/HostAddr&gt;"
+    "&lt;HostAddr&gt;198.51.100.2&lt;/HostAddr&gt;"
     "&lt;PacketLost&gt;0&lt;/PacketLost&gt;&lt;Recieved&gt;3&lt;/Recieved&gt;"
     "&lt;RoundtripAvgMS&gt;512&lt;/RoundtripAvgMS&gt;"
     "&lt;Transmitted&gt;3&lt;/Transmitted&gt;&lt;/Summary&gt;&lt;/output&gt;"
@@ -198,7 +198,7 @@ def _wire_soap(monkeypatch, execute_response):
 
 def test_ping_success_parses_misspelled_received(env, monkeypatch):
     bodies = _wire_soap(monkeypatch, PING_OK_XML)
-    out = vmk_ping(env.si, env.host.name, "vmk1", "192.168.253.2", size=8972, df=True)
+    out = vmk_ping(env.si, env.host.name, "vmk1", "198.51.100.2", size=8972, df=True)
     assert out["success"] is True
     assert out["summary"]["received"] == 3
     assert out["summary"]["transmitted"] == 3
@@ -215,14 +215,14 @@ def test_ping_success_parses_misspelled_received(env, monkeypatch):
 
 def test_ping_df_too_big_returns_fault_not_error(env, monkeypatch):
     _wire_soap(monkeypatch, PING_FAULT_XML)
-    out = vmk_ping(env.si, env.host.name, "vmk1", "192.168.253.2", size=8972, df=True)
+    out = vmk_ping(env.si, env.host.name, "vmk1", "198.51.100.2", size=8972, df=True)
     assert out["success"] is False
     assert "Message too long" in out["fault"]
 
 
 def test_ping_netstack_arg_included_when_set(env, monkeypatch):
     bodies = _wire_soap(monkeypatch, PING_OK_XML)
-    vmk_ping(env.si, env.host.name, "vmk1", "192.168.253.2", netstack="vxlan")
+    vmk_ping(env.si, env.host.name, "vmk1", "198.51.100.2", netstack="vxlan")
     assert "&lt;netstack&gt;vxlan&lt;/netstack&gt;" in bodies[1]
 
 
@@ -240,7 +240,7 @@ PING_NS_XML = (
 
 def test_ping_parses_namespace_prefixed_response(env, monkeypatch):
     _wire_soap(monkeypatch, PING_NS_XML)
-    out = vmk_ping(env.si, env.host.name, "vmk1", "192.168.253.2")
+    out = vmk_ping(env.si, env.host.name, "vmk1", "198.51.100.2")
     assert out["success"] is True
     assert out["summary"]["received"] == 3
     assert "raw_response" not in out
@@ -250,7 +250,7 @@ def test_ping_ns_prefixed_fault_still_detected(env, monkeypatch):
     _wire_soap(monkeypatch,
                "<returnval><reflect:fault><reflect:faultMsg>sendto() failed "
                "(Message too long)</reflect:faultMsg></reflect:fault></returnval>")
-    out = vmk_ping(env.si, env.host.name, "vmk1", "192.168.253.2", df=True, size=8972)
+    out = vmk_ping(env.si, env.host.name, "vmk1", "198.51.100.2", df=True, size=8972)
     assert out["success"] is False
     assert "Message too long" in out["fault"]
 
@@ -261,7 +261,7 @@ def test_ping_soap_fault_raises(env, monkeypatch):
 
     monkeypatch.setattr(hnm, "_soap_post", fake_post)
     with pytest.raises(HostNetworkError, match="not authenticated"):
-        vmk_ping(env.si, env.host.name, "vmk1", "192.168.253.2")
+        vmk_ping(env.si, env.host.name, "vmk1", "198.51.100.2")
 
 
 def test_ping_validation_fires_before_soap(env, monkeypatch):
