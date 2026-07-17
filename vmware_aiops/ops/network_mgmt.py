@@ -14,11 +14,28 @@ from typing import TYPE_CHECKING
 
 from pyVmomi import vim
 
-from vmware_aiops.ops.inventory import _get_objects
 from vmware_aiops.ops.vm_lifecycle import _wait_for_task
 
 if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
+
+
+def _get_objects(si: ServiceInstance, obj_type: list, recursive: bool = True) -> list:
+    """Container-view walk returning raw managed objects.
+
+    Local on purpose: the module enumerates small sets (dvSwitches) and then
+    reads nested config off each object, which the batched PropertyCollector
+    helpers in ``inventory`` don't cover; keeping the helper here also keeps
+    the module free of private cross-module imports.
+    """
+    content = si.RetrieveContent()
+    container = content.viewManager.CreateContainerView(
+        content.rootFolder, obj_type, recursive
+    )
+    try:
+        return list(container.view)
+    finally:
+        container.Destroy()
 
 
 class NetworkError(Exception):

@@ -7,10 +7,12 @@ Uses the GuestOperationsManager API (VIX-like, over SOAP).
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import tempfile
 import time
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 2  # seconds
 _EXEC_TIMEOUT = 300  # seconds
+_HTTP_TIMEOUT = 300  # seconds — file-transfer urlopen must never hang the MCP server
 
 # Guest OS family constants (vm.guest.guestFamily)
 _FAMILY_WINDOWS = "windowsGuest"
@@ -400,8 +403,15 @@ def guest_upload(
 
     auth = _guest_auth(username, password)
 
-    # Read local file
-    with open(local_path, "rb") as f:
+    # Read local file — must be an existing regular file (not a dir/device/fifo).
+    local = Path(local_path).expanduser()
+    if not local.is_file():
+        raise ValueError(
+            f"Local upload source not found or not a regular file: {local_path}"
+        )
+    if not os.access(local, os.R_OK):
+        raise PermissionError(f"Cannot read local upload source: {local_path}")
+    with open(local, "rb") as f:
         file_data = f.read()
 
     file_size = len(file_data)
@@ -426,7 +436,10 @@ def guest_upload(
     req.add_header("Content-Type", "application/octet-stream")
     req.add_header("Content-Length", str(file_size))
 
-    urllib.request.urlopen(req, context=ctx)  # nosec B310 — URL from vSphere API
+    with urllib.request.urlopen(  # nosec B310 — URL from vSphere API
+        req, context=ctx, timeout=_HTTP_TIMEOUT
+    ):
+        pass
 
     logger.info(
         "Uploaded %d bytes to '%s:%s'", file_size, vm_name, guest_path
@@ -476,11 +489,19 @@ def guest_download(
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE  # nosec B501 — only when target.verify_ssl=false
 
-    resp = urllib.request.urlopen(transfer_info.url, context=ctx)  # nosec B310
-    file_data = resp.read()
+    with urllib.request.urlopen(  # nosec B310 — URL from vSphere API
+        transfer_info.url, context=ctx, timeout=_HTTP_TIMEOUT
+    ) as resp:
+        file_data = resp.read()
 
-    # Write to local file
-    with open(local_path, "wb") as f:
+    # Write to local file. Refuse to follow a symlink at the destination so the
+    # download can't be redirected to clobber a file elsewhere; create the
+    # parent dir if needed.
+    local = Path(local_path).expanduser()
+    if local.is_symlink():
+        raise ValueError(f"Refusing to write download through a symlink: {local_path}")
+    local.parent.mkdir(parents=True, exist_ok=True)
+    with open(local, "wb") as f:
         f.write(file_data)
 
     logger.info(

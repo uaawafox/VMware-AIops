@@ -1,3 +1,210 @@
+## v1.7.7 (2026-07-17) — session-probe eviction fix + mcp 1.28.1
+
+Family fix pack — no new tools, no schema changes.
+
+### Fixed
+- **Dead cached vCenter sessions were never evicted** (external fork report,
+  VMware-AIops PR #32). The liveness probe's handler was
+  `except (vmodl.fault.NotAuthenticated, Exception)` — but
+  `vmodl.fault.NotAuthenticated` does not exist in pyVmomi (the real class
+  lives under `vim.fault`), and except-tuples are evaluated at catch time, so
+  the handler raised `AttributeError` instead of evicting. A long-running MCP
+  server whose session idled out then permafailed every call until restart,
+  surfacing the misleading `AttributeError: NotAuthenticated` instead of the
+  real error. The probe now also treats a `None` `currentSession`
+  (expired-token shape) as dead. Three regression tests pin the probe shapes
+  (raise → evict + reconnect, None → evict + reconnect, live → cache reuse),
+  and family_smoke gained a static check banning the nonexistent class.
+
+### Security
+- Lockfile bumps `mcp` to **1.28.1**, clearing three GHSA HIGH advisories
+  against the MCP Python SDK (WebSocket Host/Origin validation, HTTP
+  transport principal verification, experimental task-handler cross-client
+  access). stdio-only servers are not directly exposed, and installs resolve
+  `mcp` fresh from PyPI — this mainly matters for from-source checkouts.
+
+## v1.7.6 (2026-07-14) — object investigation bundles + cross-vCenter attention (from the AIops entry point)
+
+The object-centered drill-down from issue #31 — "what is happening around this
+VM / host / datastore?" — plus a cross-vCenter "what needs attention now?" view,
+reachable from an AIops conversation so triage → investigate → act stays in one place.
+
+### Added
+- **Object investigation bundles** (read-only; surface 45 → 49). Four new MCP tools —
+  `vm_investigation_bundle`, `host_investigation_bundle`, `datastore_investigation_bundle`,
+  and `cross_vcenter_attention` — each correlates an object (or the whole estate) with
+  its surrounding infrastructure and recent event history and returns one high-signal,
+  aggregated result. All four delegate to the vmware-monitor library using AIops's own
+  vCenter connection; no logic is duplicated.
+- **CLI**: `vmware-aiops investigate vm|host|datastore <name>` and
+  `vmware-aiops attention`, each with `--hours` and `--html` / `--html-path` (offline,
+  self-contained snapshot; drill-down sections collapse with zero JavaScript).
+
+### Changed
+- New dependency floor: `vmware-monitor>=1.7.6` (the delegated bundle functions live there).
+
+### Notes
+- Read-only; point-in-time snapshots. Requires `vmware-monitor` installed (delegation).
+## v1.7.5 (2026-07-13) — cluster-health triage from the AIops entry point
+
+### Added
+- **`cluster_health_summary` MCP tool** (read-only; surface 44 → 45) and
+  **`vmware-aiops summary` CLI** — the one-glance cross-cluster triage
+  (ranked top-N issues + per-cluster status + offline HTML snapshot) is now
+  reachable from an AIops conversation. Both delegate to the vmware-monitor
+  library using AIops's own vCenter connection; no logic is duplicated.
+- New dependency: `vmware-monitor>=1.7.5`.
+
+### Fixed
+- Removed a leftover duplicate `import json` in `cli/mcp_config.py` (dead code).
+
+## v1.7.4 (2026-07-13) — family version alignment
+
+## v1.7.3 (2026-07-03) — family version alignment
+
+## v1.7.2 (2026-07-02) — alarm & health scale (issue #31 follow-up)
+
+### Fixed
+- **Alarm & health read paths at scale.** The v1.7.1 PropertyCollector fix
+  covered inventory only. `list_alarms` / `acknowledge_alarm` / `reset_alarm`
+  still walked every VM + host + cluster + datacenter + datastore reading lazy
+  `.name` / `.triggeredAlarmState` per object, and host hardware status, host
+  services, and host-log scan swept all hosts with per-host lazy reads — each a
+  separate SOAP round-trip that timed out on large vCenters. All now batch the
+  needed properties in a single `PropertyCollector.RetrievePropertiesEx` call.
+  Output shape unchanged.
+
+## v1.7.1 (2026-07-02) — large-inventory scale fix (PropertyCollector, issue #31)
+
+### Fixed
+- **Large-inventory scale (GitHub issue #31).** Inventory list/find operations
+  (`list_vms`, `list_hosts`, `list_datastores`, `list_clusters`, `list_networks`,
+  and the `find_*_by_name` helpers) walked a container view and then read pyVmomi
+  *lazy* properties per object (`vm.config.hardware.numCPU`,
+  `vm.runtime.host.name`, `len(host.vm)` …) — each a separate SOAP round-trip. On
+  large vCenters (thousands of VMs / hundreds of hosts) this meant tens of
+  thousands of round-trips, so even `limit=20` queries timed out. All of these
+  now fetch every needed property in a single `PropertyCollector.RetrievePropertiesEx`
+  call (paged via continuation tokens). Output shape is unchanged. Reported by
+  juanpf-ha against an ~8,000-VM / ~340-host environment.
+
+## v1.7.0 (2026-06-27) — guided onboarding + teaching auth errors
+
+### Added
+- **`vmware-aiops init` — interactive first-run setup wizard.** Prompts for host /
+  username / password and writes `config.yaml` + `.env` for you. The password is
+  stored grep-safe (`b64:`, never plaintext on disk) and `.env` is locked to
+  0600, then the connection is verified. Replaces the manual "mkdir + cp
+  config.example.yaml + edit YAML + chmod 600" dance.
+
+### Changed
+- `doctor` now points to `vmware-aiops init` when config/credentials are missing
+  (previously suggested a command that did not exist), keeping the manual steps
+  as a fallback.
+- Authentication and TLS failures now print a teaching message naming the exact
+  file and env var to fix (`~/.vmware-aiops/.env` password var, `config.yaml`
+  username) plus a `verify_ssl: false` hint for self-signed labs.
+
+## v1.6.1 (2026-06-24)
+
+### Added
+- **`.env` passwords are auto-obfuscated to a grep-safe `b64:` form** on first
+  load and decoded transparently at runtime — plaintext no longer sits in
+  `~/.<skill>/.env` for a casual `grep` to find. Values are read/written through
+  python-dotenv's own parser, so the stored secret never drifts from the
+  configured one (handles quotes, inline comments, trailing whitespace, and a
+  password that literally starts with `b64:`). **Obfuscation, not encryption** —
+  for real at-rest secrecy, inject the password from a secret manager instead of
+  storing `.env`. New regression suite (10 cases) covers dotenv parity, the
+  `b64:`-prefixed edge case, idempotency, and 0600 preservation.
+
+## v1.6.0 (2026-06-22) — trust architecture: undo tokens + governed harness
+
+### Added
+- **Undo-token recording** on reversible write tools (via vmware-policy 1.6.0 `@vmware_tool(undo=...)`):
+  `vm_power_on`↔`vm_power_off`, `vm_create`→`vm_delete`, `vm_clone`→`vm_delete`,
+  `vm_create_snapshot`→`vm_delete_snapshot`, `vm_set_ttl`→`vm_cancel_ttl`. Each successful write
+  records an inverse descriptor (`_undo_id`); query/replay via the audit/undo tooling.
+- Inherits the harness trust-architecture upgrades: token/runaway budget guard, audit accountability
+  fields (rationale/approved_by/risk_tier), and graduated-autonomy risk tiers.
+
+### Changed
+- Requires **vmware-policy >= 1.6.0** (the `undo=` parameter lives there). Dependency pinned accordingly.
+
+## v1.5.39 (2026-06-22) — snapshot delete: async + honest timeout (token-burn fix)
+
+### Fixed
+- **Snapshot delete no longer burns the agent's context on slow consolidations.** `vm snapshot-delete`
+  used the 300s wait meant for metadata ops while clone/migrate already used 600s — old/large delta
+  disks (e.g. a ~3-year EVE-NG snapshot) always blew 300s and raised, so the agent thought the delete
+  FAILED and improvised foreground polling, costing tens of thousands of tokens. Now:
+  - default wait budget is 1800s (snapshot consolidation is the slowest write op);
+  - timeout is honest — `_wait_for_task` raises `TaskStillRunning` carrying the task id (not a bare
+    `TimeoutError`), and `delete_snapshot(wait=True)` returns a "still running, NOT failed — poll with
+    vm task-status <id>" message instead of raising;
+  - async mode — `vm snapshot-delete --no-wait` (CLI) and `vm_delete_snapshot(wait=False)` (MCP, now the
+    default) fire the delete and return a task id immediately, so the operation never blocks the context.
+
+### Added
+- `vm task-status <task-id>` CLI command and `vm_task_status` MCP tool — poll a long-running async task
+  (e.g. an async snapshot delete) by id; a garbage-collected task degrades to state `gone`, not an error.
+  MCP tool count 43 → 44.
+
+## v1.5.38 (2026-06-12) — backlog finish: MCP create/reconfigure, server split
+
+### Added
+- `vm_create` and `vm_reconfigure` MCP tools (CLI had them, MCP didn't). Tool count 41 → 43. (#23)
+
+### Changed
+- Refactored the oversized MCP server and OVA deploy module under the 800-line cap (split into
+  `mcp_server/tools/*` + `ops/ova_deploy.py`); collapsed ~41 duplicated tool error-handlers into one
+  decorator. Behavior-preserving — the 41 prior tools are byte-for-byte identical. (#22)
+
+## v1.5.37 (2026-06-12) — backlog: OVA deploy robustness, multi-DC, snapshot/TTL safety
+
+### Fixed
+- **OVA upload** now streams the VMDK in 8 MiB chunks (no whole-disk read into RAM) and posts
+  `HttpNfcLeaseProgress` periodically, so large/slow uploads no longer hit the ~5-min lease abort. (#18)
+- **Multi-disk OVA** disks are mapped to device URLs by `importKey`/OVF File identity, not pop-order,
+  so contents can't land on the wrong device. (#19)
+- **`create_snapshot`** no longer forces `quiesce` for memory-less snapshots (failed on Tools-less /
+  freshly-deployed VMs); `quiesce` is now an explicit param defaulting to False. (#20)
+- **Datacenter/compute resolution** searches explicitly for `vim.Datacenter`/`vim.ComputeResource`
+  instead of `childEntity[0]`, fixing wrong-DC selection and crashes on multi-DC / foldered inventories. (#21)
+- **`vm set-ttl`** (schedules an unattended auto-delete) now requires confirmation and supports
+  `--dry-run`, and is listed in the destructive-ops docs. (#25)
+- MCP `_safe_error` now passes `ConnectionError` through so dropped connections show their hint. (#24)
+
+## v1.5.36 (2026-06-12) — code-quality fix pack: teaching errors reach agents, TTL safety, CLI error translation
+
+### Fixed
+- **MCP `_safe_error` now passes domain teaching exceptions through** (VMNotFoundError,
+  GuestOpsError, TaskFailedError, ClusterNotFoundError, ClusterError, TimeoutError) — agents
+  previously got a generic "operation failed" instead of "VM 'web-99' not found…".
+- **Scheduled TTL auto-delete no longer drops the entry on a transient failure** — the VM is
+  retried instead of silently never being deleted (entry removed only on success / VMNotFound).
+- **Active-alarm listing deduplicated** — alarms propagated to ancestor objects were counted up to 4×.
+- **Guest file transfer / OVA upload `urlopen` calls now time out** (300s) and close cleanly, so a
+  stalled connection can't hang the MCP stdio server.
+- **`create_vm` plan action** no longer overrides the default network with `None`.
+- **Alarm container-view double-Destroy** fixed (try/finally).
+
+### Added
+- CLI error-translation decorator: bad VM name / missing password env / unreachable vCenter now
+  print one teaching line + exit 1 instead of a raw traceback.
+
+## v1.5.35 (2026-06-10) — security hardening: safe errors, path validation, tighter file perms
+
+### Fixed
+- **MCP tools no longer return raw exception text / tracebacks** to the agent — a
+  central `_safe_error()` logs full detail server-side and returns a sanitized message.
+- **Guest file transfer** validates paths: upload source must be a real readable file;
+  download refuses to write through a symlink.
+- **Audit dir/log** 0700/0600; TTL store, plans, and image registry are written 0600.
+- **Webhook** response bodies are CR/LF-stripped before logging (no log injection).
+
+This release aligns the whole family back to a single version (1.5.35); vmware-policy and vmware-pilot return to the shared number after sitting at 1.5.22.
+
 ## v1.5.32 (2026-06-08) — Invented pyVmomi methods fixed + alarm/sensor/migrate corrections
 
 A pyVmomi introspection audit found two invented SDK methods (passed import,

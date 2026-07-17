@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import typer
 
+from vmware_aiops.cli._common import cli_errors
 from vmware_aiops.cli.alarm import alarm_app
 from vmware_aiops.cli.cluster import cluster_app
 from vmware_aiops.cli.deploy import datastore_app, deploy_app
 from vmware_aiops.cli.doctor import doctor_cmd
 from vmware_aiops.cli.hub import hub_app
+from vmware_aiops.cli.investigate import attention_cmd, investigate_app
 from vmware_aiops.cli.mcp_config import mcp_config_app
 from vmware_aiops.cli.plan import plan_app
 from vmware_aiops.cli.scan import daemon_app, scan_app
+from vmware_aiops.cli.summary import cluster_summary_cmd
 from vmware_aiops.cli.vm import vm_app
 
 app = typer.Typer(
@@ -33,10 +38,29 @@ app.add_typer(alarm_app, name="alarm")
 app.add_typer(hub_app, name="hub")
 
 # Register top-level commands
+app.command("summary")(cluster_summary_cmd)
+app.command("attention")(attention_cmd)
+app.add_typer(investigate_app, name="investigate")
 app.command("doctor")(doctor_cmd)
 
 
+@app.command("init")
+def init_cmd(
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite an existing config without asking")
+    ] = False,
+    skip_test: Annotated[
+        bool, typer.Option("--skip-test", help="Don't run a connection test after writing config")
+    ] = False,
+) -> None:
+    """Interactive first-run setup: write config.yaml + .env, then verify."""
+    from vmware_aiops.init_wizard import run_init
+
+    raise typer.Exit(run_init(force=force, skip_test=skip_test))
+
+
 @app.command("mcp")
+@cli_errors
 def mcp_cmd() -> None:
     """Start the MCP server (stdio transport).
 

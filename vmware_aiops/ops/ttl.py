@@ -45,9 +45,12 @@ def _load_ttl_store() -> dict[str, dict]:
 
 
 def _save_ttl_store(store: dict[str, dict]) -> None:
-    """Persist the TTL store to disk."""
-    _TTL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    """Persist the TTL store to disk (owner-only)."""
+    from vmware_aiops._fsutil import secure_chmod_file, secure_mkdir
+
+    secure_mkdir(_TTL_FILE.parent)
     _TTL_FILE.write_text(json.dumps(store, indent=2))
+    secure_chmod_file(_TTL_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +87,25 @@ def set_ttl(vm_name: str, minutes: int, target: str | None = None) -> str:
         f"TTL set for VM '{vm_name}': expires in {minutes} minute(s) "
         f"at {expires_at.strftime('%Y-%m-%dT%H:%M:%SZ')} (UTC). "
         f"The daemon will auto-delete it when the TTL expires."
+    )
+
+
+def preview_ttl(vm_name: str, minutes: int, target: str | None = None) -> str:
+    """Compute the TTL target time WITHOUT writing it (for --dry-run).
+
+    Returns a human-readable preview describing which VM would be deleted
+    and when. Does not touch the TTL store.
+    """
+    if minutes < 1:
+        return "TTL must be at least 1 minute."
+
+    from datetime import timedelta
+
+    expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=minutes)
+    return (
+        f"Would set TTL for VM '{vm_name}': expires in {minutes} minute(s) "
+        f"at {expires_at.strftime('%Y-%m-%dT%H:%M:%SZ')} (UTC). "
+        f"The daemon would auto-delete VM '{vm_name}' when the TTL expires."
     )
 
 

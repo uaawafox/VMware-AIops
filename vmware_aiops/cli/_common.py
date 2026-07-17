@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+import ssl
 from pathlib import Path
 from typing import Annotated
 
@@ -15,18 +17,86 @@ console = Console()
 
 # ─── Shared Option types ──────────────────────────────────────────────────────
 
-TargetOption = Annotated[
-    str | None, typer.Option("--target", "-t", help="Target name from config")
-]
-ConfigOption = Annotated[
-    Path | None, typer.Option("--config", "-c", help="Config file path")
-]
-DryRunOption = Annotated[
-    bool, typer.Option("--dry-run", help="Print API calls without executing")
-]
+TargetOption = Annotated[str | None, typer.Option("--target", "-t", help="Target name from config")]
+ConfigOption = Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")]
+DryRunOption = Annotated[bool, typer.Option("--dry-run", help="Print API calls without executing")]
 
 
 # ─── Shared helpers ───────────────────────────────────────────────────────────
+
+
+def _cli_error_types() -> tuple[type[BaseException], ...]:
+    """Exception types translated to a one-line teaching error (踩坑 #37).
+
+    Domain exceptions carry teaching messages already; infra exceptions
+    (missing config, missing password env, unreachable vCenter, timeouts)
+    are common user mistakes that must not surface as raw tracebacks.
+    OSError covers FileNotFoundError / ConnectionError / TimeoutError.
+    """
+    from pyVmomi import vim
+
+    from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
+    from vmware_aiops.ops.guest_ops import GuestOpsError
+    from vmware_aiops.ops.vm_lifecycle import (
+        TaskFailedError,
+        TaskStillRunning,
+        VMNotFoundError,
+    )
+
+    return (
+        VMNotFoundError,
+        GuestOpsError,
+        TaskFailedError,
+        TaskStillRunning,
+        ClusterNotFoundError,
+        ClusterError,
+        KeyError,
+        OSError,
+        vim.fault.InvalidLogin,
+    )
+
+
+def cli_errors(fn):
+    """Decorator: translate known exceptions into one red line + exit code 1.
+
+    Applied to CLI command functions so bad VM names, missing config/password
+    env vars, and unreachable vCenters print a single teaching message instead
+    of a Python traceback. typer.Exit / typer.Abort pass through untouched.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except (typer.Exit, typer.Abort):
+            raise
+        except _cli_error_types() as e:
+            from pyVmomi import vim
+
+            message = getattr(e, "msg", None) or str(e)
+            if isinstance(e, KeyError):
+                message = f"Missing required key or environment variable: {message}"
+            elif isinstance(e, vim.fault.InvalidLogin):
+                # The SDK message ("incorrect user name or password") doesn't
+                # say WHERE to fix it — point at the exact file + env var. Use a
+                # clean base so an unset SDK msg doesn't leak the raw fault repr.
+                message = (
+                    "Login failed (incorrect username or password). → Check the "
+                    "password in ~/.vmware-aiops/.env (env var "
+                    "VMWARE_<TARGET>_PASSWORD) and the username in "
+                    "~/.vmware-aiops/config.yaml. Re-run 'vmware-aiops init' to reset both."
+                )
+            elif isinstance(e, ssl.SSLError):
+                # Self-signed lab certs are the usual cause; teach the toggle.
+                message = (
+                    f"TLS certificate verification failed: {message} → For a "
+                    "self-signed lab, set verify_ssl: false on the target in "
+                    "~/.vmware-aiops/config.yaml (or re-run 'vmware-aiops init')."
+                )
+            console.print(f"[red]Error: {message}[/]")
+            raise typer.Exit(1) from e
+
+    return wrapper
 
 
 def _dry_run_print(
@@ -74,6 +144,19 @@ def _get_connection(target: str | None, config_path: Path | None = None):
     return mgr.connect(target), cfg
 
 
+def _get_all_connections(config_path: Path | None = None):
+    """Connect to every configured target, tolerating per-target failures.
+
+    Returns ``(sessions, unreachable)`` — see ``ConnectionManager.connect_all`` —
+    for the cross-vCenter attention view. One dead vCenter never fails the command.
+    """
+    from vmware_aiops.config import load_config
+    from vmware_aiops.connection import ConnectionManager
+
+    cfg = load_config(config_path)
+    return ConnectionManager(cfg).connect_all()
+
+
 def _resolve_target(target: str | None) -> str:
     """Return a display name for the target (used in audit logs)."""
     return target or "default"
@@ -83,8 +166,13 @@ def _show_state_preview(info: dict, action: str, vm_name: str) -> None:
     """Display current VM state before a destructive operation."""
     console.print(f"\n[bold cyan]📋 Current state of VM '{vm_name}':[/]")
     state_keys = (
-        "power_state", "cpu", "memory_mb", "guest_os",
-        "host", "ip_address", "snapshot_count",
+        "power_state",
+        "cpu",
+        "memory_mb",
+        "guest_os",
+        "host",
+        "ip_address",
+        "snapshot_count",
     )
     for key in state_keys:
         if key in info:

@@ -7,7 +7,7 @@
 
 English | [中文](README-CN.md)
 
-AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 31 tools across 6 categories.
+AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 49 tools.
 
 > **Companion skills** handle everything else:
 >
@@ -23,6 +23,26 @@ AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 31 tools acr
 [![Skills.sh](https://img.shields.io/badge/Skills.sh-Install-blue)](https://skills.sh/zw008/VMware-AIops)
 [![Claude Code Marketplace](https://img.shields.io/badge/Claude_Code-Marketplace-blueviolet)](https://github.com/zw008/VMware-AIops)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+## ⚡ Quick Investigation Reports (read-only)
+
+Triage → investigate → act, all in one conversation. Five opinionated read-only reports **aggregate and correlate server-side** and hand back a high-signal result (never raw inventory), so you can decide *where to look* before changing anything. Each renders a **self-contained offline HTML snapshot** with `--html` (no external assets; drill-down detail collapses in native `<details>`, zero JavaScript). All delegate to the [vmware-monitor](https://github.com/zw008/VMware-Monitor) library using AIops's own vCenter connection.
+
+| Question | Command | What it correlates |
+|----------|---------|--------------------|
+| **"What needs attention now?"** across all vCenters | `vmware-aiops attention` | Every vCenter merged into one globally-ranked issue list; unreachable targets degrade gracefully |
+| **"Is anything on fire?"** across all clusters | `vmware-aiops summary` | Every cluster's hosts + VM power + live CPU/mem + alarms → ranked top-N issues + per-cluster status |
+| **"What's happening around this VM?"** | `vmware-aiops investigate vm <name>` | VM state + host + cluster + backing datastores + snapshots + alarms + performance + a merged event timeline |
+| **"What's happening around this host?"** | `vmware-aiops investigate host <name>` | Host state + cluster + the VMs it runs + mounted datastores + alarms + performance + correlated timeline |
+| **"What's happening around this datastore?"** | `vmware-aiops investigate datastore <name>` | Capacity/free + mounting hosts + VMs it backs + alarms + correlated timeline |
+
+```bash
+vmware-aiops attention                            # what needs attention now, all vCenters
+vmware-aiops investigate vm web-01 --hours 72     # everything around a VM, then act on it
+vmware-aiops investigate vm web-01 --html         # → offline snapshot in ~/vmware-health/
+```
+
+Via MCP these are the tools `cluster_health_summary`, `cross_vcenter_attention`, `vm_investigation_bundle`, `host_investigation_bundle`, `datastore_investigation_bundle`. (Requires `vmware-monitor` installed.)
 
 ### Quick Install (Recommended)
 
@@ -63,6 +83,34 @@ pip install vmware-aiops -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 ---
+
+## Why this over other VMware MCP servers
+
+Most open-source VMware MCP servers (e.g. `bright8192/esxi-mcp-server`,
+`giuliolibrando/vmware-vsphere-mcp-server`) are **single-vCenter VM wrappers**:
+list/power/snapshot a VM, basic monitoring, a `confirm=True` flag. They explicitly
+do not cover networking, storage, Kubernetes, ops analytics, load balancing, or
+compliance — and "logging is documented" is not an audit trail.
+
+This is one skill in an **11-package family** that covers the whole estate and runs
+every tool through a governed harness:
+
+| | Other VMware MCP servers | This family |
+|---|:---:|:---:|
+| VM lifecycle + monitoring | ✅ | ✅ |
+| NSX networking (segments/gateways/NAT/routing/IPAM) | ❌ | ✅ vmware-nsx |
+| NSX security (DFW/groups/IDS-IPS/traceflow) | ❌ | ✅ vmware-nsx-security |
+| Storage (datastore/iSCSI/vSAN) | ❌ | ✅ vmware-storage |
+| Tanzu Kubernetes (Supervisor/Namespace/TKC) | ❌ | ✅ vmware-vks |
+| Aria Operations (metrics/alerts/capacity) | ❌ | ✅ vmware-aria |
+| AVI / NSX ALB load balancing + AKO | ❌ | ✅ vmware-avi |
+| Compliance baselines + drift (CIS/SCG/等保/PCI) | ❌ | ✅ vmware-harden |
+| **Governed harness** (unified audit, policy engine, token budget + runaway breaker, graduated risk tiers, undo-token, prompt-injection sanitize) | ❌ | ✅ vmware-policy on every tool |
+
+If you only ever power-cycle VMs in one vCenter, a single-file server is fine. If you
+run a real (regulated, NSX-segmented, multi-domain) VMware estate and need an AI
+operator an auditor can sign off on, that's what this family is for — see
+[docs/compliance-ready.md](../docs/compliance-ready.md).
 
 ## Capabilities Overview
 
@@ -167,7 +215,8 @@ ESXi Standalone Host ──→ VM
 | Create Snapshot | `vm snapshot-create <name> --name <snap>` | — | ✅ | ✅ |
 | List Snapshots | `vm snapshot-list <name>` | — | ✅ | ✅ |
 | Revert Snapshot | `vm snapshot-revert <name> --name <snap>` | — | ✅ | ✅ |
-| Delete Snapshot | `vm snapshot-delete <name> --name <snap>` | — | ✅ | ✅ |
+| Delete Snapshot | `vm snapshot-delete <name> --name <snap> [--no-wait]` | — | ✅ | ✅ |
+| Task Status | `vm task-status <task-id>` | — | ✅ | ✅ |
 | Clone VM | `vm clone <name> --new-name <new>` | — | ✅ | ✅ |
 | vMotion | `vm migrate <name> --to-host <host>` | — | ✅ | ❌ |
 | **Set TTL** | `vm set-ttl <name> --minutes <n>` | — | ✅ | ✅ |
@@ -844,7 +893,9 @@ vmware-aiops vm reconfigure my-vm --cpu 4 --memory 8192        # Reconfigure (2x
 vmware-aiops vm snapshot-create my-vm --name "before-upgrade"  # Create snapshot
 vmware-aiops vm snapshot-list my-vm                            # List snapshots
 vmware-aiops vm snapshot-revert my-vm --name "before-upgrade"  # Revert snapshot
-vmware-aiops vm snapshot-delete my-vm --name "before-upgrade"  # Delete snapshot
+vmware-aiops vm snapshot-delete my-vm --name "before-upgrade"  # Delete snapshot (waits ≤30 min for consolidation)
+vmware-aiops vm snapshot-delete my-vm --name "old-big" --no-wait  # Fire async, return a task id
+vmware-aiops vm task-status task-1234                          # Poll an async task by id
 vmware-aiops vm clone my-vm --new-name my-vm-clone             # Clone VM
 vmware-aiops vm migrate my-vm --to-host esxi-02                # vMotion
 vmware-aiops vm set-ttl my-vm --minutes 60                     # Auto-delete in 60 min

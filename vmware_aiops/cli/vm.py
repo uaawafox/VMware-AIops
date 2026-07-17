@@ -18,6 +18,7 @@ from vmware_aiops.cli._common import (
     _resolve_target,
     _show_state_preview,
     _validate_vm_params,
+    cli_errors,
     console,
 )
 
@@ -28,6 +29,7 @@ vm_app = typer.Typer(help="VM lifecycle: power, snapshot, clone, migrate.")
 
 
 @vm_app.command("power-on")
+@cli_errors
 def vm_power_on(
     name: str,
     target: TargetOption = None,
@@ -60,6 +62,7 @@ def vm_power_on(
 
 
 @vm_app.command("power-off")
+@cli_errors
 def vm_power_off(
     name: str,
     force: Annotated[bool, typer.Option(help="Force power off")] = False,
@@ -97,6 +100,7 @@ def vm_power_off(
 
 
 @vm_app.command("create")
+@cli_errors
 def vm_create(
     name: str,
     cpu: Annotated[int, typer.Option(help="Number of CPUs")] = 2,
@@ -143,6 +147,7 @@ def vm_create(
 
 
 @vm_app.command("delete")
+@cli_errors
 def vm_delete(
     name: str,
     target: TargetOption = None,
@@ -185,6 +190,7 @@ def vm_delete(
 
 
 @vm_app.command("reconfigure")
+@cli_errors
 def vm_reconfigure(
     name: str,
     cpu: Annotated[int | None, typer.Option(help="New CPU count")] = None,
@@ -246,11 +252,15 @@ def vm_reconfigure(
 
 
 @vm_app.command("snapshot-create")
+@cli_errors
 def vm_snapshot_create(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name")] = "snapshot",
     description: Annotated[str, typer.Option(help="Snapshot description")] = "",
     memory: Annotated[bool, typer.Option(help="Include memory")] = True,
+    quiesce: Annotated[
+        bool, typer.Option(help="Quiesce guest filesystem (requires running VMware Tools)")
+    ] = False,
     target: TargetOption = None,
     config: ConfigOption = None,
     dry_run: DryRunOption = False,
@@ -262,22 +272,29 @@ def vm_snapshot_create(
         _dry_run_print(
             target=_resolve_target(target), vm_name=vm_name, operation="snapshot_create",
             api_call="vim.VirtualMachine.CreateSnapshot_Task()",
-            parameters={"snap_name": snap_name, "description": description, "memory": memory},
+            parameters={
+                "snap_name": snap_name, "description": description,
+                "memory": memory, "quiesce": quiesce,
+            },
         )
         return
     si, _ = _get_connection(target, config)
-    result = create_snapshot(si, vm_name, snap_name, description, memory)
+    result = create_snapshot(si, vm_name, snap_name, description, memory, quiesce)
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
         operation="snapshot_create",
         resource=vm_name,
-        parameters={"snap_name": snap_name, "description": description, "memory": memory},
+        parameters={
+            "snap_name": snap_name, "description": description,
+            "memory": memory, "quiesce": quiesce,
+        },
         result=result,
     )
 
 
 @vm_app.command("snapshot-list")
+@cli_errors
 def vm_snapshot_list(
     vm_name: str,
     target: TargetOption = None,
@@ -297,6 +314,7 @@ def vm_snapshot_list(
 
 
 @vm_app.command("snapshot-revert")
+@cli_errors
 def vm_snapshot_revert(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name to revert to")],
@@ -333,14 +351,27 @@ def vm_snapshot_revert(
 
 
 @vm_app.command("snapshot-delete")
+@cli_errors
 def vm_snapshot_delete(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name to delete")],
     target: TargetOption = None,
     config: ConfigOption = None,
     dry_run: DryRunOption = False,
+    no_wait: Annotated[
+        bool,
+        typer.Option(
+            "--no-wait",
+            help="Fire the delete and return the task id immediately instead of "
+            "blocking up to 30 min on consolidation. Poll with 'vm task-status'.",
+        ),
+    ] = False,
+    timeout: Annotated[
+        int,
+        typer.Option(help="Seconds to wait for consolidation before returning the task id."),
+    ] = 1800,
 ) -> None:
-    """Delete a VM snapshot."""
+    """Delete a VM snapshot (waits up to 30 min for delta consolidation)."""
     from vmware_aiops.ops.vm_lifecycle import delete_snapshot
 
     if dry_run:
@@ -353,7 +384,7 @@ def vm_snapshot_delete(
     si, _ = _get_connection(target, config)
     console.print(f"[bold yellow]⚠️  即将删除 VM '{vm_name}' 的快照 '{snap_name}'[/]")
     _double_confirm(f"删除快照 '{snap_name}'", vm_name, _resolve_target(target))
-    result = delete_snapshot(si, vm_name, snap_name)
+    result = delete_snapshot(si, vm_name, snap_name, wait=not no_wait, timeout=timeout)
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -364,10 +395,31 @@ def vm_snapshot_delete(
     )
 
 
+@vm_app.command("task-status")
+@cli_errors
+def vm_task_status(
+    task_id: Annotated[str, typer.Argument(help="Task id from a --no-wait operation")],
+    target: TargetOption = None,
+    config: ConfigOption = None,
+) -> None:
+    """Poll a long-running task (e.g. an async snapshot delete) by its id."""
+    from vmware_aiops.ops.vm_lifecycle import get_task_status
+
+    si, _ = _get_connection(target, config)
+    status = get_task_status(si, task_id)
+    state = status.get("state")
+    colour = {"success": "green", "error": "red", "gone": "yellow"}.get(state, "cyan")
+    console.print(f"[bold {colour}]Task {task_id}: {state}[/]")
+    for key in ("operation", "entity", "progress_pct", "error", "note"):
+        if status.get(key) is not None:
+            console.print(f"  {key}: {status[key]}")
+
+
 # ─── Clone & Migrate ──────────────────────────────────────────────────────────
 
 
 @vm_app.command("clone")
+@cli_errors
 def vm_clone(
     name: str,
     new_name: Annotated[str, typer.Option("--new-name", help="Name for the clone")],
@@ -425,6 +477,7 @@ def vm_clone(
 
 
 @vm_app.command("migrate")
+@cli_errors
 def vm_migrate(
     name: str,
     to_host: Annotated[str, typer.Option("--to-host", help="Target ESXi host name")],
@@ -476,15 +529,25 @@ def vm_migrate(
 
 
 @vm_app.command("set-ttl")
+@cli_errors
 def vm_set_ttl(
     vm_name: str,
     minutes: Annotated[int, typer.Option("--minutes", "-m", help="Minutes until auto-deletion")],
     target: TargetOption = None,
     config: ConfigOption = None,
+    dry_run: DryRunOption = False,
 ) -> None:
-    """Set a TTL for a VM. The daemon will auto-delete it when time expires."""
-    from vmware_aiops.ops.ttl import set_ttl
+    """Set a TTL for a VM. The daemon will auto-delete it when time expires (destructive!)."""
+    from vmware_aiops.ops.ttl import preview_ttl, set_ttl
 
+    if dry_run:
+        _dry_run_print(
+            target=_resolve_target(target), vm_name=vm_name, operation="vm_set_ttl",
+            api_call="scheduler.delete_vm() on TTL expiry",
+            parameters={"minutes": minutes, "preview": preview_ttl(vm_name, minutes, target=target)},
+        )
+        return
+    _double_confirm(f"设置 TTL ({minutes} 分钟后自动删除)", vm_name, _resolve_target(target))
     result = set_ttl(vm_name, minutes, target=target)
     console.print(f"[green]{result}[/]")
     _audit.log(
@@ -497,6 +560,7 @@ def vm_set_ttl(
 
 
 @vm_app.command("cancel-ttl")
+@cli_errors
 def vm_cancel_ttl(vm_name: str) -> None:
     """Cancel an existing TTL for a VM."""
     from vmware_aiops.ops.ttl import cancel_ttl
@@ -506,6 +570,7 @@ def vm_cancel_ttl(vm_name: str) -> None:
 
 
 @vm_app.command("list-ttl")
+@cli_errors
 def vm_list_ttl() -> None:
     """List all VMs with TTLs registered."""
     from vmware_aiops.ops.ttl import list_ttl
@@ -533,6 +598,7 @@ def vm_list_ttl() -> None:
 
 
 @vm_app.command("clean-slate")
+@cli_errors
 def vm_clean_slate(
     vm_name: str,
     snapshot: Annotated[str, typer.Option("--snapshot", "-s", help="Snapshot name")] = "baseline",
@@ -571,6 +637,7 @@ def vm_clean_slate(
 
 
 @vm_app.command("guest-exec")
+@cli_errors
 def vm_guest_exec_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     command: Annotated[str, typer.Option("--cmd", help="Full path to program (e.g. /bin/bash)")],
@@ -603,6 +670,7 @@ def vm_guest_exec_cmd(
 
 
 @vm_app.command("guest-upload")
+@cli_errors
 def vm_guest_upload_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     local_path: Annotated[str, typer.Option("--local", help="Local file path")],
@@ -627,6 +695,7 @@ def vm_guest_upload_cmd(
 
 
 @vm_app.command("guest-download")
+@cli_errors
 def vm_guest_download_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     guest_path: Annotated[str, typer.Option("--guest", help="File path inside VM")],

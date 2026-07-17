@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING
 from pyVmomi import vim
 
 from vmware_aiops.ops.inventory import (
+    InventoryError,
+    _collect,
     find_cluster_by_name,
-    find_datacenter_by_name,
     find_host_by_name,
+    resolve_datacenter,
 )
 from vmware_aiops.ops.vm_lifecycle import _wait_for_task
 
@@ -40,16 +42,10 @@ def _require_cluster(
 
 def _get_datacenter(si: ServiceInstance, datacenter_name: str | None = None) -> vim.Datacenter:
     """Find a datacenter by name, or return the first one."""
-    if datacenter_name:
-        dc = find_datacenter_by_name(si, datacenter_name)
-        if dc is None:
-            raise ClusterError(f"Datacenter '{datacenter_name}' not found")
-        return dc
-    content = si.RetrieveContent()
-    for child in content.rootFolder.childEntity:
-        if isinstance(child, vim.Datacenter):
-            return child
-    raise ClusterError("No datacenter found in inventory")
+    try:
+        return resolve_datacenter(si, datacenter_name)
+    except InventoryError as e:
+        raise ClusterError(str(e)) from e
 
 
 # ─── Info ─────────────────────────────────────────────────────────────────────
@@ -60,18 +56,35 @@ def get_cluster_info(si: ServiceInstance, cluster_name: str) -> dict:
     cluster = _require_cluster(si, cluster_name)
     cfg = cluster.configuration
 
+    # Batch the per-host runtime reads: one PropertyCollector call for all hosts,
+    # keyed by moRef, instead of a lazy round-trip per host in the loop.
+    host_refs = cluster.host or []
+    host_props = {
+        obj: p
+        for obj, p in _collect(
+            si,
+            [vim.HostSystem],
+            [
+                "name",
+                "runtime.connectionState",
+                "runtime.powerState",
+                "runtime.inMaintenanceMode",
+            ],
+        )
+    }
     hosts = []
-    for host in cluster.host or []:
+    for host in host_refs:
+        p = host_props.get(host, {})
         hosts.append({
-            "name": host.name,
-            "connection_state": str(host.runtime.connectionState),
-            "power_state": str(host.runtime.powerState),
-            "maintenance_mode": host.runtime.inMaintenanceMode,
+            "name": p.get("name"),
+            "connection_state": str(p.get("runtime.connectionState")),
+            "power_state": str(p.get("runtime.powerState")),
+            "maintenance_mode": p.get("runtime.inMaintenanceMode"),
         })
 
     return {
         "name": cluster.name,
-        "host_count": len(cluster.host or []),
+        "host_count": len(host_refs),
         "hosts": hosts,
         "ha_enabled": cfg.dasConfig.enabled if cfg.dasConfig else False,
         "ha_admission_control": cfg.dasConfig.admissionControlEnabled if cfg.dasConfig else False,
