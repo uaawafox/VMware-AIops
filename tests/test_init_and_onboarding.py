@@ -45,7 +45,8 @@ def test_init_writes_grep_safe_env(_wizard_env: Path, monkeypatch: pytest.Monkey
     env_text = (_wizard_env / ".env").read_text()
     assert "VMWARE_LAB_VC_PASSWORD=b64:" in env_text
     assert "S3cr3t!pw" not in env_text  # never plaintext on disk
-    assert (_wizard_env / ".env").stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":  # POSIX file modes are not preserved on Windows
+        assert (_wizard_env / ".env").stat().st_mode & 0o777 == 0o600
     line = next(ln for ln in env_text.splitlines() if ln.startswith("VMWARE_LAB_VC_PASSWORD="))
     assert _decode_secret(line.split("=", 1)[1]) == "S3cr3t!pw"
 

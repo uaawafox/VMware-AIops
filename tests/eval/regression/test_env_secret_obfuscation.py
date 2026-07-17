@@ -12,6 +12,7 @@ import importlib
 import os
 import stat
 
+import pytest
 from dotenv import dotenv_values
 
 config = importlib.import_module("vmware_aiops.config")
@@ -80,6 +81,7 @@ def test_idempotent_already_encoded_not_rewritten(tmp_path):
     assert env.read_text(encoding="utf-8") == first
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes are not preserved on Windows")
 def test_autoencode_preserves_0600_permissions(tmp_path):
     env = _write_env(tmp_path, "VMWARE_PROD_PASSWORD=Secr3t\n")
     config._autoencode_env_file(env)

@@ -33,7 +33,9 @@ DESTRUCTIVE_CLI_COMMANDS: list[tuple[str, str]] = [
 
 
 def _has_confirm_guard(file_path: Path, func_name: str) -> bool:
-    tree = ast.parse(file_path.read_text())
+    # encoding pinned: the CLI sources are UTF-8 and read_text() defaults to
+    # the locale encoding, which is cp1252 on Windows checkouts.
+    tree = ast.parse(file_path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
             source = ast.dump(node)
