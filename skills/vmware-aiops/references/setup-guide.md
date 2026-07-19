@@ -17,10 +17,18 @@ clawhub install vmware-aiops
 
 ### Claude Code
 
+`npx skills add` and `clawhub install` both place the skill in Claude Code's skills
+directory. To install it manually from a clone:
+
+```bash
+mkdir -p ~/.claude/skills/vmware-aiops
+cp -r skills/vmware-aiops/. ~/.claude/skills/vmware-aiops/
 ```
-/plugin marketplace add zw008/VMware-AIops
-/plugin install vmware-ops
-/vmware-ops:vmware-aiops
+
+For tool access (not just skill context), register the MCP server:
+
+```bash
+claude mcp add vmware-aiops -- vmware-aiops mcp
 ```
 
 ## Configuration
@@ -129,14 +137,14 @@ The MCP server also logs a warning at start-up naming every tool it withheld. Th
 
 | Platform | Status | Config File |
 |----------|--------|-------------|
-| Claude Code | ✅ Native Skill | `plugins/.../SKILL.md` |
-| Gemini CLI | ✅ Extension | `gemini-extension/GEMINI.md` |
-| OpenAI Codex CLI | ✅ Skill + AGENTS.md | `codex-skill/AGENTS.md` |
-| Aider | ✅ Conventions | `codex-skill/AGENTS.md` |
-| Continue CLI | ✅ Rules | `codex-skill/AGENTS.md` |
-| Trae IDE | ✅ Rules | `trae-rules/project_rules.md` |
-| Kimi Code CLI | ✅ Skill | `kimi-skill/SKILL.md` |
-| MCP Server | ✅ MCP Protocol | `mcp_server/` |
+| Claude Code | ✅ Native Skill | `skills/vmware-aiops/SKILL.md` |
+| Gemini CLI | ✅ Context file + MCP | `skills/vmware-aiops/SKILL.md` |
+| OpenAI Codex CLI | ✅ Skill + AGENTS.md | `skills/vmware-aiops/SKILL.md` |
+| Aider | ✅ Conventions | `skills/vmware-aiops/SKILL.md` |
+| Continue CLI | ✅ Rules | `skills/vmware-aiops/SKILL.md` |
+| Trae IDE | ✅ Rules | `skills/vmware-aiops/SKILL.md` |
+| Kimi Code CLI | ✅ Skill | `skills/vmware-aiops/SKILL.md` |
+| MCP Server | ✅ MCP Protocol | `vmware_aiops/mcp_server/` |
 | Python CLI | ✅ Standalone | N/A |
 
 ## MCP Server — Local Agent Compatibility
@@ -155,7 +163,7 @@ The MCP server works with any MCP-compatible agent via stdio transport. Config t
 
 ```bash
 # Example: Aider + Ollama (fully local, no cloud API)
-aider --conventions codex-skill/AGENTS.md --model ollama/qwen2.5-coder:32b
+aider --conventions skills/vmware-aiops/SKILL.md --model ollama/qwen2.5-coder:32b
 ```
 
 ## MCP Mode (Optional)

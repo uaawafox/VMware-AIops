@@ -1,8 +1,8 @@
 """Shared MCP server primitives: the FastMCP instance, connection helper,
 error sanitisation, and the ``@tool_errors`` decorator.
 
-Tool modules under ``mcp_server/tools/`` import ``mcp`` from here and register
-their ``@mcp.tool()`` functions onto it. ``mcp_server/server.py`` then imports
+Tool modules under ``vmware_aiops/mcp_server/tools/`` import ``mcp`` from here and register
+their ``@mcp.tool()`` functions onto it. ``vmware_aiops/mcp_server/server.py`` then imports
 those modules and runs the server.
 
 Keep ``Optional[X]`` (never PEP 604 ``X | None``) in any FastMCP-reflected
@@ -23,6 +23,8 @@ from vmware_aiops.config import load_config
 from vmware_aiops.connection import ConnectionManager
 from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
 from vmware_aiops.ops.guest_ops import GuestOpsError
+from vmware_aiops.ops.inventory import InventoryError
+from vmware_aiops.ops.iscsi_config import HostNotFoundError, ISCSIError
 from vmware_aiops.ops.vm_lifecycle import TaskFailedError, VMNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -38,9 +40,15 @@ def _safe_error(exc: Exception, tool: str) -> str:
     a control-char-stripped, length-capped message. Intentional validation
     errors and domain exceptions carrying teaching messages (VMNotFoundError,
     GuestOpsError, TaskFailedError, ClusterNotFoundError, ClusterError,
-    TimeoutError, ConnectionError) pass through sanitized — a dropped
-    connection should surface its teaching hint, matching the CLE path
-    (which catches OSError) rather than being masked as "operation failed".
+    InventoryError, HostNotFoundError, ISCSIError, TimeoutError,
+    ConnectionError) pass through sanitized — a dropped connection should
+    surface its teaching hint, matching the CLE path (which catches OSError)
+    rather than being masked as "operation failed".
+
+    Every domain exception defined under ``vmware_aiops.ops`` belongs in
+    ``_passthrough``: each one carries a rewritten teaching message, and
+    omitting it replaces that message with "operation failed", which is the
+    exact dead end those rewrites exist to remove.
     """
     logger.error("Tool %s failed", tool, exc_info=True)
     _passthrough = (
@@ -55,6 +63,9 @@ def _safe_error(exc: Exception, tool: str) -> str:
         TaskFailedError,
         ClusterNotFoundError,
         ClusterError,
+        InventoryError,
+        HostNotFoundError,
+        ISCSIError,
     )
     if isinstance(exc, _passthrough):
         return sanitize(str(exc), 300)

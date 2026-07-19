@@ -4,7 +4,7 @@ from typing import Optional
 
 from vmware_policy import paginated, vmware_tool
 
-from mcp_server._shared import _get_connection, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops.vm_lifecycle import (
     clone_vm,
     create_snapshot,

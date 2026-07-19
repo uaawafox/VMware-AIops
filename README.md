@@ -71,19 +71,6 @@ pip install vmware-aiops
 pip install vmware-aiops -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-### Claude Code Plugin Install
-
-```bash
-# Add marketplace
-/plugin marketplace add zw008/VMware-AIops
-
-# Install plugin
-/plugin install vmware-ops
-
-# Use the skill
-/vmware-ops:vmware-aiops
-```
-
 ---
 
 ## Why this over other VMware MCP servers
@@ -383,13 +370,13 @@ Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to
 | Platform | Status | Config File | AI Model |
 |----------|--------|-------------|----------|
 | **Claude Code** | ✅ Native Skill | `skills/vmware-aiops/SKILL.md` | Anthropic Claude |
-| **Gemini CLI** | ✅ Extension | `gemini-extension/GEMINI.md` | Google Gemini |
-| **OpenAI Codex CLI** | ✅ Skill + AGENTS.md | `codex-skill/AGENTS.md` | OpenAI GPT |
-| **Aider** | ✅ Conventions | `codex-skill/AGENTS.md` | Any (cloud + local) |
-| **Continue CLI** | ✅ Rules | `codex-skill/AGENTS.md` | Any (cloud + local) |
-| **Trae IDE** | ✅ Rules | `trae-rules/project_rules.md` | Claude/DeepSeek/GPT-4o/Doubao |
-| **Kimi Code CLI** | ✅ Skill | `kimi-skill/SKILL.md` | Moonshot Kimi |
-| **MCP Server** | ✅ MCP Protocol | `mcp_server/` | Any MCP client |
+| **Gemini CLI** | ✅ Context file + MCP | `skills/vmware-aiops/SKILL.md` | Google Gemini |
+| **OpenAI Codex CLI** | ✅ Skill + AGENTS.md | `skills/vmware-aiops/SKILL.md` | OpenAI GPT |
+| **Aider** | ✅ Conventions | `skills/vmware-aiops/SKILL.md` | Any (cloud + local) |
+| **Continue CLI** | ✅ Rules | `skills/vmware-aiops/SKILL.md` | Any (cloud + local) |
+| **Trae IDE** | ✅ Rules | `skills/vmware-aiops/SKILL.md` | Claude/DeepSeek/GPT-4o/Doubao |
+| **Kimi Code CLI** | ✅ Skill | `skills/vmware-aiops/SKILL.md` | Moonshot Kimi |
+| **MCP Server** | ✅ MCP Protocol | `vmware_aiops/mcp_server/` | Any MCP client |
 | **Python CLI** | ✅ Standalone | N/A | N/A |
 
 ### Platform Comparison
@@ -398,7 +385,7 @@ Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to
 |---------|-------------|------------|-----------|-------|----------|----------|----------|
 | Cloud AI | Anthropic | Google | OpenAI | Any | Any | Multi | Moonshot |
 | Local models | — | — | — | Ollama | Ollama | — | — |
-| Skill system | SKILL.md | Extension | SKILL.md | — | Rules | Rules | SKILL.md |
+| Skill system | SKILL.md | Context file | SKILL.md | — | Rules | Rules | SKILL.md |
 | MCP support | Native | Native | Via Skills | Third-party | Native | — | — |
 | Free tier | — | 60 req/min | — | Self-hosted | Self-hosted | — | — |
 
@@ -419,8 +406,8 @@ The vmware-aiops MCP server works with **any MCP-compatible agent or tool**. Rea
 **Fully local operation** (no cloud API required):
 
 ```bash
-# Aider + Ollama + vmware-aiops (via AGENTS.md)
-aider --conventions codex-skill/AGENTS.md --model ollama/qwen2.5-coder:32b
+# Aider + Ollama + vmware-aiops (via SKILL.md)
+aider --conventions skills/vmware-aiops/SKILL.md --model ollama/qwen2.5-coder:32b
 
 # Any MCP agent + local model + vmware-aiops MCP server
 # See examples/mcp-configs/ for your agent's config format
@@ -499,54 +486,38 @@ Choose one (or more) of the following:
 
 ---
 
-#### Option A: Claude Code (Marketplace)
+#### Option A: Claude Code
 
-**Method 1: Marketplace (recommended)**
+**Method 1: Skills.sh or ClawHub (recommended)**
 
-In Claude Code, run:
-```
-/plugin marketplace add zw008/VMware-AIops
-/plugin install vmware-ops
-```
-
-Then use:
-```
-/vmware-ops:vmware-aiops
-> Show me all VMs on esxi-lab.example.com
-```
-
-**Method 2: Local install**
+Either installer places the skill in Claude Code's skills directory for you:
 
 ```bash
-# Clone and symlink
+npx skills add zw008/VMware-AIops
+# or
+clawhub install vmware-aiops
+```
+
+**Method 2: Manual skill install**
+
+```bash
 git clone https://github.com/zw008/VMware-AIops.git
-ln -sf $(pwd)/VMware-AIops ~/.claude/plugins/marketplaces/vmware-aiops
+cd VMware-AIops
 
-# Register marketplace
-python3 -c "
-import json, pathlib
-f = pathlib.Path.home() / '.claude/plugins/known_marketplaces.json'
-d = json.loads(f.read_text()) if f.exists() else {}
-d['vmware-aiops'] = {
-    'source': {'source': 'github', 'repo': 'zw008/VMware-AIops'},
-    'installLocation': str(pathlib.Path.home() / '.claude/plugins/marketplaces/vmware-aiops')
-}
-f.write_text(json.dumps(d, indent=2))
-"
+# Copy the skill into Claude Code's personal skills directory
+mkdir -p ~/.claude/skills/vmware-aiops
+cp -r skills/vmware-aiops/. ~/.claude/skills/vmware-aiops/
+```
 
-# Enable plugin
-python3 -c "
-import json, pathlib
-f = pathlib.Path.home() / '.claude/settings.json'
-d = json.loads(f.read_text()) if f.exists() else {}
-d.setdefault('enabledPlugins', {})['vmware-ops@vmware-aiops'] = True
-f.write_text(json.dumps(d, indent=2))
-"
+For tool access (not just skill context), also register the MCP server:
+
+```bash
+claude mcp add vmware-aiops -- vmware-aiops mcp
 ```
 
 Restart Claude Code, then:
 ```
-/vmware-ops:vmware-aiops
+> Show me all VMs on esxi-lab.example.com
 ```
 
 **Submit to Official Marketplace**
@@ -561,11 +532,22 @@ This plugin can also be submitted to the [Anthropic official plugin directory](h
 # Install Gemini CLI
 npm install -g @google/gemini-cli
 
-# Install the extension from the cloned repo
-gemini extensions install ./gemini-extension
+# Load the skill as project context (Gemini CLI reads GEMINI.md on startup)
+cp skills/vmware-aiops/SKILL.md ./GEMINI.md
+```
 
-# Or install directly from GitHub
-# gemini extensions install https://github.com/zw008/VMware-AIops
+For tool access (not just context), register the MCP server in `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "vmware-aiops": {
+      "command": "vmware-aiops",
+      "args": ["mcp"],
+      "env": { "VMWARE_AIOPS_CONFIG": "~/.vmware-aiops/config.yaml" }
+    }
+  }
+}
 ```
 
 Then start Gemini CLI:
@@ -586,10 +568,10 @@ npm i -g @openai/codex
 
 # Copy skill to Codex skills directory
 mkdir -p ~/.codex/skills/vmware-aiops
-cp codex-skill/SKILL.md ~/.codex/skills/vmware-aiops/SKILL.md
+cp skills/vmware-aiops/SKILL.md ~/.codex/skills/vmware-aiops/SKILL.md
 
 # Copy AGENTS.md to project root
-cp codex-skill/AGENTS.md ./AGENTS.md
+cp skills/vmware-aiops/SKILL.md ./AGENTS.md
 ```
 
 Then start Codex CLI:
@@ -612,10 +594,10 @@ brew install ollama
 ollama pull qwen2.5-coder:32b
 
 # Run with cloud API
-aider --conventions codex-skill/AGENTS.md
+aider --conventions skills/vmware-aiops/SKILL.md
 
 # Or with local model via Ollama
-aider --conventions codex-skill/AGENTS.md \
+aider --conventions skills/vmware-aiops/SKILL.md \
   --model ollama/qwen2.5-coder:32b
 ```
 
@@ -629,7 +611,7 @@ npm i -g @continuedev/cli
 
 # Copy rules file
 mkdir -p .continue/rules
-cp codex-skill/AGENTS.md .continue/rules/vmware-aiops.md
+cp skills/vmware-aiops/SKILL.md .continue/rules/vmware-aiops.md
 ```
 
 Configure `~/.continue/config.yaml` for local model:
@@ -654,7 +636,7 @@ Copy the rules file to your project's `.trae/rules/` directory:
 
 ```bash
 mkdir -p .trae/rules
-cp trae-rules/project_rules.md .trae/rules/project_rules.md
+cp skills/vmware-aiops/SKILL.md .trae/rules/project_rules.md
 ```
 
 Trae IDE's Builder Mode reads `.trae/rules/` Markdown files at startup.
@@ -668,7 +650,7 @@ Trae IDE's Builder Mode reads `.trae/rules/` Markdown files at startup.
 ```bash
 # Copy skill file to Kimi skills directory
 mkdir -p ~/.kimi/skills/vmware-aiops
-cp kimi-skill/SKILL.md ~/.kimi/skills/vmware-aiops/SKILL.md
+cp skills/vmware-aiops/SKILL.md ~/.kimi/skills/vmware-aiops/SKILL.md
 ```
 
 ---
@@ -746,7 +728,6 @@ Already installed? Re-run the install command for your channel to get the latest
 |----------------|----------------|
 | ClawHub | `clawhub install vmware-aiops` |
 | Skills.sh | `npx skills add zw008/VMware-AIops` |
-| Claude Code Plugin | `/plugin marketplace add zw008/VMware-AIops` |
 | Git clone | `cd VMware-AIops && git pull origin main && uv pip install -e .` |
 | uv | `uv tool install vmware-aiops --force` |
 
@@ -767,14 +748,14 @@ Cost-effective, strong coding capability.
 export DEEPSEEK_API_KEY="your-key"
 
 # Run with Aider
-aider --conventions codex-skill/AGENTS.md \
+aider --conventions skills/vmware-aiops/SKILL.md \
   --model deepseek/deepseek-coder
 ```
 
 Persistent config `~/.aider.conf.yml`:
 ```yaml
 model: deepseek/deepseek-coder
-conventions: codex-skill/AGENTS.md
+conventions: skills/vmware-aiops/SKILL.md
 ```
 
 ### Qwen (Alibaba Cloud)
@@ -785,7 +766,7 @@ Alibaba Cloud's coding model, free tier available.
 # Set DashScope API key (get from https://dashscope.console.aliyun.com)
 export DASHSCOPE_API_KEY="your-key"
 
-aider --conventions codex-skill/AGENTS.md \
+aider --conventions skills/vmware-aiops/SKILL.md \
   --model qwen/qwen-coder-plus
 ```
 
@@ -794,7 +775,7 @@ Or via OpenAI-compatible endpoint:
 export OPENAI_API_BASE="https://dashscope.aliyuncs.com/compatible-mode/v1"
 export OPENAI_API_KEY="your-dashscope-key"
 
-aider --conventions codex-skill/AGENTS.md \
+aider --conventions skills/vmware-aiops/SKILL.md \
   --model qwen-coder-plus-latest
 ```
 
@@ -804,7 +785,7 @@ aider --conventions codex-skill/AGENTS.md \
 export OPENAI_API_BASE="https://ark.cn-beijing.volces.com/api/v3"
 export OPENAI_API_KEY="your-ark-key"
 
-aider --conventions codex-skill/AGENTS.md \
+aider --conventions skills/vmware-aiops/SKILL.md \
   --model your-doubao-endpoint-id
 ```
 
@@ -866,22 +847,22 @@ pip install aider-chat
 ollama serve
 
 # Aider + local Qwen (recommended)
-aider --conventions codex-skill/AGENTS.md \
+aider --conventions skills/vmware-aiops/SKILL.md \
   --model ollama/qwen2.5-coder:32b
 
 # Aider + local DeepSeek
-aider --conventions codex-skill/AGENTS.md \
+aider --conventions skills/vmware-aiops/SKILL.md \
   --model ollama/deepseek-coder-v2
 
 # Low-memory option
-aider --conventions codex-skill/AGENTS.md \
+aider --conventions skills/vmware-aiops/SKILL.md \
   --model ollama/qwen2.5-coder:7b
 ```
 
 Persistent config `~/.aider.conf.yml`:
 ```yaml
 model: ollama/qwen2.5-coder:32b
-conventions: codex-skill/AGENTS.md
+conventions: skills/vmware-aiops/SKILL.md
 ```
 
 ### Local Architecture
@@ -1004,15 +985,6 @@ See `config.example.yaml` for all options.
 
 ```
 VMware-AIops/
-├── .claude-plugin/                # Claude Code marketplace manifest
-│   └── marketplace.json
-├── plugins/                       # Claude Code plugin
-│   └── vmware-ops/
-│       ├── .claude-plugin/
-│       │   └── plugin.json
-│       └── skills/
-│           └── vmware-aiops/
-│               └── SKILL.md       # Full operations skill
 ├── skills/                        # Skills index (npx skills add)
 │   └── vmware-aiops/
 │       ├── SKILL.md               # Slimmed-down skill (progressive disclosure)
@@ -1023,7 +995,7 @@ VMware-AIops/
 ├── vmware_aiops/                  # Python backend
 │   ├── config.py                  # YAML + .env config
 │   ├── connection.py              # Multi-target pyVmomi
-│   ├── cli.py                     # Typer CLI (double confirm)
+│   ├── cli/                       # Typer CLI (double confirm)
 │   ├── ops/                       # Operations
 │   │   ├── inventory.py           # VMs, hosts, datastores, clusters
 │   │   ├── health.py              # Alarms, events, sensors
@@ -1031,20 +1003,12 @@ VMware-AIops/
 │   │   ├── vm_deploy.py           # OVA, template, linked clone, batch deploy
 │   │   └── datastore_browser.py   # Datastore browsing, image discovery
 │   ├── scanner/                   # Log scanning daemon
-│   └── notify/                    # Notifications (JSONL + webhook)
-├── gemini-extension/              # Gemini CLI extension
-│   ├── gemini-extension.json
-│   └── GEMINI.md
-├── codex-skill/                   # Codex + Aider + Continue
-│   ├── SKILL.md
-│   └── AGENTS.md
-├── trae-rules/                    # Trae IDE rules
-│   └── project_rules.md
-├── kimi-skill/                    # Kimi Code CLI skill
-│   └── SKILL.md
-├── mcp_server/                    # MCP server wrapper
-│   ├── server.py                  # FastMCP server with tools
-│   └── __main__.py
+│   ├── notify/                    # Notifications (JSONL + webhook)
+│   └── mcp_server/                # MCP server wrapper
+│       ├── server.py              # FastMCP server with tools
+│       └── __main__.py
+├── examples/mcp-configs/          # MCP client config templates
+├── tests/                         # Test suite
 ├── smithery.yaml                  # Smithery marketplace config
 ├── RELEASE_NOTES.md
 ├── config.example.yaml

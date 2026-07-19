@@ -146,7 +146,10 @@ class TargetConfig:
         pw = os.environ.get(env_key, "")
         if not pw:
             raise OSError(
-                f"Password not found. Set environment variable: {env_key}"
+                f"Password not found for target '{self.name}'. "
+                f"Set environment variable {env_key}, or add "
+                f"{env_key}=<password> to {ENV_FILE} (chmod 600). "
+                f"Run 'vmware-aiops init' to do both, then 'vmware-aiops doctor' to verify."
             )
         return _decode_secret(pw)
 
@@ -190,7 +193,11 @@ class AppConfig:
             if t.name == name:
                 return t
         available = ", ".join(t.name for t in self.targets)
-        raise KeyError(f"Target '{name}' not found. Available: {available}")
+        raise KeyError(
+            f"Target '{name}' not found. Available: {available}. "
+            f"Pass --target with one of those names, or add the target to "
+            f"{CONFIG_FILE} and re-run."
+        )
 
     def environment_for(self, name: str | None) -> str:
         """Return the environment declared by ``name``, or by the default target.
@@ -209,7 +216,10 @@ class AppConfig:
     @property
     def default_target(self) -> TargetConfig:
         if not self.targets:
-            raise ValueError("No targets configured. Check config.yaml")
+            raise ValueError(
+                f"No targets configured in {CONFIG_FILE}. "
+                f"Run 'vmware-aiops init' to create one, then 'vmware-aiops doctor' to verify."
+            )
         return self.targets[0]
 
 
@@ -219,7 +229,8 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     if not path.exists():
         raise FileNotFoundError(
             f"Config file not found: {path}\n"
-            f"Copy config.example.yaml to {CONFIG_FILE} and edit it."
+            f"Run 'vmware-aiops init' to create it, or copy config.example.yaml "
+            f"to {CONFIG_FILE} and edit it."
         )
 
     with open(path) as f:

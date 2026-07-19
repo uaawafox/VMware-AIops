@@ -15,7 +15,7 @@ from vmware_monitor.ops.investigate_host import get_host_investigation_bundle
 from vmware_monitor.ops.investigate_vm import get_vm_investigation_bundle
 from vmware_policy import vmware_tool
 
-from mcp_server._shared import _ensure_conn_mgr, _get_connection, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _ensure_conn_mgr, _get_connection, mcp, tool_errors
 
 
 @mcp.tool(

@@ -208,7 +208,7 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 
 ## Read-Only Mode
 
-If a write tool described above is absent from `list_tools()`, this deployment is in read-only mode: `VMWARE_READ_ONLY=true` (or `VMWARE_AIOPS_READ_ONLY`, or `read_only: true` in config.yaml) withholds all 36 write-effecting tools at start-up — the 35 writes plus `vm_guest_download`, which writes to a local path. That is a deliberate lockdown, not a fault — do not retry, and do not look for another tool that achieves the same change. Name the operation that is blocked and say an operator must clear the switch and restart the server. The 13 read tools are unaffected. `vmware-aiops doctor` reports the current state and its source.
+If a write tool described above is absent from `list_tools()`, this deployment is in read-only mode: `VMWARE_READ_ONLY=true` (or `VMWARE_AIOPS_READ_ONLY`, or `read_only: true` in config.yaml) withholds all 36 write-effecting tools at start-up — the 35 writes plus `vm_guest_download`, which writes to a local path. That is a deliberate lockdown, not a fault — do not retry, and do not look for another tool that achieves the same change. Name the operation that is blocked and say an operator must clear the switch and restart the server. The 13 read tools are unaffected. `vmware-aiops doctor` reports the current state and its source. Running with local or small models? See [`references/agent-guardrails.md`](references/agent-guardrails.md).
 
 ## CLI Quick Reference
 

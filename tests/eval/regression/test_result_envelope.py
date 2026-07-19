@@ -256,7 +256,7 @@ def test_batch_write_tools_still_return_a_bare_list(tool_name) -> None:
     deliberate, so it is pinned rather than left to the next refactor's
     judgement.
     """
-    from mcp_server.tools import deploy
+    from vmware_aiops.mcp_server.tools import deploy
 
     fn = inspect.unwrap(getattr(deploy, tool_name))
     assert (

@@ -190,15 +190,27 @@ def _validate_vm_params(
     """Validate VM parameter ranges. Raises typer.BadParameter on invalid input."""
     if name is not None:
         if not name or len(name) > 80:
-            raise typer.BadParameter(f"VM name must be 1-80 characters, got {len(name or '')}.")
+            raise typer.BadParameter(
+                f"VM name must be 1-80 characters, got {len(name or '')}. "
+                f"Pass a shorter NAME argument and re-run the vmware-aiops command."
+            )
         if name.startswith("-") or name.startswith("."):
-            raise typer.BadParameter("VM name must not start with '-' or '.'.")
+            raise typer.BadParameter(
+                f"VM name '{name}' must not start with '-' or '.'. "
+                f"Rename it to start with a letter or digit, then re-run the "
+                f"vmware-aiops command."
+            )
     if cpu is not None and not (1 <= cpu <= 128):
-        raise typer.BadParameter(f"CPU count must be 1-128, got {cpu}.")
+        raise typer.BadParameter(f"CPU count must be 1-128, got {cpu}. Pass --cpu in that range.")
     if memory_mb is not None and not (128 <= memory_mb <= 1_048_576):
-        raise typer.BadParameter(f"Memory must be 128-1048576 MB, got {memory_mb}.")
+        raise typer.BadParameter(
+            f"Memory must be 128-1048576 MB, got {memory_mb}. "
+            f"Pass --memory in that range (MB, not GB)."
+        )
     if disk_gb is not None and not (1 <= disk_gb <= 65_536):
-        raise typer.BadParameter(f"Disk size must be 1-65536 GB, got {disk_gb}.")
+        raise typer.BadParameter(
+            f"Disk size must be 1-65536 GB, got {disk_gb}. Pass --disk in that range (GB)."
+        )
 
 
 def _double_confirm(

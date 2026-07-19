@@ -1,3 +1,78 @@
+## v1.8.2 (2026-07-20) — the MCP server moves into the package namespace
+
+### Fixed — co-installing two skills broke all but the last one
+
+Every skill shipped its MCP server as a **top-level `mcp_server` package**. Python
+has one top-level namespace, so installing any two of them into one environment let
+the second overwrite the first — silently, with no error and no warning.
+
+    uv tool install vmware-aiops   ->  49 tools   (correct)
+    uv pip  install vmware-aiops   ->  27 tools   (Monitor's read-only server)
+
+vmware-aiops depends on vmware-monitor, so this was not an edge case: **every pip
+install hit it**, and the operator got 27 read-only tools where 49 were expected,
+with all 35 write tools missing. Docker images, shared MCP hosts and CI runners that
+install more than one skill were affected the same way.
+
+The server now lives at `vmware_<skill>/mcp_server/`, a name only this package can
+claim. Introduced 2026-02-26; it survived 70 releases because every test ran against
+a single package in its own repo, where the local directory shadows site-packages —
+the conflict was invisible by construction.
+
+**Migration.** Console scripts are unchanged: `vmware-<skill>` and
+`vmware-<skill>-mcp` work exactly as before, as does `"command": "vmware-<skill>",
+"args": ["mcp"]` in an MCP client config. Only a direct `python -m mcp_server`
+breaks; use `python -m vmware_<skill>.mcp_server`.
+
+### Added — `references/agent-guardrails.md` in every skill
+
+The operating rules for local and small models (Llama 3.3 70B, Qwen, Mistral via
+Goose / Ollama / OpenShift AI) existed in two skills. They now ship in all 13, each
+with its own tool counts and failure modes, and are linked from every SKILL.md.
+
+### Changed — 46 error messages rewritten to teach recovery
+
+A large model reads `VM 'web-99' not found` and recovers on its own. A small model
+either surfaces it as a dead end or smooths it into a confident, wrong summary — the
+failure [VMware-AIops#31](https://github.com/zw008/VMware-AIops/issues/31) reported.
+The difference is entirely in the message text.
+
+    error_actionability  43.5% -> 90.5%
+    teaching_error_rate  10.2% -> 77.6%   (5/49 -> 38/49)
+    dead-end errors      35/49 -> 2/49
+
+Two shipped bugs surfaced while doing it: `_safe_error` silently swallowed
+`InventoryError`, `HostNotFoundError` and `ISCSIError` (their text became
+`"InventoryError: operation failed."` over MCP), and two error messages named
+commands that do not exist — `vmware-aiops storage iscsi-enable` (there is no
+`storage` command here) and `vm guest-exec` for host maintenance mode (that runs
+inside a guest, not on a host).
+
+The three raises left alone are the ones where no advice would be true: a
+vCenter-supplied non-HTTPS lease URL, and a malformed inventory graph. Inventing a
+remedy scores better and helps nobody.
+
+### Fixed — documentation that pointed at files which do not exist
+
+93 install instructions across Monitor and AIops told operators to copy
+`codex-skill/AGENTS.md`, `gemini-extension/GEMINI.md`, `trae-rules/project_rules.md`
+or `kimi-skill/SKILL.md`. None of those directories exist in any repo, and CLAUDE.md
+forbids recreating them — so every one of those commands failed. Where a platform
+reads plain markdown (Codex, Kimi, Trae, Aider, Continue) they now point at the real
+`skills/vmware-<skill>/SKILL.md`; Gemini CLI, which needs a manifest none of the
+repos ship, was downgraded to the context-file and MCP paths that do work.
+
+`/plugin marketplace add` was removed from both repos and from three setup guides:
+the `plugins/` source directory it needs was deleted in March and is on CLAUDE.md's
+forbidden list, so that path could not be made to work either.
+
+### Removed — `.claude-plugin/marketplace.json` and the stale `.agents/` copy
+
+The manifest's `source: "./plugins/vmware-ops"` pointed at a directory deleted on
+2026-03-22; it had been broken for four months and was still at version 1.0.16. The
+`.agents/` copy was a 2026-04 snapshot that had diverged 314 lines from the
+maintained SKILL.md, hidden from `git status` by its own `.gitignore` entry.
+
 ## v1.8.1 (2026-07-19) — read-only mode reaches the surfaces that teach it
 
 v1.8.0 put read-only mode in the code and documented it in the README only.

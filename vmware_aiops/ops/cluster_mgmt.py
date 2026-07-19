@@ -36,7 +36,11 @@ def _require_cluster(
     """Find a cluster or raise ClusterNotFoundError."""
     cluster = find_cluster_by_name(si, cluster_name)
     if cluster is None:
-        raise ClusterNotFoundError(f"Cluster '{cluster_name}' not found")
+        raise ClusterNotFoundError(
+            f"Cluster '{cluster_name}' not found. Run cluster_health_summary "
+            f"(CLI: vmware-aiops summary) to see every cluster name on this target, "
+            f"then retry with an exact name."
+        )
     return cluster
 
 
@@ -116,13 +120,18 @@ def create_cluster(
     if drs_behavior not in _VALID_DRS_BEHAVIORS:
         raise ClusterError(
             f"Invalid DRS behavior '{drs_behavior}'. "
-            f"Valid: {sorted(_VALID_DRS_BEHAVIORS)}"
+            f"Valid: {sorted(_VALID_DRS_BEHAVIORS)}. "
+            f"Pass --drs-behavior (MCP arg: drs_behavior) with one of those exact values."
         )
 
     # Check if cluster already exists
     existing = find_cluster_by_name(si, cluster_name)
     if existing is not None:
-        raise ClusterError(f"Cluster '{cluster_name}' already exists")
+        raise ClusterError(
+            f"Cluster '{cluster_name}' already exists. Run cluster_info "
+            f"(CLI: vmware-aiops cluster info '{cluster_name}') to inspect it, "
+            f"or retry create with a different name."
+        )
 
     dc = _get_datacenter(si, datacenter_name)
 
@@ -156,7 +165,8 @@ def delete_cluster(si: ServiceInstance, cluster_name: str) -> str:
         host_names = [h.name for h in cluster.host]
         raise ClusterError(
             f"Cluster '{cluster_name}' still has {len(cluster.host)} host(s): "
-            f"{', '.join(host_names)}. Remove all hosts before deleting."
+            f"{', '.join(host_names)}. Remove each one first with cluster_remove_host "
+            f"(CLI: vmware-aiops cluster remove-host), then retry the delete."
         )
 
     task = cluster.Destroy_Task()
@@ -180,7 +190,12 @@ def add_host_to_cluster(
     cluster = _require_cluster(si, cluster_name)
     host = find_host_by_name(si, host_name)
     if host is None:
-        raise ClusterError(f"Host '{host_name}' not found")
+        raise ClusterError(
+            f"Host '{host_name}' not found in this vCenter's inventory. Run cluster_info "
+            f"with name='{cluster_name}' to see that cluster's member hosts, or "
+            f"list_esxi_hosts (vmware-monitor skill) for every host, then retry with an "
+            f"exact name."
+        )
 
     # Check if already in this cluster
     for h in cluster.host or []:
@@ -204,17 +219,28 @@ def remove_host_from_cluster(
     cluster = _require_cluster(si, cluster_name)
     host = find_host_by_name(si, host_name)
     if host is None:
-        raise ClusterError(f"Host '{host_name}' not found")
+        raise ClusterError(
+            f"Host '{host_name}' not found in this vCenter's inventory. Run cluster_info "
+            f"with name='{cluster_name}' to see that cluster's member hosts, or "
+            f"list_esxi_hosts (vmware-monitor skill) for every host, then retry with an "
+            f"exact name."
+        )
 
     # Verify host is in this cluster
     in_cluster = any(h.name == host_name for h in (cluster.host or []))
     if not in_cluster:
-        raise ClusterError(f"Host '{host_name}' is not in cluster '{cluster_name}'")
+        raise ClusterError(
+            f"Host '{host_name}' is not in cluster '{cluster_name}'. Run cluster_info "
+            f"with name='{cluster_name}' to see its actual members, then retry with a "
+            f"host from that list."
+        )
 
     if not host.runtime.inMaintenanceMode:
         raise ClusterError(
             f"Host '{host_name}' must be in maintenance mode before removal. "
-            f"Use: vmware-aiops vm guest-exec or ESXi UI to enter maintenance mode."
+            f"Enter it from the vSphere Client (Host > Maintenance Mode), or on the "
+            f"host run: esxcli system maintenanceMode set --enable true. Confirm with "
+            f"cluster_info, then retry."
         )
 
     # Walk up from cluster to find its owning datacenter
@@ -250,7 +276,8 @@ def configure_cluster(
     if drs_behavior is not None and drs_behavior not in _VALID_DRS_BEHAVIORS:
         raise ClusterError(
             f"Invalid DRS behavior '{drs_behavior}'. "
-            f"Valid: {sorted(_VALID_DRS_BEHAVIORS)}"
+            f"Valid: {sorted(_VALID_DRS_BEHAVIORS)}. "
+            f"Pass --drs-behavior (MCP arg: drs_behavior) with one of those exact values."
         )
 
     cluster = _require_cluster(si, cluster_name)

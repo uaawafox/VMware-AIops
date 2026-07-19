@@ -47,14 +47,23 @@ def _require_vm_with_tools(
     """Find VM and verify VMware Tools is running."""
     vm = find_vm_by_name(si, vm_name)
     if vm is None:
-        raise VMNotFoundError(f"VM '{vm_name}' not found")
+        raise VMNotFoundError(
+            f"VM '{vm_name}' not found. Run list_virtual_machines (vmware-monitor skill, "
+            f"filter by name e.g. '{vm_name[:3]}*') to see available VMs and copy an "
+            f"exact name — vSphere VM names are case-sensitive."
+        )
     if vm.runtime.powerState != vim.VirtualMachine.PowerState.poweredOn:
-        raise GuestOpsError(f"VM '{vm_name}' is not powered on")
+        raise GuestOpsError(
+            f"VM '{vm_name}' is not powered on. Guest operations need a running guest: "
+            f"run vm_power_on (CLI: vmware-aiops vm power-on '{vm_name}'), wait for the "
+            f"guest to boot, then retry."
+        )
     tools_status = vm.guest.toolsRunningStatus if vm.guest else None
     if tools_status != "guestToolsRunning":
         raise GuestOpsError(
-            f"VMware Tools not running on '{vm_name}' "
-            f"(status: {tools_status}). Guest operations require running Tools."
+            f"VMware Tools not running on '{vm_name}' (status: {tools_status}). "
+            f"Install or start VMware Tools inside the guest, then check the new status "
+            f"with vm_info (CLI: vmware-monitor vm info '{vm_name}') before retrying."
         )
     return vm
 
@@ -407,10 +416,16 @@ def guest_upload(
     local = Path(local_path).expanduser()
     if not local.is_file():
         raise ValueError(
-            f"Local upload source not found or not a regular file: {local_path}"
+            f"Local upload source is not an existing regular file: {local}. "
+            f"This path is read on the machine running vmware-aiops, not inside the "
+            f"guest. Check it exists, then pass an absolute path to --local."
         )
     if not os.access(local, os.R_OK):
-        raise PermissionError(f"Cannot read local upload source: {local_path}")
+        raise PermissionError(
+            f"Cannot read local upload source: {local}. Grant read permission "
+            f"(chmod +r) to the user running vmware-aiops, or pass a readable "
+            f"path to --local."
+        )
     with open(local, "rb") as f:
         file_data = f.read()
 
@@ -499,7 +514,11 @@ def guest_download(
     # parent dir if needed.
     local = Path(local_path).expanduser()
     if local.is_symlink():
-        raise ValueError(f"Refusing to write download through a symlink: {local_path}")
+        raise ValueError(
+            f"Refusing to write download through a symlink: {local_path}. "
+            f"Pass --local a path that is a regular file or does not exist yet, "
+            f"or remove the symlink first, then retry."
+        )
     local.parent.mkdir(parents=True, exist_ok=True)
     with open(local, "wb") as f:
         f.write(file_data)

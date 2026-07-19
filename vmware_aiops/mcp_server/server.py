@@ -3,7 +3,7 @@
 This module exposes VMware vCenter/ESXi VM lifecycle, deployment, cluster
 management, guest operations, and datastore browsing tools via the Model
 Context Protocol (MCP) using stdio transport.  It acts as a thin adapter
-layer — each ``@mcp.tool()`` function (defined in ``mcp_server/tools/``)
+layer — each ``@mcp.tool()`` function (defined in ``vmware_aiops/mcp_server/tools/``)
 simply delegates to the corresponding function in the ``vmware_aiops``
 package.
 
@@ -20,9 +20,9 @@ Tool categories
 
 Module layout
 -------------
-* ``mcp_server/_shared.py`` — the shared ``mcp`` (FastMCP) instance, the
+* ``vmware_aiops/mcp_server/_shared.py`` — the shared ``mcp`` (FastMCP) instance, the
   connection helper, ``_safe_error``, and the ``@tool_errors`` decorator.
-* ``mcp_server/tools/*.py`` — one module per tool category; importing each
+* ``vmware_aiops/mcp_server/tools/*.py`` — one module per tool category; importing each
   registers its ``@mcp.tool()`` functions onto the shared ``mcp`` instance.
 * this file — re-exports ``mcp`` and exposes ``main()`` (the ``vmware-aiops-mcp``
   console script and the ``vmware-aiops mcp`` subcommand both call it).
@@ -50,11 +50,11 @@ from vmware_policy import apply_read_only_gate, mtime_cached_loader, set_environ
 
 from vmware_aiops.config import CONFIG_FILE, load_config
 
-from mcp_server._shared import _safe_error, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _safe_error, mcp, tool_errors
 
 # Importing the tool modules registers every @mcp.tool() onto the shared
 # `mcp` instance above. Order does not matter; each module is self-contained.
-from mcp_server.tools import (  # noqa: F401 — imported for registration side effects
+from vmware_aiops.mcp_server.tools import (  # noqa: F401 — imported for registration side effects
     alarm,
     cluster,
     datastore,
