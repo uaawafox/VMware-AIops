@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from vmware_policy import paginated
+
 logger = logging.getLogger("vmware-aiops.ttl")
 
 _TTL_FILE = Path.home() / ".vmware-aiops" / "ttl.json"
@@ -120,8 +122,12 @@ def cancel_ttl(vm_name: str) -> str:
     return f"TTL cancelled for VM '{vm_name}'."
 
 
-def list_ttl() -> list[dict]:
-    """Return all registered TTL entries with status."""
+def list_ttl() -> dict:
+    """Return all registered TTL entries with status.
+
+    Returns the family list envelope; the whole TTL store is read from disk,
+    so ``total`` is the real entry count and nothing is truncated.
+    """
     store = _load_ttl_store()
     now = datetime.now(timezone.utc)
     results = []
@@ -136,7 +142,8 @@ def list_ttl() -> list[dict]:
             "remaining_minutes": remaining_minutes,
             "expired": expires <= now,
         })
-    return sorted(results, key=lambda x: x["expires_at"])
+    rows = sorted(results, key=lambda x: x["expires_at"])
+    return paginated(rows, total=len(rows))
 
 
 def get_expired_entries() -> list[TTLEntry]:

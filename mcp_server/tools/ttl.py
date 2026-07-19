@@ -52,11 +52,14 @@ def vm_cancel_ttl(vm_name: str) -> str:
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
-@tool_errors("list")
-def vm_list_ttl() -> list[dict]:
+@tool_errors("dict")
+def vm_list_ttl() -> dict:
     """[READ] List all VMs with TTLs registered, including expiry time and status.
 
-    Returns a list of TTL entries with remaining_minutes and expired flag.
+    Returns the list envelope: 'items' holds TTL entries with
+    remaining_minutes and expired flag, and 'returned'/'total'/'truncated'
+    state whether the listing is complete. The whole TTL store is read, so
+    truncated is always false.
     """
     from vmware_aiops.ops.ttl import list_ttl as _list_ttl
     return _list_ttl()

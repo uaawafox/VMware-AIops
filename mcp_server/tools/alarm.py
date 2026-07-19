@@ -10,25 +10,26 @@ from vmware_aiops.ops.alarm_mgmt import acknowledge_alarm, list_alarms, reset_al
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
-@tool_errors("list")
+@tool_errors("dict")
 def list_vcenter_alarms(
     target: Optional[str] = None,
     limit: Optional[int] = None,
-) -> list[dict]:
+) -> dict:
     """[READ] List active/triggered alarms across the vCenter inventory.
 
-    Returns alarms with severity (critical/warning/info), entity name and type,
-    alarm name, acknowledged flag, and trigger time.
+    Returns the list envelope: 'items' holds alarms with severity
+    (critical/warning/info), entity name and type, alarm name, acknowledged
+    flag, and trigger time; 'returned'/'limit'/'total'/'truncated'/'hint'
+    state whether the listing is complete, so a limited page is never
+    mistaken for the whole picture. 'total' is the real active-alarm count —
+    every alarm is collected before the limit is applied.
 
     Args:
         target: Optional vCenter target name from config. Uses default if omitted.
         limit: Max number of alarms to return (None = all). Use when many alarms are active.
     """
     si = _get_connection(target)
-    results = list_alarms(si)
-    if limit is not None:
-        results = results[:limit]
-    return results
+    return list_alarms(si, limit=limit)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})

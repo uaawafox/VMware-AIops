@@ -42,6 +42,13 @@ License: MIT
 """
 
 import logging
+import os
+from pathlib import Path
+from typing import Optional
+
+from vmware_policy import apply_read_only_gate, mtime_cached_loader, set_environment_resolver
+
+from vmware_aiops.config import CONFIG_FILE, load_config
 
 from mcp_server._shared import _safe_error, mcp, tool_errors
 
@@ -60,6 +67,68 @@ from mcp_server.tools import (  # noqa: F401 — imported for registration side 
 )
 
 __all__ = ["mcp", "main", "_safe_error", "tool_errors"]
+
+
+# ---------------------------------------------------------------------------
+# Read-only gate
+# ---------------------------------------------------------------------------
+
+
+def _config_read_only() -> Optional[bool]:
+    """Best-effort read of ``read_only`` from the config file.
+
+    Runs at import time, when no config file need exist yet (tests, ``--help``,
+    smoke checks), so every failure degrades to "not configured" and lets the
+    env vars decide. None and False are equivalent here — config is the last
+    link in the precedence chain — but None keeps 'not configured'
+    distinguishable from 'configured off' in logs and debugging.
+
+    Resolved through the same VMWARE_AIOPS_CONFIG override the connection layer
+    uses. Reading the default path instead would silently ignore settings in an
+    operator's custom config file — a control that appears configured and does
+    nothing, which is the exact failure this work exists to remove.
+    """
+    try:
+        _cfg_path = os.environ.get("VMWARE_AIOPS_CONFIG")
+        return load_config(Path(_cfg_path) if _cfg_path else None).read_only
+    except Exception:  # noqa: BLE001 — absent/unreadable config is not an error here
+        return None
+
+
+# Applied once, after every tool module above has registered. In read-only mode
+# the write tools are removed from the registry, so list_tools() never offers
+# them — the guarantee is structural rather than a prompt instruction the model
+# may ignore (issue #31).
+WITHHELD_WRITE_TOOLS: list[str] = apply_read_only_gate(
+    mcp, "vmware-aiops", config_flag=_config_read_only()
+)
+
+
+# ---------------------------------------------------------------------------
+# Environment declaration
+# ---------------------------------------------------------------------------
+
+
+_cached_config = mtime_cached_loader("VMWARE_AIOPS_CONFIG", CONFIG_FILE, load_config)
+
+
+def _environment_for(target: Optional[str]) -> str:
+    """Report the environment a target declares, for policy scoping.
+
+    Policy rules scope by environment ("irreversible work in production needs a
+    second person"), and vmware-policy cannot read this skill's config itself.
+    Registering this lookup is what lets those rules fire at all. Reloaded on
+    config.yaml mtime change so an edit takes effect without restarting the
+    server. The config is cached via :func:`vmware_policy.mtime_cached_loader`,
+    so repeated tool calls pay one ``os.stat`` instead of a full YAML parse.
+    """
+    try:
+        return _cached_config().environment_for(target)
+    except Exception:  # noqa: BLE001 — an unreadable config means "undeclared"
+        return ""
+
+
+set_environment_resolver(_environment_for)
 
 
 # ---------------------------------------------------------------------------

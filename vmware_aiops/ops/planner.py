@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pyVmomi import vim
+from vmware_policy import paginated
 
 from vmware_aiops.ops.inventory import find_vm_by_name
 
@@ -473,11 +474,21 @@ def delete_plan(plan_id: str) -> None:
     plan_path.unlink(missing_ok=True)
 
 
-def list_plans() -> list[dict]:
-    """List all pending plans."""
-    _cleanup_stale()
+def list_plans() -> dict:
+    """List all pending plans.
+
+    Returns the family list envelope; every plan file on disk is read, so
+    ``total`` is the real plan count and nothing is truncated.
+
+    Listing does NOT expire stale plans. It is the one plan tool that survives
+    read-only mode, and a failed plan is the only on-disk record of which steps
+    landed — deleting it from an inspection path (where create/apply/rollback
+    are all withheld) would destroy exactly what the operator opened the
+    session to read. Expiry runs on ``create_plan`` instead, so plans are still
+    swept on every write.
+    """
     if not _PLANS_DIR.exists():
-        return []
+        return paginated([])
     result: list[dict] = []
     for p in sorted(_PLANS_DIR.glob("plan-*.json")):
         try:
@@ -492,4 +503,4 @@ def list_plans() -> list[dict]:
             })
         except (json.JSONDecodeError, KeyError):
             logger.warning("Skipping invalid plan file: %s", p.name)
-    return result
+    return paginated(result, total=len(result))

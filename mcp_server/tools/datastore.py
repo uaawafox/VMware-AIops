@@ -10,17 +10,22 @@ from vmware_aiops.ops import datastore_browser
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
-@tool_errors("list")
+@tool_errors("dict")
 def browse_datastore(
     datastore_name: str,
     path: str = "",
     pattern: str = "*",
     target: Optional[str] = None,
-) -> list[dict]:
+) -> dict:
     """[READ] Browse files in a vSphere datastore directory.
 
     Use this to discover OVA, ISO, VMDK, and other files on datastores
     before deploying VMs.
+
+    Returns the list envelope: 'items' holds one row per file, and
+    'returned'/'total'/'truncated' state whether the listing is complete.
+    Every match in the searched folders is returned, so truncated is
+    always false.
 
     Args:
         datastore_name: Name of the datastore to browse.

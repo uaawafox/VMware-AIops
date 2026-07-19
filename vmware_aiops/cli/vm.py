@@ -575,7 +575,7 @@ def vm_list_ttl() -> None:
     """List all VMs with TTLs registered."""
     from vmware_aiops.ops.ttl import list_ttl
 
-    entries = list_ttl()
+    entries = list_ttl()["items"]
     if not entries:
         console.print("[yellow]No TTLs registered.[/]")
         return

@@ -96,11 +96,14 @@ def vm_rollback_plan(plan_id: str, target: Optional[str] = None) -> dict:
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
-@tool_errors("list")
-def vm_list_plans() -> list[dict]:
+@tool_errors("dict")
+def vm_list_plans() -> dict:
     """[READ] List all pending/failed plans.
 
-    Returns plan summaries (plan_id, created_at, status, steps count,
-    VMs affected). Stale plans (>24h) are auto-cleaned.
+    Returns the list envelope: 'items' holds plan summaries (plan_id,
+    created_at, status, steps count, VMs affected), and 'returned'/'total'/
+    'truncated' state whether the listing is complete. Every plan file is
+    read, so truncated is always false. Listing never deletes: stale plans
+    (>24h) are swept by vm_create_plan, not by this tool.
     """
     return list_plans()

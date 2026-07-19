@@ -6,16 +6,89 @@ Each operation is classified by autonomy level per the Enterprise Harness Engine
 
 | Level | Meaning | Agent autonomy | Examples in this skill |
 |:-:|---|---|---|
-| **L1** | Read-only, raw data | Always auto-run | `vm_info`, `cluster_info`, `datastore_browse`, `vm_list`, `host_list` |
-| **L2** | Read + analysis / recommendation | Always auto-run | scheduled scan reports, alarm/event correlation, log pattern analysis |
-| **L3** | Single write — user must approve | Only after explicit confirmation; high-risk ops require double-confirm (see Confirmation column) | `vm_power_on`, `vm_power_off`, `vm_delete`, `vm_snapshot_create`, `vm_clone`, `vm_migrate` |
+| **L1** | Read-only, raw data | Always auto-run | `cluster_info`, `browse_datastore`, `scan_datastore_images`, `list_vcenter_alarms`, `vm_list_snapshots`, `vm_list_ttl`, `vm_task_status` |
+| **L2** | Read + analysis / recommendation | Always auto-run | `cluster_health_summary`, `cross_vcenter_attention`, `vm_investigation_bundle`, `host_investigation_bundle`, `datastore_investigation_bundle`; scheduled scan reports, alarm/event correlation, log pattern analysis |
+| **L3** | Single write — user must approve | Only after explicit confirmation; high-risk ops require double-confirm (see Confirmation column) | `vm_power_on`, `vm_power_off`, `vm_delete`, `vm_create_snapshot`, `vm_clone`, `vm_migrate` |
 | **L4** | Multi-step plan / apply workflow | Plan generation auto; apply gated by user approval | `vm_create_plan` → `vm_apply_plan` → `vm_rollback_plan`, batch-clone, batch-deploy YAML |
 | **L5** | Auto-remediation from learned pattern | Pattern library only; requires `risk:low` + `reversible:true` + `repeatable:true` + signed approval | *(roadmap — not implemented; candidates: snapshot consolidation, orphaned VM cleanup)* |
 
 **Notes**:
 - L1/L2 tools are always safe for agents to call without confirmation.
+- **List envelope**: the read list tools (`browse_datastore`, `list_vcenter_alarms`, `vm_list_plans`, `vm_list_snapshots`, `vm_list_ttl`) return `{items, returned, limit, total, truncated, hint}` instead of a bare array, so an agent can tell a complete answer from a first page rather than inferring it (issue #31). All five enumerate their collection in full before any limit is applied, so `total` is always the real count; only `list_vcenter_alarms` takes a `limit` and can therefore report `truncated: true`. The write `batch_*` tools deliberately keep a bare list — each row is a per-item result of work already done, complete by construction. Errors from these read tools are `{error, hint}` (a dict, not a one-element list).
 - L3+ tools always pass through the `@vmware_tool` decorator: connection check → policy check → audit log → optional double-confirm.
 - See [vmware-pilot](https://github.com/zw008/VMware-Pilot) for cross-skill L4 orchestration and the Dispatcher/Subagent pattern.
+
+## Triage & Object Investigation (read-only)
+
+Five opinionated read-only reports that **aggregate and correlate server-side** and
+return high-signal results — never raw inventory. They exist so the agent can decide
+*where to look* before actuating anything. All five delegate to the
+[vmware-monitor](https://github.com/zw008/VMware-Monitor) library using AIops' own
+vCenter connection, so **`vmware-monitor` must be installed**; without it these tools
+are unavailable. All are point-in-time (no trending). Each has a `--html` CLI form
+that writes a self-contained, timestamped offline snapshot (no external references,
+drill-downs collapse via native `<details>`, zero JavaScript).
+
+| Operation | CLI | MCP Tool | vCenter | ESXi |
+|-----------|-----|----------|:-------:|:----:|
+| Cluster health summary | `summary` | `cluster_health_summary` | ✅ | ❌ |
+| Cross-vCenter attention | `attention` | `cross_vcenter_attention` | ✅ | ❌ |
+| VM investigation bundle | `investigate vm <name>` | `vm_investigation_bundle` | ✅ | ✅ |
+| Host investigation bundle | `investigate host <name>` | `host_investigation_bundle` | ✅ | ✅ |
+| Datastore investigation bundle | `investigate datastore <name>` | `datastore_investigation_bundle` | ✅ | ✅ |
+
+### `cluster_health_summary` — "is anything on fire?"
+
+The first look. Rolls up hosts, VM power state, live CPU/memory pressure and triggered
+alarms per cluster, assigns an opinionated `ok` / `warn` / `critical` status, and
+flattens individual anomalies into a ranked `top_issues` focus list (worst first, each
+carrying a drill-down hint). Returns `{totals, top_issues, issues_total, clusters,
+snapshot, customization_hint}` — lead with `top_issues`, show `clusters` as context.
+
+| Parameter | Type | Default | Behavior |
+|-----------|------|---------|----------|
+| `target` | str (optional) | default target | Named vCenter/ESXi target from `config.yaml` |
+| `cluster_filter` | str (optional) | None (all) | Case-insensitive substring; suppresses standalone-hosts bucket |
+| `include_vms` | bool | True | Roll up VM power counts; False skips the VM pass (faster on huge fleets) |
+| `top_n` | int | 10 | Cap the `top_issues` focus list; `issues_total` keeps the pre-cap count; 0 hides the list |
+
+**Typical response tokens**: ~120–400 (one compact row per cluster + totals); scales
+with cluster count, not VM count. Aggregation happens in the tool — the model never
+sees raw inventory.
+
+### `cross_vcenter_attention` — "where do I look first, anywhere in the estate?"
+
+Merges every configured target's cluster-health summary into a single globally ranked
+`top_issues` list (each item tagged with its `vcenter`) plus a per-target rollup.
+Degrades gracefully: an unreachable target is listed under `unreachable` and the rest
+still aggregate. Use it before `cluster_health_summary` when more than one vCenter is
+configured; with a single target, go straight to `cluster_health_summary`.
+
+| Parameter | Type | Default | Behavior |
+|-----------|------|---------|----------|
+| `cluster_filter` | str (optional) | None (all) | Case-insensitive cluster substring applied to every target |
+| `top_n` | int | 10 | Cap the merged `top_issues` focus list |
+
+**Typical response tokens**: ~200–600 (ranked issue list + one row per target); scales
+with target count, not inventory size.
+
+### `*_investigation_bundle` — one correlated drill-down per object
+
+Use **after** triage points at a specific object. Each bundle collects and *correlates*
+the object with its surrounding infrastructure and recent history in one batched call,
+so the agent does not stitch together separate info/alarm/snapshot/performance/event
+reads. All three accept `hours` (event-timeline look-back, default 24) and an optional
+`target`. An unknown object name returns a teaching error naming how to list objects.
+
+| Tool | Required arg | Correlates |
+|------|--------------|------------|
+| `vm_investigation_bundle` | `vm_name` | VM state, the host it runs on, cluster context, backing datastores, snapshots, triggered alarms, live performance, merged event timeline (VM + host + cluster + datastores, newest first) |
+| `host_investigation_bundle` | `host_name` | Connection state, CPU/memory, ESXi version, uptime, cluster context, rollup of VMs it runs, datastores it mounts, alarms across host/cluster/datastore, live performance, merged event timeline |
+| `datastore_investigation_bundle` | `datastore_name` | Capacity/free space/accessibility, hosts that mount it, rollup of VMs it backs, alarms across datastore/host, merged event timeline. (Per-datastore latency is a separate perf report, not included.) |
+
+**Typical response tokens**: ~400–1200 per bundle (correlated summary + capped event
+timeline); grows with the `hours` window, not with fleet size. Explain the result in
+operational language — do not dump it raw.
 
 ## VM Lifecycle
 
@@ -34,6 +107,7 @@ Each operation is classified by autonomy level per the Enterprise Harness Engine
 | List Snapshots | `vm snapshot-list <name>` | — | ✅ | ✅ |
 | Revert Snapshot | `vm snapshot-revert <name> --name <snap>` | Double | ✅ | ✅ |
 | Delete Snapshot | `vm snapshot-delete <name> --name <snap> [--remove-children]` | Double | ✅ | ✅ |
+| Poll Async Task | `vm task-status <task-id>` | — | ✅ | ✅ |
 | Clone VM | `vm clone <name> --new-name <new> [--to-host <host>] [--to-datastore <ds>]` | Double | ✅ | ✅ |
 | vMotion | `vm migrate <name> --to-host <host> [--to-datastore <ds>]` | Double | ✅ | ❌ |
 | Set TTL | `vm set-ttl <name> --minutes <n>` | — | ✅ | ✅ |
@@ -45,6 +119,13 @@ Each operation is classified by autonomy level per the Enterprise Harness Engine
 | Guest Download | `vm guest-download <name> --guest /var/log/syslog --local ./syslog` | — | ✅ | ✅ |
 
 > Guest Operations require VMware Tools running inside the guest OS.
+
+> `vm task-status` / `vm_task_status` polls a vSphere task id returned by an async
+> write (today: `vm_delete_snapshot`) instead of re-running the operation. Returns
+> state (`queued` / `running` / `success` / `error` / `gone`), progress percent, and
+> the entity name. `gone` means vCenter already garbage-collected a completed task —
+> re-list the resource to confirm the final state.
+> **Typical response tokens**: ~40–80 (single status record).
 
 ## Plan → Apply (Multi-step Operations)
 

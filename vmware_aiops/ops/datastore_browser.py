@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
-from vmware_policy import sanitize
+from vmware_policy import paginated, sanitize
 
 from vmware_aiops.config import CONFIG_DIR
 from vmware_aiops.ops.inventory import find_datastore_by_name
@@ -51,7 +51,7 @@ def browse_datastore(
     ds_name: str,
     path: str = "",
     pattern: str = "*",
-) -> list[dict]:
+) -> dict:
     """Browse files in a datastore directory.
 
     Args:
@@ -61,7 +61,10 @@ def browse_datastore(
         pattern: Glob pattern to filter files (e.g. "*.ova", "*")
 
     Returns:
-        List of file dicts with name, size, type, modified, ds_path
+        The family list envelope; ``items`` holds file dicts with name, size,
+        type, modified, ds_path. The browse task returns every match in the
+        searched folders, so ``total`` is the real count and nothing is
+        truncated.
     """
     ds = find_datastore_by_name(si, ds_name)
     if ds is None:
@@ -103,7 +106,8 @@ def browse_datastore(
                 "ds_path": sanitize(f"{folder}{f.path}"),
             })
 
-    return sorted(files, key=lambda x: x["name"])
+    rows = sorted(files, key=lambda x: x["name"])
+    return paginated(rows, total=len(rows))
 
 
 def scan_images(
@@ -118,7 +122,7 @@ def scan_images(
     all_images: list[dict] = []
     for pattern in IMAGE_PATTERNS:
         found = browse_datastore(si, ds_name, path=path, pattern=pattern)
-        all_images.extend(found)
+        all_images.extend(found["items"])
 
     return sorted(all_images, key=lambda x: x["name"])
 

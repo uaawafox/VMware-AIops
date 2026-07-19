@@ -39,6 +39,24 @@ chmod 600 ~/.vmware-aiops/.env
 # Edit ~/.vmware-aiops/config.yaml and .env with your target details
 ```
 
+### Declare `environment:` on each target
+
+```yaml
+targets:
+  - name: prod-vcenter
+    host: vcenter-prod.example.com
+    environment: production   # production | staging | lab | <your own label>
+```
+
+Policy scopes its rules by environment, not by the target's name — an
+unlabelled target matches none of them. Today an undeclared write still runs
+and logs a warning. The next major release refuses it with:
+
+> `'vm_delete' changes state, but its target does not declare which environment it is. Add 'environment: <name>' (e.g. production, staging, lab) to that target's entry in the skill's config.yaml, then retry.`
+
+Declaring it now makes that upgrade a no-op. Read-only operations are never
+affected.
+
 ## What Gets Installed
 
 The `vmware-aiops` package installs a Python CLI binary and its dependencies (pyVmomi, Click, Rich, APScheduler, python-dotenv). No background services, daemons, or system-level changes are made during installation. The scheduled scanner (`daemon start`) only runs when explicitly started by the user.
@@ -138,4 +156,4 @@ For Claude Code / Cursor users who prefer structured tool calls, add to `~/.clau
 > PyPI on each launch and breaks behind corporate TLS proxies. The legacy
 > `vmware-aiops-mcp` entry point is also kept for backward compatibility.
 
-MCP exposes 31 tools across 6 categories. All accept optional `target` parameter.
+MCP exposes 49 tools across 9 categories. All accept optional `target` parameter.

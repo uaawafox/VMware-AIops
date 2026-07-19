@@ -9,6 +9,8 @@ English | [中文](README-CN.md)
 
 AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 49 tools.
 
+- **Read-only mode** (v1.8.0) — one env var (`VMWARE_READ_ONLY=true`) strips all 36 write-effecting tools (35 writes **plus `vm_guest_download`**) from the MCP registry at startup, leaving the 13 read tools; ideal for audits, PoCs, and untrusted/local models. See [Read-Only Mode](#read-only-mode).
+
 > **Companion skills** handle everything else:
 >
 > | Skill | Scope | Install |
@@ -296,6 +298,31 @@ Plans stored in `~/.vmware-aiops/plans/`, auto-deleted on success, auto-cleaned 
 | Structured Log | JSONL output to `~/.vmware-aiops/scan.log` |
 | Webhook | Slack, Discord, or any HTTP endpoint |
 | Daemon Management | `daemon start/stop/status`, PID file, graceful shutdown |
+
+## Read-Only Mode
+
+A prompt instruction is advisory — a model can ignore it. Read-only mode is structural: set `VMWARE_READ_ONLY=true` and all 36 write tools (VM lifecycle and power, snapshots, clone/migrate, OVA/template/linked-clone and batch provisioning, guest operations, cluster management, plans and TTL, alarm acknowledge/reset) are removed from the MCP registry at startup, leaving the 13 read tools. `list_tools()` never offers them, so the model cannot call what it cannot see. Off by default, and fail-closed: if the mode is requested but cannot be guaranteed, the server refuses to start.
+
+`vm_guest_download` is marked `[READ]` — it changes no vCenter state — but it is deliberately classified as a write tool and withheld too, because it writes a file to an operator-supplied local path and accepts guest credentials.
+
+Three ways to enable:
+
+```json
+{
+  "mcpServers": {
+    "vmware-aiops": {
+      "command": "vmware-aiops",
+      "args": ["mcp"],
+      "env": { "VMWARE_READ_ONLY": "true" }
+    }
+  }
+}
+```
+
+- Per-skill override: `VMWARE_AIOPS_READ_ONLY=true` (takes precedence over the family-wide `VMWARE_READ_ONLY`)
+- Config alternative: `read_only: true` in `~/.vmware-aiops/config.yaml`
+
+Precedence: per-skill env → family env → config → off. Startup logs list exactly which tools were withheld.
 
 ## Safety Features
 
@@ -1044,10 +1071,15 @@ Built on **pyVmomi** (vSphere Web Services API / SOAP).
 
 | Skill | Scope | Tools | Install |
 |-------|-------|:-----:|---------|
-| **[vmware-monitor](https://github.com/zw008/VMware-Monitor)** | Read-only monitoring, alarms, events | 8 | `uv tool install vmware-monitor` |
-| **[vmware-aiops](https://github.com/zw008/VMware-AIops)** | VM lifecycle, deployment, guest ops, cluster, datastore browse | 31 | `uv tool install vmware-aiops` |
+| **[vmware-aiops](https://github.com/zw008/VMware-AIops)** | VM lifecycle, deployment, guest ops, cluster, datastore browse, triage | 49 | `uv tool install vmware-aiops` |
+| **[vmware-monitor](https://github.com/zw008/VMware-Monitor)** | Read-only monitoring, alarms, events, investigation bundles | 27 | `uv tool install vmware-monitor` |
 | **[vmware-storage](https://github.com/zw008/VMware-Storage)** | Datastores, iSCSI, vSAN | 11 | `uv tool install vmware-storage` |
 | **[vmware-vks](https://github.com/zw008/VMware-VKS)** | Tanzu Namespaces, TKC cluster lifecycle | 20 | `uv tool install vmware-vks` |
+| **[vmware-nsx](https://github.com/zw008/VMware-NSX)** | NSX networking: segments, gateways, NAT, routing, IPAM | 33 | `uv tool install vmware-nsx-mgmt` |
+| **[vmware-nsx-security](https://github.com/zw008/VMware-NSX-Security)** | DFW policies/rules, security groups, Traceflow, IDS/IPS | 21 | `uv tool install vmware-nsx-security` |
+| **[vmware-aria](https://github.com/zw008/VMware-Aria)** | Aria Operations metrics, alerts, capacity, anomalies | 28 | `uv tool install vmware-aria` |
+| **[vmware-avi](https://github.com/zw008/VMware-AVI)** | AVI (NSX ALB) load balancing, AKO Kubernetes ops | 28 | `uv tool install vmware-avi` |
+| **[vmware-harden](https://github.com/zw008/VMware-Harden)** | Compliance baselines (CIS / vSphere SCG / 等保 / PCI-DSS), drift detection | 6 | `uv tool install vmware-harden` |
 
 ---
 

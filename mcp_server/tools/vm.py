@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from vmware_policy import vmware_tool
+from vmware_policy import paginated, vmware_tool
 
 from mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops.vm_lifecycle import (
@@ -354,12 +354,12 @@ def vm_task_status(task_id: str, target: Optional[str] = None) -> dict:
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
-@tool_errors("list")
-def vm_list_snapshots(vm_name: str, target: Optional[str] = None) -> list[dict]:
+@tool_errors("dict")
+def vm_list_snapshots(vm_name: str, target: Optional[str] = None) -> dict:
     """[READ] List the full snapshot tree of a VM, including nested child snapshots.
 
     Read-only, no side effects. Call this before vm_revert_snapshot, vm_delete_snapshot,
-    or deploy_linked_clone to get exact snapshot names. Returns an empty list when the
+    or deploy_linked_clone to get exact snapshot names. 'items' is empty when the
     VM has no snapshots.
 
     Args:
@@ -367,13 +367,16 @@ def vm_list_snapshots(vm_name: str, target: Optional[str] = None) -> list[dict]:
         target: vCenter/ESXi target name from config.yaml; omit to use the default target.
 
     Returns:
-        One dict per snapshot: name, description, created (timestamp), state
-        (poweredOn/poweredOff at snapshot time), level (0 = root, higher = nesting
-        depth). No pagination — snapshot trees are small.
+        The list envelope. 'items' holds one dict per snapshot: name, description,
+        created (timestamp), state (poweredOn/poweredOff at snapshot time), level
+        (0 = root, higher = nesting depth). No pagination — snapshot trees are small
+        and the whole tree is walked, so 'total' is the real count and 'truncated'
+        is always false.
     """
     si = _get_connection(target)
     snaps = list_snapshots(si, vm_name)
-    return [
+    rows = [
         {k: v for k, v in s.items() if k != "snapshot_ref"}
         for s in snaps
     ]
+    return paginated(rows, total=len(rows))

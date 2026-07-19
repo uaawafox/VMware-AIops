@@ -9,7 +9,7 @@ startCommand:
     required: []
   commandFunction: |
     (config) => ({
-      command: "python",
-      args: ["-m", "mcp_server"],
+      command: "vmware-aiops",
+      args: ["mcp"],
       env: config.config_path ? { VMWARE_AIOPS_CONFIG: config.config_path } : {}
     })

@@ -40,7 +40,7 @@ def ds_browse(
     from vmware_aiops.ops.datastore_browser import browse_datastore
 
     si, _ = _get_connection(target, config)
-    files = browse_datastore(si, name, path=path, pattern=pattern)
+    files = browse_datastore(si, name, path=path, pattern=pattern)["items"]
     if not files:
         console.print("[yellow]No files found.[/]")
         return
