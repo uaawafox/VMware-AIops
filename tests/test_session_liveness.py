@@ -41,7 +41,7 @@ class FakeSI:
 @pytest.fixture
 def cm(monkeypatch):
     monkeypatch.setattr(conn_mod, "_HUB_ROUTING", False)
-    target = TargetConfig(name="prod", host="vc.example", username="u", verify_ssl=False)
+    target = TargetConfig(name="prod", host="vc.example", config_username="u", verify_ssl=False)
     cfg = AppConfig(targets=(target,))
 
     def fake_create(t, *, user=None, pwd=None):

@@ -31,8 +31,8 @@ def _manager(monkeypatch, backend_calls):
         conn_mod.ConnectionManager, "_create_connection",
         staticmethod(lambda t, *, user=None, pwd=None: FakeSI()),
     )
-    prod = TargetConfig(name="uaa-vcenter", host="prod.example", username="u", verify_ssl=False)
-    v9 = TargetConfig(name="v9-vcenter", host="v9.example", username="u", verify_ssl=True)
+    prod = TargetConfig(name="uaa-vcenter", host="prod.example", config_username="u", verify_ssl=False)
+    v9 = TargetConfig(name="v9-vcenter", host="v9.example", config_username="u", verify_ssl=True)
     return conn_mod.ConnectionManager(AppConfig(targets=(prod, v9)))
 
 

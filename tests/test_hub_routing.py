@@ -34,7 +34,7 @@ class FakeSI:
 
 @pytest.fixture
 def cm(monkeypatch):
-    target = TargetConfig(name="prod", host="vc.example", username="startup-user", verify_ssl=False)
+    target = TargetConfig(name="prod", host="vc.example", config_username="startup-user", verify_ssl=False)
     cfg = AppConfig(targets=(target,))
 
     def fake_create(t, *, user=None, pwd=None):

@@ -4,7 +4,7 @@ from typing import Optional
 
 from vmware_policy import vmware_tool
 
-from mcp_server._shared import _get_connection, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops import host_network_mgmt, network_mgmt
 
 
@@ -20,7 +20,7 @@ def list_dvs_portgroups(
     dvs_name: Optional[str] = None,
     target: Optional[str] = None,
 ) -> dict:
-    """List distributed virtual portgroups, optionally scoped to one dvSwitch.
+    """[READ] List distributed virtual portgroups, optionally scoped to one dvSwitch.
 
     Per portgroup: name, parent dvSwitch, binding type (earlyBinding /
     ephemeral), VLAN setting (id, trunk ranges, or pvlan), configured port
@@ -94,7 +94,7 @@ def list_host_vmks(
     host_name: Optional[str] = None,
     target: Optional[str] = None,
 ) -> dict:
-    """List VMkernel adapters, optionally scoped to one ESXi host.
+    """[READ] List VMkernel adapters, optionally scoped to one ESXi host.
 
     Per vmk: device, IP/netmask/dhcp, MTU, MAC, portgroup (standard or DVS),
     netstack, and which host services it is selected for (management,
@@ -198,7 +198,7 @@ def vmk_ping(
     netstack: Optional[str] = None,
     target: Optional[str] = None,
 ) -> dict:
-    """DF-bit-capable ping sourced from a host vmk - MTU path validation.
+    """[READ] DF-bit-capable ping sourced from a host vmk - MTU path validation.
 
     Runs `esxcli network diag ping` on the ESXi host through the vSphere API
     (no host SSH). df=True sets Don't-Fragment so an oversized packet FAILS
