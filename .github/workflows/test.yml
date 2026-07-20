@@ -34,4 +34,4 @@ jobs:
       # if ever wanted, is a separate pass. (Our own added files were linted
       # clean at authoring time.)
       - name: Run tests
-        run: pytest tests/
+        run: python -m pytest tests/
