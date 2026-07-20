@@ -112,7 +112,7 @@ def test_config_file_not_found() -> None:
 
 @pytest.mark.unit
 def test_immutability() -> None:
-    t = TargetConfig(name="x", host="h", username="u")
+    t = TargetConfig(name="x", host="h", config_username="u")
     with pytest.raises(AttributeError):
         t.name = "y"  # type: ignore[misc]
 
@@ -132,3 +132,26 @@ def test_username_falls_back_to_config(sample_config_file: Path, monkeypatch) ->
     monkeypatch.delenv("VMWARE_TEST_VC_USERNAME", raising=False)
     cfg = load_config(sample_config_file)
     assert cfg.targets[0].username == "admin@vsphere.local"
+
+
+@pytest.mark.unit
+def test_username_and_password_rotate_together(sample_config_file: Path, monkeypatch) -> None:
+    """Both halves of a credential must resolve at the same moment.
+
+    The env override exists so a secret store can supply the pair. Reading the
+    username once at load time while the password stays a property splits it:
+    a sidecar rotating both mid-process moves the password and leaves the
+    username behind, and the login uses a combination that was never issued
+    together. That is the failure this override was added to prevent, so it
+    must not be reintroduced by the fix for it.
+    """
+    monkeypatch.setenv("VMWARE_TEST_VC_USERNAME", "svc-a@vsphere.local")
+    monkeypatch.setenv("VMWARE_TEST_VC_PASSWORD", "pw-a")
+    target = load_config(sample_config_file).targets[0]
+    assert (target.username, target.password) == ("svc-a@vsphere.local", "pw-a")
+
+    monkeypatch.setenv("VMWARE_TEST_VC_USERNAME", "svc-b@vsphere.local")
+    monkeypatch.setenv("VMWARE_TEST_VC_PASSWORD", "pw-b")
+    assert (target.username, target.password) == ("svc-b@vsphere.local", "pw-b"), (
+        "the pair came apart — one half is bound at load time and the other at access"
+    )

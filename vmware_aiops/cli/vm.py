@@ -410,7 +410,7 @@ def vm_task_status(
     state = status.get("state")
     colour = {"success": "green", "error": "red", "gone": "yellow"}.get(state, "cyan")
     console.print(f"[bold {colour}]Task {task_id}: {state}[/]")
-    for key in ("operation", "entity", "progress_pct", "error", "note"):
+    for key in ("operation", "entity", "progress_pct", "task_error", "note"):
         if status.get(key) is not None:
             console.print(f"  {key}: {status[key]}")
 
@@ -575,7 +575,7 @@ def vm_list_ttl() -> None:
     """List all VMs with TTLs registered."""
     from vmware_aiops.ops.ttl import list_ttl
 
-    entries = list_ttl()
+    entries = list_ttl()["items"]
     if not entries:
         console.print("[yellow]No TTLs registered.[/]")
         return

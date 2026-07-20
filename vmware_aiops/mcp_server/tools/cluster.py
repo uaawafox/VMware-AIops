@@ -4,7 +4,7 @@ from typing import Optional
 
 from vmware_policy import vmware_tool
 
-from mcp_server._shared import _get_connection, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -20,22 +20,19 @@ def cluster_create(
 ) -> str:
     """[WRITE] Create a new empty cluster in a datacenter, optionally enabling HA and DRS.
 
-    Fails with a clear error (no partial state) if a cluster with that name already
-    exists or drs_behavior is invalid. After creation, add hosts with cluster_add_host;
-    change HA/DRS later with cluster_configure; verify with cluster_info.
-    Audited to ~/.vmware/audit.db.
+    Fails with a clear error (no partial state) if the name already exists or
+    drs_behavior is invalid. Then add hosts with cluster_add_host, change HA/DRS
+    later with cluster_configure, and verify with cluster_info. Returns a status
+    string naming the features enabled.
 
     Args:
         name: Name for the new cluster; must be unique in the datacenter.
-        datacenter: Datacenter name; omit to use the first datacenter on the target.
+        datacenter: Datacenter name; omit for the first one on the target.
         ha: True enables vSphere HA (default False).
         drs: True enables DRS (default False).
-        drs_behavior: "fullyAutomated" (default), "partiallyAutomated", or "manual".
-            Only takes effect when drs=True.
-        target: vCenter target name from config.yaml; omit to use the default target.
-
-    Returns:
-        Status string confirming creation and which features (HA/DRS) were enabled.
+        drs_behavior: "fullyAutomated" (default), "partiallyAutomated", or
+            "manual". Only takes effect when drs=True.
+        target: vCenter target from config.yaml; omit for the default target.
     """
     from vmware_aiops.ops.cluster_mgmt import create_cluster
     si = _get_connection(target)
@@ -50,6 +47,9 @@ def cluster_create(
 @tool_errors("str")
 def cluster_delete(name: str, target: Optional[str] = None) -> str:
     """[WRITE] Delete an empty cluster (no hosts must remain).
+
+    Returns a status string. Check cluster_info first and evacuate any members
+    with cluster_remove_host, or vCenter rejects the call.
 
     Args:
         name: Name of the cluster to delete.
@@ -71,20 +71,17 @@ def cluster_add_host(
     """[WRITE] Move an ESXi host that vCenter already manages into a cluster.
 
     The host must already be in vCenter inventory (standalone or in another cluster) —
-    this tool does NOT register brand-new hosts and takes no host credentials; use the
-    vCenter UI for first-time host registration. Idempotent: a host already in the
-    cluster returns success without change. Maintenance mode is not required to join
-    (it IS required by cluster_remove_host). Check membership with cluster_info.
-    Audited to ~/.vmware/audit.db.
+    this does NOT register brand-new hosts and takes no host credentials; use the
+    vCenter UI for first-time registration. Idempotent: a host already in the cluster
+    returns success without change. Maintenance mode is not required to join (it IS
+    required by cluster_remove_host). Check membership first with cluster_info.
+    Returns a status string: moved, already-in-cluster, or a not-found error.
 
     Args:
-        cluster_name: Existing destination cluster name (create with cluster_create).
-        host_name: Host name exactly as shown in vCenter inventory, typically the
-            FQDN, e.g. "esxi-01.lab.local".
-        target: vCenter target name from config.yaml; omit to use the default target.
-
-    Returns:
-        Status string: moved, already-in-cluster, or host/cluster-not-found error.
+        cluster_name: Destination cluster (create with cluster_create).
+        host_name: Host name as shown in vCenter inventory, usually the FQDN,
+            e.g. "esxi-01.lab.local".
+        target: vCenter target from config.yaml; omit for the default target.
     """
     from vmware_aiops.ops.cluster_mgmt import add_host_to_cluster
     si = _get_connection(target)
@@ -101,9 +98,13 @@ def cluster_remove_host(
 ) -> str:
     """[WRITE] Remove a host from a cluster (host must be in maintenance mode).
 
+    Returns a status string. Run cluster_info first for the exact member host
+    names and their maintenance_mode state. The host is not deleted — it stays
+    in vCenter inventory standalone; use cluster_add_host to move it back.
+
     Args:
         cluster_name: Cluster to remove the host from.
-        host_name: ESXi host name to remove.
+        host_name: ESXi host name to remove (from cluster_info output).
         target: Optional vCenter target name from config.
     """
     from vmware_aiops.ops.cluster_mgmt import remove_host_from_cluster
@@ -122,6 +123,10 @@ def cluster_configure(
     target: Optional[str] = None,
 ) -> str:
     """[WRITE] Reconfigure cluster HA/DRS settings.
+
+    Returns a status string naming what changed. Pass only the fields to change;
+    None leaves a setting untouched — then verify with cluster_info. drs_behavior
+    applies only when DRS is enabled.
 
     Args:
         name: Cluster name.

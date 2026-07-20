@@ -71,7 +71,12 @@ def _wait_for_task(task, timeout: int = 300) -> object:
 
     err = task.info.error
     if err is None:
-        raise TaskFailedError("Task failed: unknown error (no fault attached)")
+        raise TaskFailedError(
+            f"Task {_task_moid(task)} failed but vCenter attached no fault detail. "
+            f"Run vm_task_status with task_id='{_task_moid(task)}' for its final state, "
+            f"and check get_events (vmware-monitor skill) around now for the underlying "
+            f"cause before retrying."
+        )
 
     parts: list[str] = []
     primary = getattr(err, "msg", None) or type(err).__name__
@@ -95,7 +100,11 @@ def _require_vm(si: ServiceInstance, vm_name: str) -> vim.VirtualMachine:
     """Find a VM or raise VMNotFoundError."""
     vm = find_vm_by_name(si, vm_name)
     if vm is None:
-        raise VMNotFoundError(f"VM '{vm_name}' not found")
+        raise VMNotFoundError(
+            f"VM '{vm_name}' not found. Run list_virtual_machines (vmware-monitor skill, "
+            f"filter by name e.g. '{vm_name[:3]}*') to see available VMs and copy an "
+            f"exact name — vSphere VM names are case-sensitive."
+        )
     return vm
 
 
@@ -492,6 +501,14 @@ def get_task_status(si: ServiceInstance, task_id: str) -> dict:
     operation (e.g. snapshot delete fired with wait=False) without re-running
     it. A task id that vCenter has already garbage-collected after completion
     surfaces as state 'gone' with guidance, not an exception.
+
+    A failed task reports its fault under ``task_error``, never ``error``. The
+    poll itself succeeded — reading the status of a task that failed is a
+    working read — and a top-level ``error`` key is the family's envelope for
+    "this call failed". Emitting it here made three things wrong at once: the
+    audit row, the circuit breaker (three polls of one failed task booked three
+    phantom failures), and the agent's own reading, which could not tell a
+    broken poll from a broken task.
     """
     task = vim.Task(task_id, si._stub)
     try:
@@ -516,7 +533,7 @@ def get_task_status(si: ServiceInstance, task_id: str) -> dict:
         "entity": getattr(info, "entityName", None),
     }
     if state == "error" and info.error is not None:
-        result["error"] = getattr(info.error, "msg", None) or type(info.error).__name__
+        result["task_error"] = getattr(info.error, "msg", None) or type(info.error).__name__
     return result
 
 

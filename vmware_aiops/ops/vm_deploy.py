@@ -499,7 +499,11 @@ def load_deploy_spec(spec_path: str) -> dict:
         spec = yaml.safe_load(f)
 
     if not spec or "vms" not in spec:
-        raise ValueError(f"Invalid deploy spec: missing 'vms' section in {spec_path}")
+        raise ValueError(
+            f"Invalid deploy spec: missing top-level 'vms:' section in {spec_path}. "
+            f"Add a 'vms:' list of VM entries — copy the layout from examples/deploy.yaml "
+            f"in the vmware-aiops repo — then re-run the batch deploy."
+        )
 
     return spec
 

@@ -7,7 +7,7 @@ mcp:
       command: python
       args:
         - -m
-        - mcp_server
+        - vmware_aiops.mcp_server
       cwd: /path/to/VMware-AIops
       env:
         VMWARE_AIOPS_CONFIG: ~/.vmware-aiops/config.yaml

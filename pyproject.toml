@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vmware-aiops"
-version = "1.7.7"
+version = "1.8.5"
 description = "VMware vCenter/ESXi AI-powered VM lifecycle and deployment tool"
 readme = "README.md"
 license = "MIT"
@@ -19,11 +19,11 @@ dependencies = [
     "httpx>=0.27,<1.0",
     "python-dotenv>=1.0,<2.0",
     "mcp[cli]>=1.10,<2.0",
-    "vmware-policy>=1.6.0,<2.0",
+    "vmware-policy>=1.8.5,<2.0",
     # Read-only cluster-health triage (summary + HTML snapshot) is owned by
     # vmware-monitor; AIops delegates to it so a conversation with the AIops
     # entry point can produce the same report without duplicating the code.
-    "vmware-monitor>=1.7.6,<2.0",
+    "vmware-monitor>=1.8.0,<2.0",
 ]
 
 [dependency-groups]
@@ -35,14 +35,14 @@ dev = [
 
 [project.scripts]
 vmware-aiops = "vmware_aiops.cli:app"
-vmware-aiops-mcp = "mcp_server.server:main"
+vmware-aiops-mcp = "vmware_aiops.mcp_server.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["vmware_aiops", "mcp_server"]
+packages = ["vmware_aiops"]
 
 # Dev-only: resolve vmware-monitor from the local workspace so the delegated
 # cluster-health summary uses the in-progress version. uv-specific and stripped
-# from the published wheel — the real requirement stays `vmware-monitor>=1.7.6`
+# from the published wheel — the real requirement stays `vmware-monitor>=1.8.0`
 # in [project.dependencies]. Released together at the same family version.
 [tool.uv.sources]
 vmware-monitor = { path = "../VMware-Monitor", editable = true }
@@ -59,4 +59,7 @@ testpaths = ["tests"]
 markers = [
     "unit: Unit tests",
     "integration: Integration tests (require vCenter)",
+    "capability: Capability evals — scored trends, not pass/fail gates. Excluded from the default run (they measure quality, so <100% is expected and must not read as a broken build). Run them with: pytest -m capability",
 ]
+# Capability evals are opt-in; see the marker description above.
+addopts = "-m 'not capability'"

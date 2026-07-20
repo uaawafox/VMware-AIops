@@ -28,7 +28,7 @@ _REPO = Path(__file__).resolve().parents[3]
 
 
 def test_safe_error_passes_domain_exception_messages() -> None:
-    from mcp_server.server import _safe_error
+    from vmware_aiops.mcp_server.server import _safe_error
     from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
     from vmware_aiops.ops.guest_ops import GuestOpsError
     from vmware_aiops.ops.vm_lifecycle import TaskFailedError, VMNotFoundError
@@ -47,7 +47,7 @@ def test_safe_error_passes_connection_error_through() -> None:
     # issue #24: a dropped connection must surface its teaching hint through
     # MCP, matching the CLI path (which catches OSError). Before the fix it
     # was masked to a generic "operation failed".
-    from mcp_server.server import _safe_error
+    from vmware_aiops.mcp_server.server import _safe_error
 
     hint = "Connection to vcenter-prod dropped. Run 'vmware-aiops doctor'."
     out = _safe_error(ConnectionError(hint), "vm_power_on")
@@ -56,7 +56,7 @@ def test_safe_error_passes_connection_error_through() -> None:
 
 
 def test_safe_error_still_masks_unknown_exceptions() -> None:
-    from mcp_server.server import _safe_error
+    from vmware_aiops.mcp_server.server import _safe_error
 
     out = _safe_error(RuntimeError("internal host:port leak"), "tool")
     assert "host:port" not in out
@@ -71,7 +71,7 @@ def test_tool_errors_decorator_labels_with_function_name() -> None:
     @tool_errors decorator, which derives the label from func.__name__ — so the
     R2 invariant (label == tool name) now holds by construction, for every shape.
     """
-    from mcp_server._shared import tool_errors
+    from vmware_aiops.mcp_server._shared import tool_errors
 
     captured = {}
 
@@ -79,7 +79,7 @@ def test_tool_errors_decorator_labels_with_function_name() -> None:
         captured["tool"] = tool
         return "boom"
 
-    with patch("mcp_server._shared._safe_error", side_effect=_probe_safe_error):
+    with patch("vmware_aiops.mcp_server._shared._safe_error", side_effect=_probe_safe_error):
         @tool_errors("str")
         def vm_power_on(vm_name: str):  # name must reach _safe_error verbatim
             raise RuntimeError("x")
@@ -93,7 +93,7 @@ def test_tool_errors_decorator_labels_with_function_name() -> None:
 def test_no_tool_module_passes_a_hardcoded_safe_error_label() -> None:
     """Defence in depth: tool modules must rely on @tool_errors (no inline
     _safe_error(e, '...') call sites that could drift from the tool name)."""
-    tools_dir = _REPO / "mcp_server" / "tools"
+    tools_dir = _REPO / "vmware_aiops" / "mcp_server" / "tools"
     offenders = []
     for path in sorted(tools_dir.glob("*.py")):
         tree = ast.parse(path.read_text())

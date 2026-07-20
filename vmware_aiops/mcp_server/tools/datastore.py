@@ -4,23 +4,27 @@ from typing import Optional
 
 from vmware_policy import vmware_tool
 
-from mcp_server._shared import _get_connection, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops import datastore_browser
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
-@tool_errors("list")
+@tool_errors("dict")
 def browse_datastore(
     datastore_name: str,
     path: str = "",
     pattern: str = "*",
     target: Optional[str] = None,
-) -> list[dict]:
+) -> dict:
     """[READ] Browse files in a vSphere datastore directory.
 
-    Use this to discover OVA, ISO, VMDK, and other files on datastores
-    before deploying VMs.
+    Use this to find OVA/ISO/VMDK paths before calling deploy_vm_from_ova or
+    attach_iso_to_vm; for an estate-wide image sweep use scan_datastore_images.
+
+    Returns the list envelope: 'items' is one row per file, and
+    'returned'/'total'/'truncated' state completeness. Every match in the
+    searched folders is returned, so truncated is always false.
 
     Args:
         datastore_name: Name of the datastore to browse.
@@ -38,8 +42,10 @@ def browse_datastore(
 def scan_datastore_images(target: Optional[str] = None) -> dict:
     """[READ] Scan all accessible datastores for deployable images (OVA/ISO/OVF/VMDK).
 
-    Results are cached locally in ~/.vmware-aiops/image_registry.json for
-    fast lookup via list_cached_images. Run this to refresh the cache.
+    Returns the images found and refreshes the cache at
+    ~/.vmware-aiops/image_registry.json. Use this when you do not know which
+    datastore holds an image; prefer browse_datastore once you do, because this
+    walks every datastore and may take minutes on a large estate.
 
     Args:
         target: Optional vCenter/ESXi target name from config.

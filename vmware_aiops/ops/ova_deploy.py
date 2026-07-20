@@ -111,7 +111,10 @@ def _read_ovf_from_ova(ova_path: str) -> tuple[str, dict[str, int]]:
         if total_size > _MAX_TAR_TOTAL_SIZE:
             raise ValueError(
                 f"OVA total uncompressed size {total_size} bytes exceeds "
-                f"limit {_MAX_TAR_TOTAL_SIZE} bytes (20 GiB). Refusing to process."
+                f"limit {_MAX_TAR_TOTAL_SIZE} bytes (20 GiB). Refusing to process. "
+                f"Import this image once via the vSphere Client, then use "
+                f"deploy_vm_from_template (CLI: vmware-aiops deploy template) for "
+                f"subsequent deployments."
             )
 
         for member in members:
@@ -126,7 +129,12 @@ def _read_ovf_from_ova(ova_path: str) -> tuple[str, dict[str, int]]:
                 disks[member.name] = member.size
 
     if not ovf_content:
-        raise ValueError(f"No .ovf descriptor found in OVA: {ova_path}")
+        raise ValueError(
+            f"No .ovf descriptor found in OVA: {ova_path}. Check the file is a real OVA "
+            f"(a tar archive containing an .ovf), not a bare .ovf, a .zip, or a partial "
+            f"download; repackage with ovftool if needed, then pass it again to "
+            f"vmware-aiops deploy ova."
+        )
 
     return ovf_content, disks
 
@@ -152,11 +160,19 @@ def _upload_disk(
     with tarfile.open(ova_path, "r") as tar:
         member = tar.getmember(disk_name)
         if not _safe_tar_member(member):
-            raise ValueError(f"Unsafe tar member path: {disk_name}")
+            raise ValueError(
+                f"Unsafe tar member path: {disk_name}. This OVA is malformed or "
+                f"hostile (the entry escapes the archive root) and will not be "
+                f"deployed. Do not retry with this file; obtain a re-exported OVA."
+            )
 
         f = tar.extractfile(member)
         if f is None:
-            raise ValueError(f"Cannot extract {disk_name} from OVA")
+            raise ValueError(
+                f"Cannot extract {disk_name} from OVA — the archive is truncated or "
+                f"corrupt. Do not retry with this file; re-download or re-export the "
+                f"OVA and start the deploy again."
+            )
 
         total = member.size
 

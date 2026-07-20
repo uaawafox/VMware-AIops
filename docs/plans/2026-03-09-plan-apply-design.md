@@ -129,5 +129,5 @@ On failure at step N:
 |------|--------|
 | `vmware_aiops/ops/planner.py` | **NEW** — plan CRUD, validation, pre-checks |
 | `vmware_aiops/ops/plan_executor.py` | **NEW** — sequential execution, rollback |
-| `mcp_server/server.py` | Add 3 MCP tools |
+| `vmware_aiops/mcp_server/server.py` | Add 3 MCP tools |
 | `vmware_aiops/cli.py` | Add `plan list` CLI command (read-only) |

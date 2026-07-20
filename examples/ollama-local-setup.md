@@ -30,7 +30,7 @@ ollama pull qwen2.5-coder:7b
 pip install aider-chat
 
 # Run with Ollama + vmware-aiops conventions
-aider --conventions codex-skill/AGENTS.md --model ollama/qwen2.5-coder:32b
+aider --conventions skills/vmware-aiops/SKILL.md --model ollama/qwen2.5-coder:32b
 ```
 
 Then ask in natural language:
@@ -84,7 +84,7 @@ For production environments, use vmware-monitor instead:
 uv tool install vmware-monitor
 
 # Aider
-aider --conventions codex-skill/AGENTS.md --model ollama/qwen2.5-coder:32b
+aider --conventions skills/vmware-aiops/SKILL.md --model ollama/qwen2.5-coder:32b
 
 # Or configure MCP with vmware-monitor-mcp instead of vmware-aiops-mcp
 ```

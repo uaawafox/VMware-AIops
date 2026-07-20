@@ -42,7 +42,7 @@ Create or edit `.vscode/mcp.json` in your workspace:
     "vmware-aiops": {
       "type": "stdio",
       "command": "python",
-      "args": ["-m", "mcp_server"],
+      "args": ["-m", "vmware_aiops.mcp_server"],
       "cwd": "/path/to/VMware-AIops",
       "env": {
         "VMWARE_AIOPS_CONFIG": "${env:HOME}/.vmware-aiops/config.yaml"
@@ -64,7 +64,7 @@ Add to your VS Code `settings.json` (`Cmd+Shift+P` → "Open User Settings JSON"
       "vmware-aiops": {
         "type": "stdio",
         "command": "python",
-        "args": ["-m", "mcp_server"],
+        "args": ["-m", "vmware_aiops.mcp_server"],
         "cwd": "/path/to/VMware-AIops",
         "env": {
           "VMWARE_AIOPS_CONFIG": "/Users/your-name/.vmware-aiops/config.yaml"

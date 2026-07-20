@@ -44,7 +44,7 @@ def test_set_ttl_dry_run_writes_no_entry(
     assert not store_file.exists()
     from vmware_aiops.ops.ttl import list_ttl
 
-    assert list_ttl() == []
+    assert list_ttl()["items"] == []
 
 
 def test_set_ttl_aborts_when_user_declines(
@@ -61,7 +61,7 @@ def test_set_ttl_aborts_when_user_declines(
     assert not store_file.exists()
     from vmware_aiops.ops.ttl import list_ttl
 
-    assert list_ttl() == []
+    assert list_ttl()["items"] == []
 
 
 def test_set_ttl_schedules_when_confirmed(
@@ -77,6 +77,6 @@ def test_set_ttl_schedules_when_confirmed(
     assert result.exit_code == 0
     from vmware_aiops.ops.ttl import list_ttl
 
-    entries = list_ttl()
+    entries = list_ttl()["items"]
     assert len(entries) == 1
     assert entries[0]["vm_name"] == "lab-vm-01"

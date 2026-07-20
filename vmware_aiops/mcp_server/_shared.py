@@ -1,8 +1,8 @@
 """Shared MCP server primitives: the FastMCP instance, connection helper,
 error sanitisation, and the ``@tool_errors`` decorator.
 
-Tool modules under ``mcp_server/tools/`` import ``mcp`` from here and register
-their ``@mcp.tool()`` functions onto it. ``mcp_server/server.py`` then imports
+Tool modules under ``vmware_aiops/mcp_server/tools/`` import ``mcp`` from here and register
+their ``@mcp.tool()`` functions onto it. ``vmware_aiops/mcp_server/server.py`` then imports
 those modules and runs the server.
 
 Keep ``Optional[X]`` (never PEP 604 ``X | None``) in any FastMCP-reflected
@@ -13,17 +13,21 @@ tool signature — on Python 3.10 with older mcp/pydantic the union is eval'd to
 import functools
 import logging
 import os
+import ssl
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from mcp.server.fastmcp import FastMCP
-from vmware_policy import sanitize
+from vmware_policy import report_tool_failure, sanitize
 
-from vmware_aiops.config import load_config
+from vmware_aiops.config import ConfigError, load_config
 from vmware_aiops.connection import ConnectionManager
 from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
+from vmware_aiops.ops.datastore_browser import DatastoreBrowseError
 from vmware_aiops.ops.guest_ops import GuestOpsError
-from vmware_aiops.ops.vm_lifecycle import TaskFailedError, VMNotFoundError
+from vmware_aiops.ops.inventory import InventoryError
+from vmware_aiops.ops.iscsi_config import HostNotFoundError, ISCSIError
+from vmware_aiops.ops.vm_lifecycle import TaskFailedError, TaskStillRunning, VMNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +39,44 @@ def _safe_error(exc: Exception, tool: str) -> str:
 
     Raw exception text can carry vSphere response bodies, internal paths, or
     host:port pairs. Full traceback goes to the server log; the agent sees only
-    a control-char-stripped, length-capped message. Intentional validation
-    errors and domain exceptions carrying teaching messages (VMNotFoundError,
-    GuestOpsError, TaskFailedError, ClusterNotFoundError, ClusterError,
-    TimeoutError, ConnectionError) pass through sanitized — a dropped
-    connection should surface its teaching hint, matching the CLE path
-    (which catches OSError) rather than being masked as "operation failed".
+    a control-char-stripped, length-capped message.
+
+    The rule is a property, not a list: every exception this skill raises on
+    purpose passes through, and only genuinely unplanned ones are reduced. The
+    enumeration below is the mechanical expression of that rule, and it drifts —
+    each domain exception added under ``vmware_aiops.ops`` without a matching
+    entry here loses its teaching message on the way to the agent, which is the
+    exact dead end those messages exist to remove.
+
+    The missing-password error — this family's most common first-run failure,
+    whose entire remedy is the env var name it carries — arrives as
+    ``ConfigError``, a narrow ``OSError`` subclass ``config.py`` raises on
+    purpose. Bare ``OSError`` is deliberately *not* here: it would also admit
+    ``ssl.SSLCertVerificationError`` (certificate subject and hostname),
+    ``socket.gaierror`` (the name that failed to resolve) and
+    ``requests``-style connection errors (the full ``scheme://host:port/path``),
+    none of which are authored text. ``sanitize`` strips control characters and
+    truncates; it redacts nothing, so breadth here is exposure. TLS errors are
+    rejected ahead of the list because they also subclass ``ValueError`` and an
+    allowlist therefore cannot exclude them — see the comment below.
+    ``FileNotFoundError``, ``PermissionError``, ``TimeoutError`` and
+    ``ConnectionError`` stay because each is raised deliberately somewhere in
+    this skill with a remedy in the message.
+
+    Anything else is reduced to its type — an unplanned exception's text was
+    written for a developer reading a traceback, not for an agent choosing what
+    to do next, and it is the one that can carry credentials.
     """
     logger.error("Tool %s failed", tool, exc_info=True)
+    # Checked before the allowlist, not by removal from it: an allowlist cannot
+    # express this. ``ssl.SSLCertVerificationError`` inherits from OSError *and*
+    # ValueError, so dropping bare OSError does not stop it — it still matches
+    # the ValueError entry, which predates that change and carries real
+    # authored messages. It quotes the certificate subject and the hostname.
+    # (``socket.gaierror`` needs no entry: OSError is its only base, so the
+    # allowlist already reduces it. Adding it here would guard nothing.)
+    if isinstance(exc, ssl.SSLError):
+        return f"{type(exc).__name__}: operation failed."
     _passthrough = (
         ValueError,
         FileNotFoundError,
@@ -50,11 +84,17 @@ def _safe_error(exc: Exception, tool: str) -> str:
         PermissionError,
         TimeoutError,
         ConnectionError,
+        ConfigError,
         VMNotFoundError,
         GuestOpsError,
         TaskFailedError,
+        TaskStillRunning,
         ClusterNotFoundError,
         ClusterError,
+        InventoryError,
+        HostNotFoundError,
+        ISCSIError,
+        DatastoreBrowseError,
     )
     if isinstance(exc, _passthrough):
         return sanitize(str(exc), 300)
@@ -79,6 +119,13 @@ def tool_errors(shape: str = "str") -> Callable:
     decorator and FastMCP still see the original signature (preserved via
     ``functools.wraps``); the wrapper catches exceptions exactly where the
     inline ``try/except`` did, so ``@vmware_tool`` never observes them.
+
+    Because it never observes them, the failure has to be *declared*:
+    ``report_tool_failure`` runs before the error payload is returned, inside
+    the ``@vmware_tool`` call still in flight. Without it a caught failure was
+    audited ``status=ok``, told the circuit breaker ``success=True``, and — for
+    the writes that carry an ``undo`` descriptor — recorded a token offering to
+    reverse a change that never landed.
     """
 
     def decorator(func: Callable) -> Callable:
@@ -90,6 +137,11 @@ def tool_errors(shape: str = "str") -> Callable:
                 return func(*args, **kwargs)
             except Exception as e:  # noqa: BLE001 — sanitised below
                 msg = _safe_error(e, name)
+                # This wrapper swallows the exception, so @vmware_tool above it
+                # sees an ordinary return and would record the call as ``ok``.
+                # Declare the failure explicitly — unconditionally, because a
+                # single call is easier to keep true than one per shape.
+                report_tool_failure(msg)
                 if shape == "dict":
                     return {"error": msg, "hint": _DOCTOR_HINT}
                 if shape == "list":

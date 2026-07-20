@@ -16,7 +16,7 @@ def plan_list() -> None:
     """List all pending/failed operation plans."""
     from vmware_aiops.ops.planner import list_plans
 
-    plans = list_plans()
+    plans = list_plans()["items"]
     if not plans:
         console.print("[dim]No plans found.[/dim]")
         return
