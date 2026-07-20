@@ -425,3 +425,45 @@ def test_ping_raw_response_excerpt_is_sanitized(env, monkeypatch):
     assert "raw_response" in out
     assert "\x00" not in out["raw_response"]
     assert "\x9b" not in out["raw_response"]
+
+
+# --- _soap_post TLS posture (upstream #34: dead verify=False branch) ---------------
+# The old code probed si._stub.sslContext, which SoapStubAdapter never has, so
+# verify=False was unreachable and verify_ssl:false targets failed with
+# CERTIFICATE_VERIFY_FAILED. Posture now comes from get_verify_ssl(si).
+
+class _FakeStub:
+    host = "vc.example.com"
+    cookie = "vmware_soap_session=abc"
+
+
+class _FakeResp:
+    status_code = 200
+    text = "<ok/>"
+
+
+def _capture_soap_verify(monkeypatch, verify_ssl_returns):
+    import httpx
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured["verify"] = kwargs.get("verify")
+        return _FakeResp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(hnm, "get_verify_ssl", lambda si: verify_ssl_returns)
+    si = types.SimpleNamespace(_stub=_FakeStub())
+    hnm._soap_post(si, "<Body/>")
+    return captured["verify"]
+
+
+def test_soap_post_verify_false_branch_is_reachable(monkeypatch):
+    # get_verify_ssl(si) False -> httpx called with verify=False (was dead code).
+    assert _capture_soap_verify(monkeypatch, verify_ssl_returns=False) is False
+
+
+def test_soap_post_verify_true_uses_system_ca_context(monkeypatch):
+    import ssl
+    verify = _capture_soap_verify(monkeypatch, verify_ssl_returns=True)
+    # Verified against the system store (an SSLContext), never certifi/default True.
+    assert isinstance(verify, ssl.SSLContext)
