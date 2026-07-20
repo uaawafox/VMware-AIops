@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        # This fork uses PEP 735 [dependency-groups] (not a
+        # [project.optional-dependencies] extra), so the group installs via
+        # `--group dev`, not `.[dev]`. Upgrading pip first guarantees a version
+        # that supports --group (>= 25.1).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . --group dev
+
+      # Ruff is intentionally NOT gated here. This is a fork of
+      # zw008/VMware-AIops and inherits upstream style the repo's own ruff
+      # config would flag (~180 findings: Optional[X] over PEP 604 in tool
+      # signatures, etc.) — style debt that predates our changes and carries no
+      # signal about them. The test suite is the meaningful gate; a ruff cleanup,
+      # if ever wanted, is a separate pass. (Our own added files were linted
+      # clean at authoring time.)
+      - name: Run tests
+        run: python -m pytest tests/
