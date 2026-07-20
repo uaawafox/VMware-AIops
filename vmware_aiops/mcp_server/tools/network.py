@@ -18,6 +18,8 @@ from vmware_aiops.ops import host_network_mgmt, network_mgmt
 @tool_errors("dict")
 def list_dvs_portgroups(
     dvs_name: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
     target: Optional[str] = None,
 ) -> dict:
     """[READ] List distributed virtual portgroups, optionally scoped to one dvSwitch.
@@ -29,13 +31,18 @@ def list_dvs_portgroups(
 
     Args:
         dvs_name: dvSwitch name to scope to; omit to list across all switches.
+        limit: Max portgroups to return (default 200).
+        offset: Skip this many portgroups first (paging).
         target: vCenter target name from config.yaml; omit to use the default target.
 
     Returns:
-        Dict with total and portgroups list. Errors return a dict with "error" + hint.
+        Dict with total, returned, and portgroups list. Errors return a
+        dict with "error" + hint.
     """
     si = _get_connection(target)
-    return network_mgmt.list_dvs_portgroups(si, dvs_name=dvs_name)
+    return network_mgmt.list_dvs_portgroups(
+        si, dvs_name=dvs_name, limit=limit, offset=offset
+    )
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -92,6 +99,8 @@ def create_dvs_portgroup(
 @tool_errors("dict")
 def list_host_vmks(
     host_name: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
     target: Optional[str] = None,
 ) -> dict:
     """[READ] List VMkernel adapters, optionally scoped to one ESXi host.
@@ -102,13 +111,18 @@ def list_host_vmks(
 
     Args:
         host_name: ESXi host name; omit to list across all hosts.
+        limit: Max vmks to return (default 100).
+        offset: Skip this many vmks first (paging).
         target: vCenter target name from config.yaml; omit to use the default target.
 
     Returns:
-        Dict with total and vmks list. Errors return a dict with "error" + hint.
+        Dict with total, returned, and vmks list (services is null when a
+        host's service map could not be read). Errors return "error" + hint.
     """
     si = _get_connection(target)
-    return host_network_mgmt.list_host_vmks(si, host_name=host_name)
+    return host_network_mgmt.list_host_vmks(
+        si, host_name=host_name, limit=limit, offset=offset
+    )
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -160,33 +174,47 @@ def remove_host_vmk(
     host_name: str,
     vmk: str,
     confirm: bool = False,
+    force_unprotected: bool = False,
     target: Optional[str] = None,
 ) -> dict:
-    """[WRITE] Remove a VMkernel adapter - confirm-gated and service-guarded.
+    """[WRITE] Remove a VMkernel adapter - confirm-gated, guarded, fail-closed.
 
-    REFUSES to remove a vmk that is selected for any host service
-    (management/vmotion/vsan/...) - removing a management vmk severs the
-    host. Test vmks created by add_host_vmk have no services and remove
-    cleanly. confirm=False previews what would be removed.
+    REFUSES (unless force_unprotected=True) when the vmk is selected for any
+    host service (management/vmotion/vsan/...), lives on a non-default
+    netstack (NSX TEPs on vxlan, dedicated vmotion/provisioning stacks -
+    never visible in the service map), carries a default gateway route, or
+    when any of that CANNOT be verified - unverifiable is treated as unsafe,
+    never as clear. Test vmks created by add_host_vmk trip none of these and
+    remove cleanly without force.
+
+    ABSOLUTE, no override: the host's only management-enabled vmk is never
+    removable - this call rides the interface it would delete.
+
+    force_unprotected=True (together with confirm=True) overrides the
+    non-absolute protections for deliberate teardown; the override and every
+    bypassed protection are recorded in the result (and the audit trail).
 
     Args:
         host_name: ESXi host the vmk lives on.
         vmk: Device name to remove (e.g. "vmk2").
         confirm: False previews; True removes.
+        force_unprotected: True bypasses the non-absolute protections above.
         target: vCenter target name from config.yaml; omit to use the default target.
 
     Returns:
-        Preview dict (action="preview") or result dict (action="removed").
-        Errors return a dict with "error" + hint.
+        Preview dict (action="preview") or result dict (action="removed",
+        plus forced/protections_bypassed when overridden). Errors return a
+        dict with "error" + hint.
     """
     si = _get_connection(target)
     return host_network_mgmt.remove_host_vmk(
         si, host_name=host_name, vmk=vmk, confirm=confirm,
+        force_unprotected=force_unprotected,
     )
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
-@vmware_tool(risk_level="low")
+@vmware_tool(risk_level="medium")
 @tool_errors("dict")
 def vmk_ping(
     host_name: str,

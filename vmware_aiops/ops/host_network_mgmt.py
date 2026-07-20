@@ -10,9 +10,15 @@ Design notes:
 - add_host_vmk sets NO gateway (vSphere vmk IpConfig has no gateway field;
   default routes are per-netstack) and enables NO services - both deliberate:
   the use case is throwaway test vmks on L2-only segments (e.g. TEP VLANs).
-- remove_host_vmk refuses to remove a vmk that is selected for ANY host
-  service (management/vMotion/vSAN/...) - a test vmk has none; removing a
-  management vmk kills the host connection.
+- remove_host_vmk FAILS CLOSED. It refuses when the vmk is selected for ANY
+  host service (management/vMotion/vSAN/...), when it lives on a non-default
+  netstack (vxlan/NSX TEPs, dedicated vmotion/provisioning stacks - those
+  vmks NEVER appear in the service map, so the map alone cannot protect
+  them), when it carries a default gateway route, or when any of that CANNOT
+  be verified. ``force_unprotected=True`` (with ``confirm=True``) overrides
+  every protection except one absolute: the host's only management-enabled
+  vmk is never removable - the call rides the interface it would delete, and
+  after it succeeds nothing can reach the host to undo it.
 """
 
 from __future__ import annotations
@@ -22,7 +28,9 @@ import re
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
+from vmware_policy import sanitize
 
+from vmware_aiops.connection import get_verify_ssl
 from vmware_aiops.ops.inventory import find_host_by_name
 
 if TYPE_CHECKING:
@@ -72,12 +80,18 @@ def _find_dv_portgroup(si: ServiceInstance, name: str) -> vim.dvs.DistributedVir
     raise HostNetworkError(f"Distributed portgroup '{name}' not found")
 
 
-def _vmk_services(host: vim.HostSystem) -> dict[str, list[str]]:
-    """Map vmk device -> host services it is selected for (management, vmotion, ...)."""
-    services: dict[str, list[str]] = {}
+def _vmk_services(host: vim.HostSystem) -> dict[str, list[str]] | None:
+    """Map vmk device -> host services it is selected for (management, vmotion, ...).
+
+    Returns ``None`` when the service map CANNOT be read (virtualNicManager or
+    its info unavailable - disconnected host, restricted role, API hiccup).
+    Callers MUST treat None as "unverifiable", never as "no services": an empty
+    dict here once let remove_host_vmk delete interfaces it claimed to protect.
+    """
     vnic_mgr = host.configManager.virtualNicManager
     if vnic_mgr is None or vnic_mgr.info is None:
-        return services
+        return None
+    services: dict[str, list[str]] = {}
     for net_cfg in vnic_mgr.info.netConfig or []:
         for selected in net_cfg.selectedVnic or []:
             for cand in net_cfg.candidateVnic or []:
@@ -86,8 +100,46 @@ def _vmk_services(host: vim.HostSystem) -> dict[str, list[str]]:
     return services
 
 
-def list_host_vmks(si: ServiceInstance, host_name: str | None = None) -> dict:
-    """List VMkernel adapters, optionally scoped to one host."""
+_DEFAULT_NETSTACK = "defaultTcpipStack"
+
+
+def _vmk_carries_default_route(host: vim.HostSystem, vmk: str) -> bool | None:
+    """True if ``vmk`` is the device of any default (prefix-0) route on the host.
+
+    Checks the resolved route table plus every netstack instance's table.
+    Returns ``None`` when the routing state cannot be read - callers must
+    treat that as unverifiable (fail closed), not as "no gateway".
+    """
+    try:
+        net = host.config.network
+        routes = []
+        rt = getattr(net, "routeTableInfo", None)
+        if rt is not None:
+            routes.extend(rt.ipRoute or [])
+        for stack in getattr(net, "netStackInstance", None) or []:
+            srt = getattr(stack, "routeTableInfo", None)
+            if srt is not None:
+                routes.extend(srt.ipRoute or [])
+        return any(
+            getattr(r, "prefixLength", None) == 0
+            and getattr(r, "deviceName", None) == vmk
+            for r in routes
+        )
+    except Exception:
+        return None
+
+
+def list_host_vmks(
+    si: ServiceInstance,
+    host_name: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict:
+    """List VMkernel adapters, optionally scoped to one host.
+
+    ``services`` is ``None`` (not ``[]``) for vmks on a host whose service
+    map could not be read - unknown is reported as unknown.
+    """
     hosts = (
         [_require_host(si, host_name)]
         if host_name
@@ -99,20 +151,29 @@ def list_host_vmks(si: ServiceInstance, host_name: str | None = None) -> dict:
         for vnic in host.config.network.vnic or []:
             ip = vnic.spec.ip
             dv_port = getattr(vnic.spec, "distributedVirtualPort", None)
+            netstack = getattr(vnic.spec, "netStackInstanceKey", None)
             out.append({
-                "host": host.name,
-                "device": vnic.device,
+                "host": sanitize(host.name, 200),
+                "device": sanitize(vnic.device, 40),
                 "ip": ip.ipAddress if ip else None,
                 "netmask": ip.subnetMask if ip else None,
                 "dhcp": bool(ip.dhcp) if ip else None,
                 "mtu": vnic.spec.mtu,
                 "mac": vnic.spec.mac,
-                "portgroup": vnic.portgroup or None,
+                "portgroup": sanitize(vnic.portgroup, 200) or None,
                 "dvs_port": dv_port.portgroupKey if dv_port else None,
-                "netstack": getattr(vnic.spec, "netStackInstanceKey", None),
-                "services": services.get(vnic.device, []),
+                "netstack": sanitize(netstack, 80) if netstack else None,
+                "services": (
+                    services.get(vnic.device, []) if services is not None else None
+                ),
             })
-    return {"total": len(out), "vmks": out}
+    total = len(out)
+    window = out[offset : offset + limit] if limit > 0 else out[offset:]
+    result = {"total": total, "returned": len(window), "vmks": window}
+    if offset or len(window) < total:
+        result["offset"] = offset
+        result["hint"] = "Use limit/offset to page through the remainder."
+    return result
 
 
 def add_host_vmk(
@@ -184,38 +245,103 @@ def remove_host_vmk(
     host_name: str,
     vmk: str,
     confirm: bool = False,
+    force_unprotected: bool = False,
 ) -> dict:
-    """Remove a VMkernel adapter, confirm-gated + service-guarded."""
+    """Remove a VMkernel adapter - confirm-gated, guarded, FAIL CLOSED.
+
+    Protections (each refuses unless ``force_unprotected=True``):
+    - vmk is selected for any host service (management/vMotion/vSAN/...)
+    - the host's service map cannot be read (unverifiable != safe)
+    - vmk lives on a non-default netstack (vxlan/NSX TEP, dedicated
+      vmotion/provisioning stacks) - those never appear in the service map
+    - vmk is the device of a default (prefix-0) route, or the routing
+      table cannot be read
+
+    ABSOLUTE (no override): the host's only management-enabled vmk. The
+    call rides the interface it would delete; after it succeeded, nothing
+    could reach the host to undo it.
+    """
     host = _require_host(si, host_name)
 
     existing = {v.device: v for v in host.config.network.vnic or []}
     if vmk not in existing:
         raise HostNetworkError(
-            f"'{vmk}' not found on '{host_name}'. Present: {sorted(existing) or 'none'}"
+            f"'{vmk}' not found on '{host_name}'. "
+            f"Present: {sanitize(str(sorted(existing)), 300) or 'none'}"
         )
-    in_use = _vmk_services(host).get(vmk, [])
-    if in_use:
-        raise HostNetworkError(
-            f"REFUSED: {vmk} on '{host_name}' is selected for host services "
-            f"{in_use} - removing it could sever the host. Deselect the "
-            "services first if this is intentional."
+    vnic = existing[vmk]
+
+    protections: list[str] = []
+
+    services = _vmk_services(host)
+    if services is None:
+        protections.append(
+            "the host's service map cannot be read (virtualNicManager "
+            "unavailable) - this vmk may carry management/vMotion/other "
+            "critical services and that cannot be ruled out right now"
+        )
+    else:
+        in_use = services.get(vmk, [])
+        if "management" in in_use:
+            mgmt_vmks = [d for d, svcs in services.items() if "management" in svcs]
+            if len(mgmt_vmks) <= 1:
+                raise HostNetworkError(
+                    f"REFUSED (no override): {vmk} is the ONLY "
+                    f"management-enabled vmk on '{host_name}'. Removing it "
+                    "severs the API path this call rides on; after it "
+                    "succeeded, nothing could reach the host to undo it."
+                )
+        if in_use:
+            protections.append(f"selected for host services {in_use}")
+
+    netstack = getattr(vnic.spec, "netStackInstanceKey", None)
+    if netstack and netstack != _DEFAULT_NETSTACK:
+        protections.append(
+            f"lives on netstack '{sanitize(netstack, 80)}' - non-default "
+            "netstacks (NSX TEPs on vxlan, dedicated vmotion/provisioning "
+            "stacks) are system-owned and never appear in the service map"
         )
 
-    target_ip = existing[vmk].spec.ip
+    carries_gw = _vmk_carries_default_route(host, vmk)
+    if carries_gw is None:
+        protections.append(
+            "the host routing table cannot be read - this vmk may carry "
+            "a default gateway route and that cannot be ruled out right now"
+        )
+    elif carries_gw:
+        protections.append("carries a default (prefix-0) gateway route")
+
+    if protections and not force_unprotected:
+        raise HostNetworkError(
+            f"REFUSED: removing {vmk} on '{host_name}' is blocked: "
+            + "; ".join(protections)
+            + ". If you are certain this interface is safe to remove, re-run "
+            "with force_unprotected=True AND confirm=True - the override and "
+            "every bypassed protection are recorded in the result."
+        )
+
+    target_ip = vnic.spec.ip
     doomed = {
-        "host": host.name,
+        "host": sanitize(host.name, 200),
         "device": vmk,
         "ip": target_ip.ipAddress if target_ip else None,
     }
     if not confirm:
-        return {
+        preview: dict = {
             "action": "preview",
             "would_remove": doomed,
             "hint": "Re-run with confirm=True to remove.",
         }
+        if protections:
+            preview["protections_bypassed_by_force"] = protections
+        return preview
 
     host.configManager.networkSystem.RemoveVirtualNic(vmk)
-    return {"action": "removed", "removed": doomed}
+    result: dict = {"action": "removed", "removed": doomed}
+    if protections:
+        result["forced"] = True
+        result["protections_bypassed"] = protections
+    return result
 
 
 # --- vmk_ping (esxcli over API, raw SOAP) ---------------------------------------
@@ -248,9 +374,14 @@ def _soap_post(si: ServiceInstance, body: str) -> str:
 
     stub = si._stub
     hostport = stub.host if ":" in stub.host else f"{stub.host}:443"
-    ssl_ctx = getattr(stub, "sslContext", None)
-    if ssl_ctx is not None and ssl_ctx.verify_mode == 0:
-        verify = False  # ignore_ssl target - match the pyVmomi session's posture
+    # Match the pyVmomi session's TLS posture via the module-level verify_ssl
+    # registry, NOT by probing si._stub for an sslContext attribute -
+    # SoapStubAdapter keeps its context in schemeArgs, so that getattr is
+    # always None and the verify=False branch would never execute (found in
+    # upstream review of PR #34; targets with verify_ssl: false failed with
+    # CERTIFICATE_VERIFY_FAILED).
+    if not get_verify_ssl(si):
+        verify = False
     else:
         # Verify against the SYSTEM CA store (where hub-installed roots like
         # the v9 VMCA live). httpx's default is the bundled certifi store,
@@ -273,9 +404,9 @@ def _soap_post(si: ServiceInstance, body: str) -> str:
         raise HostNetworkError(f"SOAP transport failed: {e}") from e
     fault = re.search(r"<faultstring>\s*(.*?)\s*</faultstring>", r.text, re.DOTALL)
     if fault:
-        raise HostNetworkError(f"SOAP fault: {fault.group(1)[:300]}")
+        raise HostNetworkError(f"SOAP fault: {sanitize(fault.group(1), 300)}")
     if r.status_code != 200:
-        raise HostNetworkError(f"SOAP HTTP {r.status_code}: {r.text[:200]}")
+        raise HostNetworkError(f"SOAP HTTP {r.status_code}: {sanitize(r.text, 200)}")
     return r.text
 
 
@@ -289,7 +420,7 @@ def _retrieve_mme_moid(si: ServiceInstance, host: vim.HostSystem) -> str:
     m = re.search(r"<returnval[^>]*>\s*([^<\s]+)\s*</returnval>", xml)
     if not m:
         raise HostNetworkError(
-            f"could not locate ManagedMethodExecuter moid in response: {xml[:200]}"
+            f"could not locate ManagedMethodExecuter moid in response: {sanitize(xml, 200)}"
         )
     return m.group(1)
 
@@ -356,7 +487,7 @@ def vmk_ping(
     devices = {v.device for v in host.config.network.vnic or []}
     if source_vmk not in devices:
         raise HostNetworkError(
-            f"'{source_vmk}' not found on '{host_name}'. Present: {sorted(devices)}"
+            f"'{source_vmk}' not found on '{host_name}'. Present: {sanitize(str(sorted(devices)), 300)}"
         )
 
     from xml.sax.saxutils import escape
@@ -415,7 +546,7 @@ def vmk_ping(
         return {
             "request": request,
             "success": False,
-            "fault": "; ".join(fault_msgs)[:500],
+            "fault": sanitize("; ".join(fault_msgs), 500),
             "hint": "For df=True, 'Message too long' means the path MTU is below size+28.",
         }
     # The PingOutput arrives XML-escaped inside <response> (possibly
@@ -436,5 +567,5 @@ def vmk_ping(
         # Unrecognized response shape - never swallow it silently; the raw
         # excerpt is the only way to adapt the parser to a new ACOS/ESXi
         # schema without SSHing anywhere.
-        out["raw_response"] = xml[-1200:]
+        out["raw_response"] = sanitize(xml[-1200:], 1200)
     return out
