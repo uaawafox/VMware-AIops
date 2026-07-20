@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from vmware_policy import vmware_tool
 
-from mcp_server._shared import _get_connection, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops.plan_executor import apply_plan, rollback_plan
 from vmware_aiops.ops.planner import create_plan, list_plans
 
@@ -18,22 +18,14 @@ def vm_create_plan(
 ) -> dict:
     """[WRITE] Create an execution plan for multi-step VM operations.
 
-    Auto-triggered when operations involve 2+ steps or 2+ VMs.
-    Validates actions, checks target existence in vSphere, and generates
-    a plan with rollback info for each step.
+    Use for 2+ steps or 2+ VMs. Validates actions, checks the targets exist
+    in vSphere, and generates a plan with rollback info per step.
 
     Each operation is a dict with "action" key plus action-specific params.
     Allowed actions: power_on, power_off, reset, suspend, create_vm,
     delete_vm, reconfigure, create_snapshot, delete_snapshot,
     revert_snapshot, clone, migrate, deploy_ova, deploy_template,
     linked_clone, attach_iso, convert_to_template.
-
-    Example:
-        operations=[
-            {"action": "power_off", "vm_name": "test-1"},
-            {"action": "revert_snapshot", "vm_name": "test-1", "snapshot_name": "baseline"},
-            {"action": "power_on", "vm_name": "test-1"}
-        ]
 
     Returns plan dict with plan_id, steps, summary (vms_affected,
     irreversible_steps, rollback_available). Show to user for confirmation
@@ -83,8 +75,9 @@ def vm_rollback_plan(plan_id: str, target: Optional[str] = None) -> dict:
     """[WRITE] Rollback executed steps of a failed plan in reverse order.
 
     Only call this after vm_apply_plan returns status='failed' and the
-    user confirms they want to rollback. Irreversible steps (delete_vm,
-    revert_snapshot, etc.) are skipped with a warning.
+    user confirms they want to rollback; check vm_list_plans first for the
+    plan_id. Irreversible steps (delete_vm, revert_snapshot, etc.) are
+    skipped with a warning.
 
     Args:
         plan_id: The plan ID of the failed plan.
@@ -96,11 +89,15 @@ def vm_rollback_plan(plan_id: str, target: Optional[str] = None) -> dict:
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
-@tool_errors("list")
-def vm_list_plans() -> list[dict]:
+@tool_errors("dict")
+def vm_list_plans() -> dict:
     """[READ] List all pending/failed plans.
 
-    Returns plan summaries (plan_id, created_at, status, steps count,
-    VMs affected). Stale plans (>24h) are auto-cleaned.
+    Use this first to find a plan_id for vm_apply_plan or vm_rollback_plan.
+    Returns the list envelope: 'items' holds plan summaries (plan_id,
+    created_at, status, steps count, VMs affected), and 'returned'/'total'/
+    'truncated' state whether the listing is complete. Every plan file is
+    read, so truncated is always false. Listing never deletes: stale plans
+    (>24h) are swept by vm_create_plan, not by this tool.
     """
     return list_plans()

@@ -380,15 +380,21 @@ def resolve_datacenter(
         dc = find_datacenter_by_name(si, datacenter_name)
         if dc is None:
             raise InventoryError(
-                f"Datacenter '{datacenter_name}' not found. "
-                f"Run inventory listing to see available datacenters."
+                f"Datacenter '{datacenter_name}' not found on this target. "
+                f"Omit --datacenter (MCP arg: datacenter_name) to use the first "
+                f"datacenter, or copy an exact name from the vSphere Client inventory "
+                f"tree. Check you are on the right vCenter with 'vmware-aiops doctor'."
             )
         return dc
     content = si.RetrieveContent()
     for child in content.rootFolder.childEntity:
         if isinstance(child, vim.Datacenter):
             return child
-    raise InventoryError("No datacenter found in inventory.")
+    raise InventoryError(
+        "No datacenter found in this vCenter's inventory — nothing can be deployed "
+        "until one exists. Create a datacenter in the vSphere Client, or check that "
+        "--target points at the intended vCenter: run 'vmware-aiops doctor'."
+    )
 
 
 def find_compute_resource(
@@ -417,10 +423,13 @@ def find_compute_resource(
         if cluster_name:
             raise InventoryError(
                 f"Compute resource '{cluster_name}' not found in datacenter "
-                f"'{dc.name}'."
+                f"'{dc.name}'. Run cluster_health_summary (CLI: vmware-aiops summary) "
+                f"to see every cluster on this target, then retry with an exact name."
             )
         raise InventoryError(
-            f"No compute resource (cluster or host) found in datacenter "
-            f"'{dc.name}'."
+            f"No compute resource (cluster or host) found in datacenter '{dc.name}' — "
+            f"there is nowhere to place a VM. Add a host or cluster to that datacenter "
+            f"in the vSphere Client, or check --target/--datacenter point at the right "
+            f"place: run 'vmware-aiops doctor'."
         )
     return cr

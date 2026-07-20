@@ -38,7 +38,7 @@ Edit the LocalCowork MCP config JSON (typically `~/.localcowork/mcp_config.json`
 {
   "vmware-aiops": {
     "command": "python",
-    "args": ["-m", "mcp_server"],
+    "args": ["-m", "vmware_aiops.mcp_server"],
     "cwd": "/path/to/VMware-AIops",
     "env": {
       "VMWARE_AIOPS_CONFIG": "~/.vmware-aiops/config.yaml"

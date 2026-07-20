@@ -17,10 +17,18 @@ clawhub install vmware-aiops
 
 ### Claude Code
 
+`npx skills add` and `clawhub install` both place the skill in Claude Code's skills
+directory. To install it manually from a clone:
+
+```bash
+mkdir -p ~/.claude/skills/vmware-aiops
+cp -r skills/vmware-aiops/. ~/.claude/skills/vmware-aiops/
 ```
-/plugin marketplace add zw008/VMware-AIops
-/plugin install vmware-ops
-/vmware-ops:vmware-aiops
+
+For tool access (not just skill context), register the MCP server:
+
+```bash
+claude mcp add vmware-aiops -- vmware-aiops mcp
 ```
 
 ## Configuration
@@ -38,6 +46,24 @@ vmware-aiops init  # generates config.yaml and .env templates
 chmod 600 ~/.vmware-aiops/.env
 # Edit ~/.vmware-aiops/config.yaml and .env with your target details
 ```
+
+### Declare `environment:` on each target
+
+```yaml
+targets:
+  - name: prod-vcenter
+    host: vcenter-prod.example.com
+    environment: production   # production | staging | lab | <your own label>
+```
+
+Policy scopes its rules by environment, not by the target's name — an
+unlabelled target matches none of them. Today an undeclared write still runs
+and logs a warning. The next major release refuses it with:
+
+> `'vm_delete' changes state, but its target does not declare which environment it is. Add 'environment: <name>' (e.g. production, staging, lab) to that target's entry in the skill's config.yaml, then retry.`
+
+Declaring it now makes that upgrade a no-op. Read-only operations are never
+affected.
 
 ## What Gets Installed
 
@@ -82,18 +108,43 @@ whitespace are handled correctly).
 - **Prompt Injection Protection**: All vSphere-sourced content (event messages, host logs) is truncated, stripped of control characters, and wrapped in boundary markers (`[VSPHERE_EVENT]`/`[VSPHERE_HOST_LOG]`) before output to prevent prompt injection when consumed by LLM agents.
 - **Least Privilege**: Use a dedicated vCenter service account with minimal permissions. For monitoring-only use cases, prefer the read-only [VMware-Monitor](https://github.com/zw008/VMware-Monitor) skill which has zero destructive code paths.
 
+### Read-only mode
+
+Read-only mode removes all 36 write-effecting tools from the MCP registry before the server accepts a request, so `list_tools()` never offers them. The model cannot call what it cannot see — no prompt discipline required. **Off by default.**
+
+Three ways to enable it, highest precedence first:
+
+| Precedence | Setting | Scope |
+|:-:|---|---|
+| 1 | `VMWARE_AIOPS_READ_ONLY=true` | This skill only |
+| 2 | `VMWARE_READ_ONLY=true` | **Every installed VMware skill** — one setting puts the whole estate in audit posture |
+| 3 | `read_only: true` in `~/.vmware-aiops/config.yaml` | This skill only |
+| 4 | *(unset)* | Off — write tools exposed |
+
+The env vars come first so a deployment can be locked down from the MCP client's `env` block without editing any config file.
+
+**Fail-closed.** If read-only mode is requested but cannot be *proven* — the tool registry cannot be enumerated, or a removal does not take effect — the server refuses to start rather than serving write tools it promised to withhold. One case does *not* abort: an unrecognised value (`VMWARE_READ_ONLY=ture`) resolves to **on** with a warning, so a typo locks the deployment down instead of leaving it open.
+
+**Verifying it took**:
+
+```bash
+vmware-aiops doctor        # reports ON/off, and which of the four sources decided it
+```
+
+The MCP server also logs a warning at start-up naming every tool it withheld. The 13 read tools are unaffected in all cases.
+
 ## Supported AI Platforms
 
 | Platform | Status | Config File |
 |----------|--------|-------------|
-| Claude Code | ✅ Native Skill | `plugins/.../SKILL.md` |
-| Gemini CLI | ✅ Extension | `gemini-extension/GEMINI.md` |
-| OpenAI Codex CLI | ✅ Skill + AGENTS.md | `codex-skill/AGENTS.md` |
-| Aider | ✅ Conventions | `codex-skill/AGENTS.md` |
-| Continue CLI | ✅ Rules | `codex-skill/AGENTS.md` |
-| Trae IDE | ✅ Rules | `trae-rules/project_rules.md` |
-| Kimi Code CLI | ✅ Skill | `kimi-skill/SKILL.md` |
-| MCP Server | ✅ MCP Protocol | `mcp_server/` |
+| Claude Code | ✅ Native Skill | `skills/vmware-aiops/SKILL.md` |
+| Gemini CLI | ✅ Context file + MCP | `skills/vmware-aiops/SKILL.md` |
+| OpenAI Codex CLI | ✅ Skill + AGENTS.md | `skills/vmware-aiops/SKILL.md` |
+| Aider | ✅ Conventions | `skills/vmware-aiops/SKILL.md` |
+| Continue CLI | ✅ Rules | `skills/vmware-aiops/SKILL.md` |
+| Trae IDE | ✅ Rules | `skills/vmware-aiops/SKILL.md` |
+| Kimi Code CLI | ✅ Skill | `skills/vmware-aiops/SKILL.md` |
+| MCP Server | ✅ MCP Protocol | `vmware_aiops/mcp_server/` |
 | Python CLI | ✅ Standalone | N/A |
 
 ## MCP Server — Local Agent Compatibility
@@ -112,7 +163,7 @@ The MCP server works with any MCP-compatible agent via stdio transport. Config t
 
 ```bash
 # Example: Aider + Ollama (fully local, no cloud API)
-aider --conventions codex-skill/AGENTS.md --model ollama/qwen2.5-coder:32b
+aider --conventions skills/vmware-aiops/SKILL.md --model ollama/qwen2.5-coder:32b
 ```
 
 ## MCP Mode (Optional)
@@ -138,4 +189,4 @@ For Claude Code / Cursor users who prefer structured tool calls, add to `~/.clau
 > PyPI on each launch and breaks behind corporate TLS proxies. The legacy
 > `vmware-aiops-mcp` entry point is also kept for backward compatibility.
 
-MCP exposes 31 tools across 6 categories. All accept optional `target` parameter.
+MCP exposes 49 tools across 9 categories. All accept optional `target` parameter.

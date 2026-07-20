@@ -138,7 +138,11 @@ def _dispatch(si: ServiceInstance, action: str, params: dict[str, Any]) -> str:
 
     handler = dispatch_table.get(action)
     if handler is None:
-        raise ValueError(f"Unknown action: {action}")
+        raise ValueError(
+            f"Unknown plan action: '{action}'. Supported: {sorted(dispatch_table)}. "
+            f"Edit the plan to use one of those exact action names, then re-run "
+            f"vm_apply_plan (CLI: vmware-aiops plan list shows pending plans)."
+        )
     result = handler()
     return str(result) if result is not None else "OK"
 

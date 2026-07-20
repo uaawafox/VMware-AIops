@@ -33,7 +33,7 @@ def alarm_list(
     from vmware_aiops.ops.alarm_mgmt import list_alarms
 
     si, _ = _get_connection(target, config)
-    alarms = list_alarms(si)
+    alarms = list_alarms(si)["items"]
     if not alarms:
         console.print("[green]No active alarms.[/]")
         return

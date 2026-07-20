@@ -67,7 +67,7 @@ class _Cfg:
 
 def test_mcp_tool_registered_and_read_only() -> None:
     """The delegated summary tool is present on the AIops MCP server."""
-    from mcp_server.server import mcp
+    from vmware_aiops.mcp_server.server import mcp
 
     tools = {t.name for t in asyncio.run(mcp.list_tools())}
     assert "cluster_health_summary" in tools, "AIops must re-expose cluster_health_summary"
@@ -75,7 +75,7 @@ def test_mcp_tool_registered_and_read_only() -> None:
 
 def test_mcp_tool_delegates_to_monitor() -> None:
     """The tool calls the vmware-monitor aggregation with AIops's connection."""
-    from mcp_server.tools import summary as tool_mod
+    from vmware_aiops.mcp_server.tools import summary as tool_mod
 
     with (
         patch.object(tool_mod, "_get_connection", return_value=object()) as conn,
@@ -91,7 +91,7 @@ def test_mcp_tool_delegates_to_monitor() -> None:
 
 def test_investigation_tools_registered() -> None:
     """AIops re-exposes the object-investigation family + cross-vCenter attention."""
-    from mcp_server.server import mcp
+    from vmware_aiops.mcp_server.server import mcp
 
     tools = {t.name for t in asyncio.run(mcp.list_tools())}
     for name in (
@@ -105,7 +105,7 @@ def test_investigation_tools_registered() -> None:
 
 def test_vm_bundle_delegates_to_monitor() -> None:
     """vm_investigation_bundle calls the monitor aggregation with AIops's connection."""
-    from mcp_server.tools import summary as tool_mod
+    from vmware_aiops.mcp_server.tools import summary as tool_mod
 
     sentinel = {"object": {"name": "web-01"}}
     with (
@@ -120,7 +120,7 @@ def test_vm_bundle_delegates_to_monitor() -> None:
 
 def test_attention_delegates_via_connect_all() -> None:
     """cross_vcenter_attention resolves all targets and delegates to monitor."""
-    from mcp_server.tools import summary as tool_mod
+    from vmware_aiops.mcp_server.tools import summary as tool_mod
 
     mgr = type("_Mgr", (), {"connect_all": lambda self: ([("prod", object())], [("dr", "TimeoutError")])})()
     sentinel = {"targets": [], "top_issues": []}

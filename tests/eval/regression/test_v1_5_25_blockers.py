@@ -106,7 +106,7 @@ def test_mcp_server_exposes_clone_migrate_delete_snapshot() -> None:
     using the MCP transport could not clone, migrate, delete, or snapshot VMs."""
     import asyncio
 
-    from mcp_server.server import mcp
+    from vmware_aiops.mcp_server.server import mcp
 
     tools = asyncio.run(mcp.list_tools())
     names = {t.name for t in tools}
@@ -182,12 +182,12 @@ def test_mcp_server_uses_optional_not_pep604() -> None:
     """Suspenders: FastMCP-reflected tool signatures should use Optional[X], not
     X | None, so install on Python 3.10 doesn't crash at decorator time.
 
-    Tool signatures now live in mcp_server/tools/*.py plus the shared helpers in
+    Tool signatures now live in vmware_aiops/mcp_server/tools/*.py plus the shared helpers in
     _shared.py; scan all of them, not just the (now thin) server.py entrypoint.
     """
     from pathlib import Path
 
-    mcp_dir = Path(__file__).resolve().parents[3] / "mcp_server"
+    mcp_dir = Path(__file__).resolve().parents[3] / "vmware_aiops" / "mcp_server"
     files = [mcp_dir / "server.py", mcp_dir / "_shared.py"]
     files += sorted((mcp_dir / "tools").glob("*.py"))
 
@@ -202,5 +202,6 @@ def test_mcp_server_uses_optional_not_pep604() -> None:
             if " | None" in line and ":" in line and ("def " in line or stripped.endswith(",")):
                 bad.append(f"{path.name}:{i}: {line.strip()}")
     assert not bad, (
-        "mcp_server tool signatures must not use PEP 604 `X | None`:\n" + "\n".join(bad)
+        "vmware_aiops.mcp_server tool signatures must not use PEP 604 "
+        "`X | None`:\n" + "\n".join(bad)
     )

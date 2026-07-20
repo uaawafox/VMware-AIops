@@ -1,3 +1,387 @@
+## v1.8.5 (2026-07-20) — the two fixes v1.8.4 announced now actually work
+
+Four adversarial reviews of v1.8.4 found that both of its headline fixes were
+incomplete in ways the release notes did not reflect. This release makes them
+real. If you are on 1.8.4, this is the one to take.
+
+### Fixed — a failure that was *returned* was still audited as a success
+
+vmware-policy 1.8.4 added `report_tool_failure()` for tools that catch an
+exception and return an error payload instead of raising. **No skill called it.**
+
+Every string-returning tool therefore kept doing exactly what 1.8.4 said it had
+stopped doing: writing `status=ok` to `~/.vmware/audit.db` for an operation that
+failed, recording an undo token for a change that never happened, and telling the
+circuit breaker the call succeeded so repeated failures never tripped it.
+
+The surface this covered is not marginal:
+
+| Skill | What was mis-audited |
+|---|---|
+| vmware-aiops | 25 of 49 tools, including **every undo-bearing write** — a failed `vm_power_on` left an undo token saying "power it back off" |
+| vmware-avi | all 28 tools, including `vs_toggle` and `ako_restart` |
+| vmware-storage | all 4 write tools |
+| vmware-nsx | the 5 delete tools |
+
+vmware-avi is worth calling out: before 1.8.4 its exceptions propagated and the
+audit was correct. 1.8.4 caught them and returned a string, so **that release made
+its audit trail worse than it had been.**
+
+Skills whose tools already return dict payloads (vmware-monitor, vmware-vks,
+vmware-aria, vmware-log-insight, vmware-harden, vmware-debug, vmware-pilot) were
+already detected correctly. They gained a test proving it rather than a redundant
+call.
+
+### Fixed — narrowing `OSError` did not close the leak it was meant to close
+
+1.8.4 narrowed the `_safe_error` passthrough because bare `OSError` let TLS and
+DNS failures reach the agent with hostnames and certificate subjects in them.
+That narrowing had no effect on the error it was written for:
+
+```
+ssl.SSLCertVerificationError → ssl.SSLError → OSError, ValueError
+```
+
+`ValueError` has been on every allowlist since long before 1.8.4, so a
+certificate failure kept passing through — the commonest self-signed-certificate
+failure in this family, carrying the hostname it was checked against. An
+allowlist structurally cannot express "not this one".
+
+Where `ssl.SSLError` can actually surface — the pyVmomi skills — it is now
+reduced *ahead* of the allowlist. In the httpx skills TLS arrives wrapped as
+`httpx.ConnectError`, and in vmware-avi as `requests.exceptions.SSLError`, so the
+guard cannot fire there; in those skills the leak was the raw exception
+interpolated into an already-allowlisted `*ApiError`, and that is now authored
+text naming the config target and `verify_ssl` instead of the exception.
+
+The missing-password error — this family's most common first-run failure, whose
+entire remedy is the environment variable name it carries — keeps its message
+through a narrow `ConfigError(OSError)` rather than the base class. Connection
+failures are translated at the connection layer into an authored remedy that
+names the target and the setting to change, with the raw detail left on
+`__cause__` for the server log.
+
+### Also fixed
+
+- **vmware-vks**: the quickstart documented a password variable the code never
+  reads — following `README.md` verbatim produced "Password not found". Five
+  places, plus six references to a `doctor` command this CLI has never had, two
+  descriptions promising fields the tools do not return, and eight teaching
+  messages that `RuntimeError` was masking.
+- **vmware-nsx**: an error cited `--route-advertisement`; the flag is `--advertise`.
+- **vmware-pilot**: `get_workflow_status` told the model to call `approve` — a
+  tool the read-only gate withholds — as the required next step; and a hint
+  pointed at a filename that could never appear in that message.
+- **vmware-aiops**: `vm_task_status` polling a *failed task* returned
+  `{"state": "error", "error": ...}` from a successful read, which the new
+  detection read as the call itself failing. The field is now `task_error`.
+  **This is a breaking change for anything parsing that payload.**
+- Several remedies that were still being cut by the 300-character cap the 1.8.4
+  notes claimed to have addressed.
+
+### Known and not fixed
+
+`ConnectionError` remains one type from two sources in several skills — a
+skill's own authored message and urllib3's `HTTPSConnectionPool(host=..., port=...)`
+share it, and an allowlist cannot separate them. vmware-vks is converted; the
+rest need their own domain type and are deferred rather than half-done.
+
+## v1.8.4 (2026-07-20) — errors that teach, and tool descriptions a small model can route from
+
+A capability eval was rolled out across the family and asked two open questions:
+when a call fails, is the model told enough to fix it, and can it pick the right
+tool from the description alone? Both answers were worse than anyone thought, and
+in several places the reason was that the measurement was looking somewhere other
+than where the model reads.
+
+### Fixed — teaching messages were being discarded on the way to the agent
+
+`_safe_error` reduces unrecognised exceptions to `"<Class>: operation failed."`
+so raw API text, credentials in URLs and internal paths cannot reach an agent.
+Its allowlist held only the builtin validation errors — so this skill's **own**
+domain exceptions, the ones that exist precisely to carry a corrected next step,
+had their messages replaced by their class names.
+
+The effect was invisible from the CLI, which prints those messages in full.
+
+The worst case was shared by nine skills: `config.py` raises exactly one
+`OSError`, the missing-password error, whose entire remedy is the environment
+variable name it names. An agent hitting an unconfigured target received
+`OSError: operation failed.` and had nothing to act on. That is the family's most
+common first-run failure, and it landed one release after the documented variable
+names were corrected — so the message that would have unstuck the operator was
+the one being thrown away.
+
+The rule is now the property it always meant: **every exception this skill raises
+on purpose passes through**, and only genuinely unplanned ones are reduced.
+`RuntimeError` stays reduced — it is the generic catch-all and in several skills
+carries raw upstream text.
+
+### Fixed — error messages now carry the correction
+
+Every message that reported a failure without saying how to recover was
+rewritten: it names the offending value, gives an imperative remedy, and names
+something concrete to act on — a tool that exists, a real CLI command, a config
+file, an environment variable. Recovery becomes an instruction-following problem
+rather than an inference one, which is what a weak model can still do.
+
+Three classes of defect surfaced while doing it:
+
+- **Remedies that were never delivered.** `_safe_error` truncates with no
+  ellipsis, so a message longer than the cap loses its closing sentence
+  silently. One message had been shipping at 396 characters against a 300-char
+  cap — its remedy had never once reached an agent. Messages now lead with the
+  remedy so a long interpolated value truncates the expendable detail instead.
+- **Commands that do not exist.** One skill's error hints named a `doctor`
+  subcommand it does not have.
+- **Tools that do not exist.** A tool description pointed at two sibling-skill
+  tools that had been renamed, and another named a tool that had moved to a
+  different skill entirely.
+
+### Improved — tool descriptions state when to use them and what to call next
+
+The description is the API for a small model: an unstated routing rule is a
+routing rule that does not exist, and a tool with no stated next hop is one the
+model stops at. Descriptions now say when to prefer this tool over a sibling,
+what shape comes back, the caveat that bites, and which tool to call after.
+
+**Manifest size did not grow.** Descriptions load into every session, so the
+routing clauses were paid for by cutting duplicated reference material —
+repeated boilerplate, examples that restated the parameter list, and prose
+copies of the pagination contract.
+
+### Note
+
+Every tool and CLI command named anywhere in this release was verified against
+the live MCP registry and the live command tree, not against documentation.
+
+## v1.8.3 (2026-07-20) — credentials resolve as a pair; documented env vars now exist
+
+### Added — the per-target username can come from the environment
+
+Adapted from [VMware-AIops#33](https://github.com/zw008/VMware-AIops/pull/33) by
+@wright-bench, with thanks. The password already resolved from an env var; the
+username did not, so a deployment injecting credentials from a secret store
+(systemd `EnvironmentFile`, container secrets, a vault sidecar) could externalise
+only half of the pair — and a config-file username paired with an env password
+from a different account logs in as nobody.
+
+`<PASSWORD-KEY-PREFIX>_USERNAME` now overrides the `username:` in config.yaml,
+using that skill's own password-key convention. Absent, config.yaml still wins;
+nothing changes for anyone not setting it.
+
+**Resolved on every access, like the password.** The contributed version read the
+username once at load time while the password stayed a property, which
+reintroduces exactly the split the override exists to prevent: a sidecar rotating
+both halves mid-process moves the password and leaves the username behind. A test
+pins that both halves resolve at the same moment.
+
+### Fixed — documented credential variables that the code never read
+
+Rolling the above across the family surfaced a separate defect: four skills
+documented a password variable their own loader does not look up. An operator
+following the documentation exactly — correct file, correct place, correct-looking
+name — got "Password not found".
+
+| Skill | Documented | Actually read |
+|---|---|---|
+| vmware-nsx | `VMWARE_NSX_<TARGET>_PASSWORD` for target `nsx-prod` → `VMWARE_NSX_PROD_PASSWORD` | `VMWARE_NSX_NSX_PROD_PASSWORD` |
+| vmware-nsx-security | `VMWARE_<TARGET>_PASSWORD` | `VMWARE_NSX_SECURITY_<TARGET>_PASSWORD` |
+| vmware-aria | `VMWARE_<TARGET>_PASSWORD` | `VMWARE_ARIA_<TARGET>_PASSWORD` |
+| vmware-vks | `VMWARE_<TARGET>_PASSWORD` | `VMWARE_VKS_<TARGET>_PASSWORD` |
+| vmware-avi | three different forms across three files | `<CONTROLLER>_PASSWORD` |
+
+The prefixes genuinely differ per skill, so nothing could be fixed by
+standardising a pattern — each repo's docs were corrected against its own code.
+The code was left alone: changing a key would break every existing deployment.
+
+`family_smoke.sh` now compares the credential variables named in each repo's docs
+against the ones that repo's code builds, so the two cannot drift apart again.
+
+## v1.8.2 (2026-07-20) — the MCP server moves into the package namespace
+
+### Fixed — co-installing two skills broke all but the last one
+
+Every skill shipped its MCP server as a **top-level `mcp_server` package**. Python
+has one top-level namespace, so installing any two of them into one environment let
+the second overwrite the first — silently, with no error and no warning.
+
+    uv tool install vmware-aiops   ->  49 tools   (correct)
+    uv pip  install vmware-aiops   ->  27 tools   (Monitor's read-only server)
+
+vmware-aiops depends on vmware-monitor, so this was not an edge case: **every pip
+install hit it**, and the operator got 27 read-only tools where 49 were expected,
+with all 35 write tools missing. Docker images, shared MCP hosts and CI runners that
+install more than one skill were affected the same way.
+
+The server now lives at `vmware_<skill>/mcp_server/`, a name only this package can
+claim. Introduced 2026-02-26; it survived 70 releases because every test ran against
+a single package in its own repo, where the local directory shadows site-packages —
+the conflict was invisible by construction.
+
+**Migration.** Console scripts are unchanged: `vmware-<skill>` and
+`vmware-<skill>-mcp` work exactly as before, as does `"command": "vmware-<skill>",
+"args": ["mcp"]` in an MCP client config. Only a direct `python -m mcp_server`
+breaks; use `python -m vmware_<skill>.mcp_server`.
+
+### Added — `references/agent-guardrails.md` in every skill
+
+The operating rules for local and small models (Llama 3.3 70B, Qwen, Mistral via
+Goose / Ollama / OpenShift AI) existed in two skills. They now ship in all 13, each
+with its own tool counts and failure modes, and are linked from every SKILL.md.
+
+### Changed — 46 error messages rewritten to teach recovery
+
+A large model reads `VM 'web-99' not found` and recovers on its own. A small model
+either surfaces it as a dead end or smooths it into a confident, wrong summary — the
+failure [VMware-AIops#31](https://github.com/zw008/VMware-AIops/issues/31) reported.
+The difference is entirely in the message text.
+
+    error_actionability  43.5% -> 90.5%
+    teaching_error_rate  10.2% -> 77.6%   (5/49 -> 38/49)
+    dead-end errors      35/49 -> 2/49
+
+Two shipped bugs surfaced while doing it: `_safe_error` silently swallowed
+`InventoryError`, `HostNotFoundError` and `ISCSIError` (their text became
+`"InventoryError: operation failed."` over MCP), and two error messages named
+commands that do not exist — `vmware-aiops storage iscsi-enable` (there is no
+`storage` command here) and `vm guest-exec` for host maintenance mode (that runs
+inside a guest, not on a host).
+
+The three raises left alone are the ones where no advice would be true: a
+vCenter-supplied non-HTTPS lease URL, and a malformed inventory graph. Inventing a
+remedy scores better and helps nobody.
+
+### Fixed — documentation that pointed at files which do not exist
+
+93 install instructions across Monitor and AIops told operators to copy
+`codex-skill/AGENTS.md`, `gemini-extension/GEMINI.md`, `trae-rules/project_rules.md`
+or `kimi-skill/SKILL.md`. None of those directories exist in any repo, and CLAUDE.md
+forbids recreating them — so every one of those commands failed. Where a platform
+reads plain markdown (Codex, Kimi, Trae, Aider, Continue) they now point at the real
+`skills/vmware-<skill>/SKILL.md`; Gemini CLI, which needs a manifest none of the
+repos ship, was downgraded to the context-file and MCP paths that do work.
+
+`/plugin marketplace add` was removed from both repos and from three setup guides:
+the `plugins/` source directory it needs was deleted in March and is on CLAUDE.md's
+forbidden list, so that path could not be made to work either.
+
+### Removed — `.claude-plugin/marketplace.json` and the stale `.agents/` copy
+
+The manifest's `source: "./plugins/vmware-ops"` pointed at a directory deleted on
+2026-03-22; it had been broken for four months and was still at version 1.0.16. The
+`.agents/` copy was a 2026-04 snapshot that had diverged 314 lines from the
+maintained SKILL.md, hidden from `git status` by its own `.gitignore` entry.
+
+## v1.8.1 (2026-07-19) — read-only mode reaches the surfaces that teach it
+
+v1.8.0 put read-only mode in the code and documented it in the README only.
+Every other layer was empty, and each serves a different reader: SKILL.md is what
+the agent loads, setup-guide is what an operator reads while configuring, `doctor`
+is where they verify it took. The gap had two concrete costs.
+
+An agent read SKILL.md, called a write tool the gate had withheld, and got nothing
+back — with no way to learn that the absence was a deliberate lockdown rather than
+a fault. It reads as a broken tool, so the model retries or hunts for a workaround.
+
+An operator who set the switch had no way to confirm it. The only signal was a line
+in the MCP server's start-up log.
+
+### Added — the feature is now documented where each reader looks
+
+- **SKILL.md** — a short section telling the agent that a missing write tool is a
+  lockdown, not a fault: name the blocked operation, do not retry, do not route
+  around it.
+- **references/setup-guide.md** — the operator's view: how to enable it, the
+  precedence chain, and how to verify.
+- **references/capabilities.md** — which tools the gate withholds.
+
+### Added — `doctor` reports the read-only state
+
+`vmware-aiops doctor` now shows whether read-only mode is on, **which** of the three
+switches decided it, and the value as written. A typo'd value (`ture`) is called
+out as a typo rather than reported as a confident ON — it resolves to on, which is
+fail-closed but almost never what was meant.
+
+The resolution runs through `vmware_policy.read_only_status()` rather than a local
+copy of the precedence chain: a doctor that disagrees with the gate it reports on is
+worse than no doctor. Requires `vmware-policy>=1.8.1`.
+
+## v1.8.0 (2026-07-18) — read-only mode, working policy defaults, declared environments
+
+Family release driven by [VMware-AIops#31](https://github.com/zw008/VMware-AIops/issues/31),
+where an operator running Llama 3.3 70B (Goose / OpenShift AI, on-prem H100) had to
+hand-write 17 prompt guardrails to make tool calling reliable. A prompt is advisory — a
+model can ignore it. Every guardrail that could move into the harness has.
+
+### Added
+- **Read-only mode.** Set `VMWARE_READ_ONLY=true` (or `VMWARE_<SKILL>_READ_ONLY`, or
+  `read_only: true` in config.yaml) and every write tool is removed from the MCP registry
+  at start-up. `list_tools()` never offers them, so the model cannot call what it cannot
+  see. **Off by default** — nothing changes unless you turn it on. Fail-closed: if the
+  mode is requested but cannot be guaranteed, the server refuses to start rather than
+  running open.
+- **`environment:` on each config target**, declaring which environment it is
+  (production / staging / lab). Policy rules scope by this value.
+
+### Added — list results now state whether they are complete
+
+Every `[READ]` list tool returns the family envelope instead of a bare array:
+
+    {"items": [...], "returned": 50, "limit": 50, "total": 213,
+     "truncated": true, "hint": "Showing 50 of 213. Raise limit or narrow the query..."}
+
+This closes the reported failure where long responses were summarised as "no data
+returned": a bare list gives a model no way to tell a complete answer from page one, so
+it guessed. `truncated: false` now positively states completeness — including when
+`items` is empty, which means "checked, found none", not "the call failed".
+
+- **5 tool(s) converted** across ops, MCP and CLI. All five report a real `total`; each enumerates its collection fully before limiting.
+  The three `batch_*` write tools keep returning a bare list and are pinned that way:
+  a batch result is complete by construction, so a `truncated` field there would be noise.
+
+### Changed — migration, read this
+- **Approval tiers now actually run.** They shipped in v1.6.0 but the engine only ever
+  read `~/.vmware/rules.yaml`, and a fresh install has no such file — so every deny rule,
+  maintenance window and approval tier had been inert on every install that never
+  hand-authored one. A packaged baseline now loads when you have written no rules of your
+  own. Writes at medium risk and above are stamped with their tier in the audit log;
+  irreversible work and guest execution against a target declared `production` require a
+  named approver via `VMWARE_AUDIT_APPROVED_BY`.
+- **`environment:` will become required for writes.** Today a state-changing operation
+  against a target that declares none still runs and logs a warning. **The next major
+  release refuses it.** Declare it now and that upgrade is a no-op:
+
+      targets:
+        prod-vc01:
+          host: vc01.corp.local
+          environment: production
+
+  Read-only operations are never affected, in this release or the next. Check what applies
+  to your targets before upgrading: `vmware-audit policy --operation vm_delete --env <env>`.
+
+### Fixed
+- **Policy glob patterns with a leading wildcard silently matched nothing.** A rule written
+  `operations: ["*_delete"]` parsed fine, read correctly, and never fired — only a trailing
+  `*` was honoured. Now full glob matching, for operations and environments alike.
+- Config-path overrides (`VMWARE_<SKILL>_CONFIG`) are honoured when reading `read_only`
+  and `environment`, so a setting in a custom config file is no longer silently ignored.
+
+### Notes
+- Requires `vmware-policy>=1.8.0`; publish that package first.
+- `vmware-audit policy` reports which rules are in force and where they came from —
+  including the case where your rules file exists but failed to parse, which previously
+  looked identical to "policy is working".
+
+### Fixed — pre-release review (2026-07-19)
+
+- **`vm_list_plans` was marked `[READ]` but deleted plan files.** `list_plans()` opened
+  with a stale-plan sweep, so the one plan tool that survives read-only mode was the one
+  that destroys plans — while `vm_create_plan`, `vm_apply_plan` and `vm_rollback_plan`
+  were all withheld by the gate. Opening a read-only server to review a failed apply
+  could unlink the only on-disk record of which steps landed. Expiry now runs on
+  `vm_create_plan` alone, so plans are still swept on every write.
+
 ## v1.7.7 (2026-07-17) — session-probe eviction fix + mcp 1.28.1
 
 Family fix pack — no new tools, no schema changes.

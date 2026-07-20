@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyVmomi import vim
-from vmware_policy import sanitize
+from vmware_policy import paginated, sanitize
 
 from vmware_aiops.ops.health import get_active_alarms
 from vmware_aiops.ops.inventory import _collect
@@ -28,14 +28,23 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def list_alarms(si: ServiceInstance) -> list[dict]:
+def list_alarms(si: ServiceInstance, limit: int | None = None) -> dict:
     """List all active/triggered alarms across the vCenter inventory.
 
+    Args:
+        si: pyVmomi ServiceInstance.
+        limit: Max alarms to return. ``None`` returns every active alarm.
+
     Returns:
-        List of alarm dicts with severity, alarm_name, entity_name,
-        entity_type, time, and acknowledged flag.
+        The family list envelope; ``items`` holds alarm dicts with severity,
+        alarm_name, entity_name, entity_type, time, and acknowledged flag.
+        Every active alarm is collected before the limit is applied, so
+        ``total`` is the real alarm count — which is what lets a full page be
+        recognised as complete instead of flagged as possibly-truncated.
     """
-    return get_active_alarms(si)
+    alarms = get_active_alarms(si)
+    rows = alarms[:limit] if limit is not None else alarms
+    return paginated(rows, limit=limit, total=len(alarms))
 
 
 # ---------------------------------------------------------------------------

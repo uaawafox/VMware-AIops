@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
-from vmware_policy import sanitize
+from vmware_policy import paginated, sanitize
 
 from vmware_aiops.config import CONFIG_DIR
 from vmware_aiops.ops.inventory import find_datastore_by_name
@@ -33,17 +33,37 @@ IMAGE_REGISTRY_FILE = CONFIG_DIR / "image_registry.json"
 IMAGE_PATTERNS = ("*.ova", "*.ovf", "*.iso", "*.vmdk")
 
 
+class DatastoreBrowseError(Exception):
+    """Raised when a datastore browse task fails.
+
+    A domain type rather than ``RuntimeError`` because the message is authored:
+    ``_safe_error`` reduces unrecognised exceptions to their class name, so a
+    ``RuntimeError`` reached the agent as "operation failed." and the remedy
+    written into it never arrived.
+    """
+
+
 def _wait_for_task(task, timeout: int = 120) -> object:
     """Wait for a vSphere task to complete."""
     start = time.time()
     while task.info.state in (vim.TaskInfo.State.running, vim.TaskInfo.State.queued):
         if time.time() - start > timeout:
-            raise TimeoutError(f"Datastore browse timed out after {timeout}s")
+            raise TimeoutError(
+                f"Datastore browse timed out after {timeout}s — the search covered too "
+                f"many files. Retry browse_datastore with a narrower 'path' (one folder "
+                f"instead of the datastore root) and a specific 'pattern' such as '*.ova'."
+            )
         time.sleep(1)
     if task.info.state == vim.TaskInfo.State.success:
         return task.info.result
     error_msg = str(task.info.error.msg) if task.info.error else "Unknown error"
-    raise RuntimeError(f"Datastore browse failed: {error_msg}")
+    # Cap the vCenter fault text: the remedy that follows it must survive the
+    # MCP layer's 300-char sanitize truncation, and fault strings are unbounded.
+    raise DatastoreBrowseError(
+        f"Datastore browse failed: {error_msg[:120]}. The datastore may be unmounted or "
+        f"the 'path' may not exist — check it with list_all_datastores "
+        f"(vmware-monitor skill), then retry from the root (path='')."
+    )
 
 
 def browse_datastore(
@@ -51,7 +71,7 @@ def browse_datastore(
     ds_name: str,
     path: str = "",
     pattern: str = "*",
-) -> list[dict]:
+) -> dict:
     """Browse files in a datastore directory.
 
     Args:
@@ -61,11 +81,18 @@ def browse_datastore(
         pattern: Glob pattern to filter files (e.g. "*.ova", "*")
 
     Returns:
-        List of file dicts with name, size, type, modified, ds_path
+        The family list envelope; ``items`` holds file dicts with name, size,
+        type, modified, ds_path. The browse task returns every match in the
+        searched folders, so ``total`` is the real count and nothing is
+        truncated.
     """
     ds = find_datastore_by_name(si, ds_name)
     if ds is None:
-        raise ValueError(f"Datastore '{ds_name}' not found.")
+        raise ValueError(
+            f"Datastore '{ds_name}' not found on this target. Run list_all_datastores "
+            f"(vmware-monitor skill) to see available datastores and copy an exact name — "
+            f"do not include the surrounding brackets of a '[datastore] path' reference."
+        )
 
     browser = ds.browser
     search_spec = vim.host.DatastoreBrowser.SearchSpec()
@@ -103,7 +130,8 @@ def browse_datastore(
                 "ds_path": sanitize(f"{folder}{f.path}"),
             })
 
-    return sorted(files, key=lambda x: x["name"])
+    rows = sorted(files, key=lambda x: x["name"])
+    return paginated(rows, total=len(rows))
 
 
 def scan_images(
@@ -118,7 +146,7 @@ def scan_images(
     all_images: list[dict] = []
     for pattern in IMAGE_PATTERNS:
         found = browse_datastore(si, ds_name, path=path, pattern=pattern)
-        all_images.extend(found)
+        all_images.extend(found["items"])
 
     return sorted(all_images, key=lambda x: x["name"])
 

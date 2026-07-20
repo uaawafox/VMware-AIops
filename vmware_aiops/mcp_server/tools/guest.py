@@ -4,7 +4,7 @@ from typing import Optional
 
 from vmware_policy import vmware_tool
 
-from mcp_server._shared import _get_connection, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops.guest_ops import (
     guest_download,
     guest_exec,
@@ -28,13 +28,12 @@ def vm_guest_exec(
 ) -> dict:
     """[WRITE] Execute a command inside a VM via VMware Tools.
 
-    Requires VMware Tools running in the guest OS.
-    Returns exit_code, stdout, stderr, and timed_out flag.
+    Requires VMware Tools running in the guest OS. Returns exit_code, stdout,
+    stderr, timed_out.
 
-    Note: VMware Guest Ops API does not capture stdout/stderr directly.
-    To capture output, redirect to a file and use vm_guest_download:
-        command="/bin/bash", arguments="-c 'ls -la /tmp > /tmp/output.txt'"
-        Then download /tmp/output.txt.
+    Note: the Guest Ops API does not capture stdout/stderr directly, so use this
+    only for fire-and-forget commands — prefer vm_guest_exec_output whenever you
+    need the output.
 
     Args:
         vm_name: Target VM name.
@@ -68,7 +67,9 @@ def vm_guest_exec_output(
 
     Automatically detects guest OS (Linux/Windows) and selects the correct
     shell. Output is captured by redirecting to a temp file, downloading it,
-    then cleaning up — no manual redirection needed.
+    then cleaning up — no manual redirection needed. Prefer this over
+    vm_guest_exec whenever you need the output. Requires VMware Tools running
+    and a writable temp directory in the guest.
 
     Returns exit_code, stdout, stderr, timed_out, os_family.
 
@@ -97,7 +98,9 @@ def vm_guest_upload(
 ) -> str:
     """[WRITE] Upload a file from local machine to a VM via VMware Tools.
 
-    Requires VMware Tools running in the guest OS.
+    Returns a status string. Requires VMware Tools running in the guest OS. Use
+    vm_guest_download for the reverse direction, and vm_guest_provision instead
+    when uploads and commands belong to one ordered provisioning run.
 
     Args:
         vm_name: Target VM name.
@@ -124,7 +127,9 @@ def vm_guest_download(
 ) -> str:
     """[READ] Download a file from a VM to local machine via VMware Tools.
 
-    Requires VMware Tools running in the guest OS.
+    Returns a status string. Requires VMware Tools running in the guest OS. Use
+    vm_guest_upload for the reverse direction; to capture command output use
+    vm_guest_exec_output instead — it redirects and downloads for you.
 
     Args:
         vm_name: Target VM name.
@@ -149,35 +154,27 @@ def vm_guest_provision(
     timeout: int = 300,
     target: Optional[str] = None,
 ) -> dict:
-    """[WRITE] Provision a VM by running a sequence of guest operations (exec / upload / service).
+    """[WRITE] Provision a VM by running an ordered sequence of guest operations.
 
-    Combines key injection, software installation, and service startup into a
-    single call. Steps execute in order; stops on first failure.
+    Prefer this over repeated vm_guest_exec / vm_guest_upload calls when the steps
+    form one provisioning run. Steps stop on the first failure, so a partial run
+    leaves the guest half-configured. Requires VMware Tools running in the guest.
 
     Step types:
       - exec:    {"type": "exec", "command": "apt-get install -y nginx"}
-      - upload:  {"type": "upload", "local_path": "/tmp/id_rsa.pub", "guest_path": "/root/.ssh/authorized_keys"}
+      - upload:  {"type": "upload", "local_path": "...", "guest_path": "..."}
       - service: {"type": "service", "name": "nginx", "action": "start"}
 
     Args:
         vm_name: Target VM name.
         username: Guest OS username.
         password: Guest OS password.
-        steps: Ordered list of step dicts.
+        steps: Ordered list of step dicts (see Step types).
         timeout: Per-step timeout in seconds (default 300).
         target: Optional vCenter/ESXi target name from config.
 
     Returns:
         dict with success, completed_steps, total_steps, results, error.
-
-    Example:
-        steps = [
-            {"type": "upload", "local_path": "~/.ssh/id_rsa.pub", "guest_path": "/root/.ssh/authorized_keys"},
-            {"type": "exec", "command": "chmod 600 /root/.ssh/authorized_keys"},
-            {"type": "exec", "command": "apt-get install -y nginx"},
-            {"type": "service", "name": "nginx", "action": "enable"},
-            {"type": "service", "name": "nginx", "action": "start"},
-        ]
     """
     si = _get_connection(target)
     return guest_provision(si, vm_name, username, password, steps, timeout=timeout)

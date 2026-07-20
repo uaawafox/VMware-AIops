@@ -4,31 +4,34 @@ from typing import Optional
 
 from vmware_policy import vmware_tool
 
-from mcp_server._shared import _get_connection, mcp, tool_errors
+from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops.alarm_mgmt import acknowledge_alarm, list_alarms, reset_alarm
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
-@tool_errors("list")
+@tool_errors("dict")
 def list_vcenter_alarms(
     target: Optional[str] = None,
     limit: Optional[int] = None,
-) -> list[dict]:
+) -> dict:
     """[READ] List active/triggered alarms across the vCenter inventory.
 
-    Returns alarms with severity (critical/warning/info), entity name and type,
-    alarm name, acknowledged flag, and trigger time.
+    Start here for alarm work: it supplies the exact entity_name/alarm_name pair
+    that acknowledge_vcenter_alarm and reset_vcenter_alarm require.
+
+    Returns the list envelope: 'items' holds severity (critical/warning/info),
+    entity name and type, alarm name, acknowledged flag, and trigger time;
+    'returned'/'limit'/'total'/'truncated'/'hint' state completeness, so a
+    limited page is never mistaken for the whole picture. 'total' is the real
+    active-alarm count — every alarm is collected before the limit is applied.
 
     Args:
         target: Optional vCenter target name from config. Uses default if omitted.
         limit: Max number of alarms to return (None = all). Use when many alarms are active.
     """
     si = _get_connection(target)
-    results = list_alarms(si)
-    if limit is not None:
-        results = results[:limit]
-    return results
+    return list_alarms(si, limit=limit)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -41,14 +44,14 @@ def acknowledge_vcenter_alarm(
 ) -> dict:
     """[WRITE] Acknowledge a triggered vCenter alarm — marks it as seen WITHOUT clearing it.
 
-    The alarm stays in the active list with acknowledged=true until its condition clears
-    or it is reset. To remove the alarm entirely after fixing the root cause, use
-    reset_vcenter_alarm instead. Get exact entity_name and alarm_name values from
-    list_vcenter_alarms first; an unknown pair returns a not-found error.
-    Audited to ~/.vmware/audit.db.
+    This only marks the alarm; it does not clear it. The alarm stays in the active
+    list with acknowledged=true until its condition clears or it is reset. To remove
+    it entirely after fixing the root cause use reset_vcenter_alarm instead. Get
+    exact entity_name and alarm_name from list_vcenter_alarms first; an unknown pair
+    returns a not-found error.
 
     Args:
-        entity_name: Name of the VM, ESXi host, or cluster the alarm fired on
+        entity_name: VM, ESXi host, or cluster the alarm fired on
             (from list_vcenter_alarms output).
         alarm_name: Exact alarm definition name, e.g. "Virtual machine CPU usage".
         target: vCenter target name from config.yaml; omit to use the default target.
@@ -70,13 +73,14 @@ def reset_vcenter_alarm(
 ) -> dict:
     """[WRITE] Clear triggered vCenter alarms back to normal state.
 
-    Uses AlarmManager.ClearTriggeredAlarms. The named alarm no longer appears in
-    the active alarm list. Use this after resolving the underlying issue. Use
-    list_vcenter_alarms to find entity_name and alarm_name values.
+    Use this after resolving the underlying issue; to merely mark an alarm seen
+    use acknowledge_vcenter_alarm instead. Get entity_name and alarm_name from
+    list_vcenter_alarms first.
 
     Gotcha: vSphere has no per-alarm clear — this clears ALL triggered alarms
     matching the named alarm's entity type (host/VM/all) and current status
-    (red/yellow). The response's 'scope' field states exactly what was cleared.
+    (red/yellow), so confirm the blast radius with the user first. Returns a
+    dict whose 'scope' field states exactly what was cleared.
 
     Args:
         entity_name: Name of the entity with the alarm (VM name, host name, or cluster name).

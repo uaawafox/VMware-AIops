@@ -1,0 +1,275 @@
+{
+  "_comment": "Capability eval scores. Regenerate with: pytest -m capability. These are tracked trends, not pass/fail gates \u2014 see _scoring.py. Entries marked stale=true were carried over from an earlier run because this run did not measure them.",
+  "scores": {
+    "entity_reachability_full": {
+      "detail": {
+        "broken_chains": [],
+        "entry_points": [
+          "list_vcenter_alarms",
+          "cluster_create",
+          "cluster_add_host",
+          "scan_datastore_images",
+          "deploy_vm_from_template",
+          "batch_deploy_from_spec",
+          "vm_guest_provision",
+          "vm_create_plan",
+          "vm_list_plans",
+          "cluster_health_summary",
+          "cross_vcenter_attention",
+          "vm_list_ttl",
+          "vm_create",
+          "vm_create_snapshot",
+          "vm_task_status"
+        ],
+        "reachable_on_surface": 39,
+        "reachable_only_via_description": 4,
+        "required_entity_params": 43,
+        "required_params_classified": "43/71",
+        "tool_count": 49
+      },
+      "maximum": 43,
+      "pct": 100.0,
+      "unit": "required entity params",
+      "value": 43
+    },
+    "entity_reachability_read_only": {
+      "detail": {
+        "broken_chains": [],
+        "entry_points": [
+          "list_vcenter_alarms",
+          "scan_datastore_images",
+          "vm_list_plans",
+          "cluster_health_summary",
+          "cross_vcenter_attention",
+          "vm_list_ttl",
+          "vm_task_status"
+        ],
+        "reachable_on_surface": 5,
+        "reachable_only_via_description": 1,
+        "required_entity_params": 6,
+        "required_params_classified": "6/7",
+        "tool_count": 13
+      },
+      "maximum": 6,
+      "pct": 100.0,
+      "unit": "required entity params",
+      "value": 6
+    },
+    "entry_point_availability": {
+      "detail": {
+        "full_entry_points": 15,
+        "read_only_entry_points": 7
+      },
+      "maximum": 13,
+      "pct": 53.8,
+      "unit": "entry points",
+      "value": 7
+    },
+    "error_actionability": {
+      "detail": {
+        "composed_hint_sites": [],
+        "dead_end_count": 2,
+        "dead_end_errors": [
+          {
+            "message": "Cannot determine datacenter for cluster '{}'",
+            "missing": [
+              "names_artifact",
+              "states_remedy"
+            ],
+            "where": "cluster_mgmt.py:251"
+          },
+          {
+            "message": "Refusing non-HTTPS upload URL: {}",
+            "missing": [
+              "names_artifact",
+              "states_remedy"
+            ],
+            "where": "ova_deploy.py:158"
+          }
+        ],
+        "per_dimension_pct": {
+          "names_artifact": 86.5,
+          "names_input": 98.1,
+          "states_remedy": 96.2
+        },
+        "raise_sites": 52
+      },
+      "maximum": 156,
+      "pct": 93.6,
+      "unit": "points",
+      "value": 146
+    },
+    "manifest_context_headroom": {
+      "detail": {
+        "heaviest_tools": {
+          "batch_linked_clone_vms": 346,
+          "deploy_linked_clone": 389,
+          "deploy_vm_from_ova": 367,
+          "deploy_vm_from_template": 347,
+          "vm_create": 368
+        },
+        "manifest_tokens": 10891,
+        "mean_tokens_per_tool": 222.3,
+        "reference_context": 16384,
+        "tool_count": 49
+      },
+      "maximum": 16384,
+      "pct": 33.5,
+      "unit": "tokens",
+      "value": 5493
+    },
+    "parameter_documentation_coverage": {
+      "detail": {
+        "undocumented_by_tool": {}
+      },
+      "maximum": 186,
+      "pct": 100.0,
+      "unit": "parameters",
+      "value": 186
+    },
+    "per_tool_token_discipline": {
+      "detail": {
+        "ceiling": 350,
+        "over_ceiling": {
+          "deploy_linked_clone": 389,
+          "deploy_vm_from_ova": 367,
+          "vm_create": 368
+        }
+      },
+      "maximum": 49,
+      "pct": 93.9,
+      "unit": "tools",
+      "value": 46
+    },
+    "read_only_manifest_saving": {
+      "detail": {
+        "full_manifest_tokens": 10891,
+        "full_tool_count": 49,
+        "gated_manifest_tokens": 2420,
+        "gated_tool_count": 13,
+        "withheld_tools": [
+          "acknowledge_vcenter_alarm",
+          "attach_iso_to_vm",
+          "batch_clone_vms",
+          "batch_deploy_from_spec",
+          "batch_linked_clone_vms",
+          "cluster_add_host",
+          "cluster_configure",
+          "cluster_create",
+          "cluster_delete",
+          "cluster_remove_host",
+          "convert_vm_to_template",
+          "deploy_linked_clone",
+          "deploy_vm_from_ova",
+          "deploy_vm_from_template",
+          "reset_vcenter_alarm",
+          "vm_apply_plan",
+          "vm_cancel_ttl",
+          "vm_clean_slate",
+          "vm_clone",
+          "vm_create",
+          "vm_create_plan",
+          "vm_create_snapshot",
+          "vm_delete",
+          "vm_delete_snapshot",
+          "vm_guest_download",
+          "vm_guest_exec",
+          "vm_guest_exec_output",
+          "vm_guest_provision",
+          "vm_guest_upload",
+          "vm_migrate",
+          "vm_power_off",
+          "vm_power_on",
+          "vm_reconfigure",
+          "vm_revert_snapshot",
+          "vm_rollback_plan",
+          "vm_set_ttl"
+        ]
+      },
+      "maximum": 10891,
+      "pct": 77.8,
+      "unit": "tokens",
+      "value": 8471
+    },
+    "read_write_marker_coverage": {
+      "detail": {
+        "unmarked": []
+      },
+      "maximum": 49,
+      "pct": 100.0,
+      "unit": "points",
+      "value": 49
+    },
+    "remedy_survives_truncation": {
+      "detail": {
+        "budget_chars": 300,
+        "over_budget": [],
+        "remedy_after_interpolation": [
+          "_common.py:204",
+          "_common.py:206",
+          "_common.py:211",
+          "_common.py:193",
+          "_common.py:198",
+          "config.py:223",
+          "config.py:257",
+          "config.py:175",
+          "config.py:246",
+          "connection.py:154"
+        ]
+      },
+      "maximum": 50,
+      "pct": 100.0,
+      "unit": "messages",
+      "value": 50
+    },
+    "teaching_error_rate": {
+      "detail": {},
+      "maximum": 52,
+      "pct": 86.5,
+      "unit": "messages",
+      "value": 45
+    },
+    "tool_description_quality": {
+      "detail": {
+        "per_dimension_pct": {
+          "args": 100.0,
+          "gotcha": 100.0,
+          "marker": 100.0,
+          "next_hop": 100.0,
+          "what": 100.0,
+          "when": 100.0
+        },
+        "tools_graded": 49,
+        "weakest_tools": {
+          "acknowledge_vcenter_alarm": [],
+          "attach_iso_to_vm": [],
+          "batch_clone_vms": [],
+          "batch_deploy_from_spec": [],
+          "batch_linked_clone_vms": [],
+          "browse_datastore": [],
+          "cluster_add_host": [],
+          "cluster_configure": []
+        }
+      },
+      "maximum": 294,
+      "pct": 100.0,
+      "unit": "points",
+      "value": 294
+    },
+    "tool_failure_payload_quality": {
+      "detail": {
+        "bare_string_error_lines": [
+          149
+        ],
+        "carries_hint": 2,
+        "dict_shaped": 2,
+        "error_return_sites": 3,
+        "hint_names_artifact": 3
+      },
+      "maximum": 9,
+      "pct": 77.8,
+      "unit": "checks",
+      "value": 7
+    }
+  }
+}

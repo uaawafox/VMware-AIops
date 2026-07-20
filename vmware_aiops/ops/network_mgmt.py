@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
+from vmware_policy import sanitize
 
 from vmware_aiops.ops.vm_lifecycle import _wait_for_task
 
@@ -79,7 +80,12 @@ def _vlan_description(port_config) -> str:
     return type(vlan).__name__
 
 
-def list_dvs_portgroups(si: ServiceInstance, dvs_name: str | None = None) -> dict:
+def list_dvs_portgroups(
+    si: ServiceInstance,
+    dvs_name: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict:
     """List distributed portgroups, optionally scoped to one dvSwitch."""
     switches = (
         [_find_dvs_by_name(si, dvs_name)]
@@ -91,14 +97,20 @@ def list_dvs_portgroups(si: ServiceInstance, dvs_name: str | None = None) -> dic
         for pg in dvs.portgroup or []:
             cfg = pg.config
             out.append({
-                "name": pg.name,
-                "dvs": dvs.name,
+                "name": sanitize(pg.name, 200),
+                "dvs": sanitize(dvs.name, 200),
                 "binding": str(cfg.type),
                 "vlan": _vlan_description(cfg.defaultPortConfig),
                 "num_ports": cfg.numPorts,
                 "uplink": bool(getattr(cfg, "uplink", False)),
             })
-    return {"total": len(out), "portgroups": out}
+    total = len(out)
+    window = out[offset : offset + limit] if limit > 0 else out[offset:]
+    result = {"total": total, "returned": len(window), "portgroups": window}
+    if offset or len(window) < total:
+        result["offset"] = offset
+        result["hint"] = "Use limit/offset to page through the remainder."
+    return result
 
 
 def create_dvs_portgroup(

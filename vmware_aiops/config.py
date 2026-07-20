@@ -120,24 +120,63 @@ def _check_env_permissions() -> None:
 _check_env_permissions()
 
 
+class ConfigError(OSError):
+    """A configuration problem the operator can fix, safe to show an agent.
+
+    Subclasses ``OSError`` so the CLI paths that already catch ``OSError`` keep
+    working. The point of the narrow type is the MCP path: ``_safe_error``
+    passes this through verbatim, and passing through bare ``OSError`` also
+    passed through TLS, DNS and socket errors carrying hostnames and URLs.
+    """
+
+
 @dataclass(frozen=True)
 class TargetConfig:
     """A vCenter or ESXi connection target."""
 
     name: str
     host: str
-    username: str
+    config_username: str
+    """Username as written in config.yaml. Read :attr:`username` instead — the
+    env var overrides this, and the override is what actually gets used."""
     type: Literal["vcenter", "esxi"] = "vcenter"
     port: int = 443
     verify_ssl: bool = True
+    environment: str = ""
+    """Which environment this target is, e.g. production / staging / lab.
+
+    Policy rules scope by environment, so a target that declares none matches
+    none of them — it is treated as unknown, not as safe. The shipped baseline
+    currently warns when a state-changing operation runs against such a target;
+    the next major release refuses it. Read-only operations are never affected.
+    See :mod:`vmware_policy.environment`.
+    """
+
+    @property
+    def username(self) -> str:
+        """Username for this target, env var winning over config.yaml.
+
+        Resolved on every access, exactly like :attr:`password`. Reading it
+        once at load time would split the pair the override exists to keep
+        whole: a secret sidecar that rotates both halves mid-process would
+        move the password and leave the username behind, and the login would
+        use an account/password combination that was never issued together.
+        """
+        return os.environ.get(
+            f"VMWARE_{self.name.upper().replace('-', '_')}_USERNAME",
+            self.config_username,
+        )
 
     @property
     def password(self) -> str:
         env_key = f"VMWARE_{self.name.upper().replace('-', '_')}_PASSWORD"
         pw = os.environ.get(env_key, "")
         if not pw:
-            raise OSError(
-                f"Password not found. Set environment variable: {env_key}"
+            raise ConfigError(
+                f"Password not found for target '{self.name}'. "
+                f"Set environment variable {env_key}, or add "
+                f"{env_key}=<password> to {ENV_FILE} (chmod 600). "
+                f"Run 'vmware-aiops init' to do both, then 'vmware-aiops doctor' to verify."
             )
         return _decode_secret(pw)
 
@@ -169,18 +208,45 @@ class AppConfig:
     targets: tuple[TargetConfig, ...] = ()
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
+    read_only: bool = False
+    """Withhold every write tool from the MCP registry.
+
+    Env vars ``VMWARE_AIOPS_READ_ONLY`` / ``VMWARE_READ_ONLY`` override this.
+    See :mod:`vmware_policy.readonly`.
+    """
 
     def get_target(self, name: str) -> TargetConfig:
         for t in self.targets:
             if t.name == name:
                 return t
         available = ", ".join(t.name for t in self.targets)
-        raise KeyError(f"Target '{name}' not found. Available: {available}")
+        raise KeyError(
+            f"Target '{name}' not found. Available: {available}. "
+            f"Pass --target with one of those names, or add the target to "
+            f"{CONFIG_FILE} and re-run."
+        )
+
+    def environment_for(self, name: str | None) -> str:
+        """Return the environment declared by ``name``, or by the default target.
+
+        An empty name means "the caller omitted --target", which resolves to
+        ``default_target`` — the same target the connection layer would use, so
+        policy and connection never disagree about which host is in play.
+        Returns "" when the target is unknown or declares nothing.
+        """
+        try:
+            target = self.get_target(name) if name else self.default_target
+        except (KeyError, ValueError):
+            return ""
+        return target.environment
 
     @property
     def default_target(self) -> TargetConfig:
         if not self.targets:
-            raise ValueError("No targets configured. Check config.yaml")
+            raise ValueError(
+                f"No targets configured in {CONFIG_FILE}. "
+                f"Run 'vmware-aiops init' to create one, then 'vmware-aiops doctor' to verify."
+            )
         return self.targets[0]
 
 
@@ -190,28 +256,25 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     if not path.exists():
         raise FileNotFoundError(
             f"Config file not found: {path}\n"
-            f"Copy config.example.yaml to {CONFIG_FILE} and edit it."
+            f"Run 'vmware-aiops init' to create it, or copy config.example.yaml "
+            f"to {CONFIG_FILE} and edit it."
         )
 
     with open(path) as f:
         raw = yaml.safe_load(f) or {}
 
-    # Username resolves env-first (VMWARE_<NAME>_USERNAME, same normalization
-    # as the password key) so a wrapper that pulls a credential pair from a
-    # secret store can supply BOTH halves - a config.yaml username paired with
-    # an env password from a different account logs in as nobody. config.yaml
-    # remains the fallback for local/dev use.
+    # `username` is a property on TargetConfig, resolved env-first at access
+    # time like `password`. See TargetConfig.username for why late binding
+    # matters here.
     targets = tuple(
         TargetConfig(
             name=t["name"],
             host=t["host"],
-            username=os.environ.get(
-                f"VMWARE_{t['name'].upper().replace('-', '_')}_USERNAME",
-                t.get("username", "administrator@vsphere.local"),
-            ),
+            config_username=t.get("username", "administrator@vsphere.local"),
             type=t.get("type", "vcenter"),
             port=t.get("port", 443),
             verify_ssl=t.get("verify_ssl", True),
+            environment=str(t.get("environment", "") or "").strip(),
         )
         for t in raw.get("targets", [])
     )
@@ -232,4 +295,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         webhook_timeout=notify_raw.get("webhook_timeout", 10),
     )
 
-    return AppConfig(targets=targets, scanner=scanner, notify=notify)
+    return AppConfig(
+        targets=targets,
+        scanner=scanner,
+        notify=notify,
+        read_only=bool(raw.get("read_only", False)),
+    )
