@@ -19,13 +19,12 @@ def browse_datastore(
 ) -> dict:
     """[READ] Browse files in a vSphere datastore directory.
 
-    Use this to discover OVA, ISO, VMDK, and other files on datastores
-    before deploying VMs.
+    Use this to find OVA/ISO/VMDK paths before calling deploy_vm_from_ova or
+    attach_iso_to_vm; for an estate-wide image sweep use scan_datastore_images.
 
-    Returns the list envelope: 'items' holds one row per file, and
-    'returned'/'total'/'truncated' state whether the listing is complete.
-    Every match in the searched folders is returned, so truncated is
-    always false.
+    Returns the list envelope: 'items' is one row per file, and
+    'returned'/'total'/'truncated' state completeness. Every match in the
+    searched folders is returned, so truncated is always false.
 
     Args:
         datastore_name: Name of the datastore to browse.
@@ -43,8 +42,10 @@ def browse_datastore(
 def scan_datastore_images(target: Optional[str] = None) -> dict:
     """[READ] Scan all accessible datastores for deployable images (OVA/ISO/OVF/VMDK).
 
-    Results are cached locally in ~/.vmware-aiops/image_registry.json for
-    fast lookup via list_cached_images. Run this to refresh the cache.
+    Returns the images found and refreshes the cache at
+    ~/.vmware-aiops/image_registry.json. Use this when you do not know which
+    datastore holds an image; prefer browse_datastore once you do, because this
+    walks every datastore and may take minutes on a large estate.
 
     Args:
         target: Optional vCenter/ESXi target name from config.

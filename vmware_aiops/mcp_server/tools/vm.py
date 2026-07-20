@@ -35,6 +35,10 @@ from vmware_aiops.ops.vm_lifecycle import (
 def vm_power_on(vm_name: str, target: Optional[str] = None) -> str:
     """[WRITE] Power on a virtual machine.
 
+    Returns a status string; an already-on VM is a no-op. Reverse with
+    vm_power_off. Call this first when a VM is off: guest tools such as
+    vm_guest_exec only work once VMware Tools has finished booting.
+
     Args:
         vm_name: Exact name of the virtual machine.
         target: Optional vCenter/ESXi target name from config. Uses default if omitted.
@@ -61,19 +65,19 @@ def vm_power_off(
 ) -> str:
     """[WRITE] Power off a VM — graceful guest shutdown by default, hard power-off with force=True.
 
-    Graceful mode calls VMware Tools guest shutdown and waits up to 120s; if Tools is not
-    running or shutdown stalls, the response tells you to retry with force=True. An
-    already-off VM returns success without change. Audited to ~/.vmware/audit.db.
-    Use vm_power_on to start a VM; vm_delete requires the VM to be off first.
+    Graceful mode calls VMware Tools guest shutdown and waits up to 120s; if Tools is
+    not running or shutdown stalls, the response tells you to retry with force=True.
+    An already-off VM returns success without change. Use vm_power_on to start a VM;
+    vm_delete requires the VM to be off first.
 
     Args:
         vm_name: Exact VM name as shown in vCenter inventory (case-sensitive).
         force: False (default) = graceful guest shutdown via VMware Tools;
             True = immediate hard power-off (risks guest filesystem damage).
-        target: vCenter/ESXi target name from config.yaml; omit to use the default target.
+        target: vCenter/ESXi target from config.yaml; omit for the default target.
 
     Returns:
-        Status string: shut down, force powered off, already off, or a Tools-unavailable hint.
+        Status string: shut down, force powered off, already off, or a Tools hint.
     """
     si = _get_connection(target)
     return power_off_vm(si, vm_name, force=force)
@@ -103,22 +107,19 @@ def vm_create(
     """[WRITE] Create a new empty VM with the given hardware sizing.
 
     Creates a powered-off VM with one disk and one NIC. To populate it, attach an
-    ISO (attach_iso_to_vm) and power it on, or use deploy_vm_from_ova /
-    deploy_vm_from_template / vm_clone for a ready-to-run guest. Fails before
-    creating anything if the datastore is not found. Audited to ~/.vmware/audit.db.
+    ISO (attach_iso_to_vm) and power it on, or use deploy_vm_from_ova or vm_clone
+    for a ready-to-run guest. Fails before creating anything if the datastore is
+    not found. Returns a status string with the new VM name.
 
     Args:
         vm_name: Name for the new VM; must not already exist.
         cpu: vCPU count (default 2).
         memory_mb: Memory in MB (default 4096).
         disk_gb: Primary disk size in GB (default 40).
-        network_name: Port group for the VM's NIC (default "VM Network").
-        datastore_name: Target datastore name; omit to use the first accessible datastore.
-        folder_path: vCenter VM folder path; omit to use the datacenter's root VM folder.
-        target: vCenter/ESXi target name from config.yaml; omit to use the default target.
-
-    Returns:
-        Status string with the new VM name, or an error naming the missing resource.
+        network_name: Port group for the NIC (default "VM Network").
+        datastore_name: Target datastore; omit for the first accessible one.
+        folder_path: vCenter folder path; omit for the datacenter root.
+        target: vCenter/ESXi target from config.yaml; omit for the default.
     """
     si = _get_connection(target)
     return create_vm(
@@ -141,7 +142,7 @@ def vm_reconfigure(
 
     Pass only the fields you want to change; omitted fields are left untouched.
     Hot-add of CPU/memory requires it to be enabled on the VM and a running guest;
-    otherwise power the VM off first (vm_power_off). Audited to ~/.vmware/audit.db.
+    otherwise power the VM off first (vm_power_off).
 
     Args:
         vm_name: Exact name of the VM to reconfigure.
@@ -177,6 +178,11 @@ def vm_clone(
 ) -> str:
     """[WRITE] Clone a VM. Without to_host/to_datastore the clone lands on the source's host+datastore.
 
+    Returns a status string naming the clone. Full independent copy — slow and
+    full disk cost; prefer deploy_linked_clone for near-instant test copies and
+    batch_clone_vms for many at once. Cloning a running VM may capture a
+    crash-consistent disk.
+
     Args:
         vm_name: Source VM (or template) name.
         new_name: Name for the new clone.
@@ -205,8 +211,9 @@ def vm_migrate(
 ) -> str:
     """[WRITE] Migrate (vMotion) a VM to another host, optionally with storage vMotion.
 
-    If the target host has no access to the VM's current datastore, you MUST pass
-    to_datastore — vCenter rejects cross-host vMotion without shared storage.
+    Returns a status string. If the target host has no access to the VM's current
+    datastore, you MUST pass to_datastore — vCenter rejects cross-host vMotion
+    without shared storage. Run cluster_info first for valid destination host names.
 
     Args:
         vm_name: VM to migrate.
@@ -223,6 +230,10 @@ def vm_migrate(
 @tool_errors("str")
 def vm_delete(vm_name: str, target: Optional[str] = None) -> str:
     """[WRITE] Delete a VM (irreversible). VM must be powered off.
+
+    Returns a status string. Power it off first with vm_power_off. This destroys
+    the VM's disks, so confirm with the user before calling; use vm_set_ttl
+    instead when you only want the VM to expire later.
 
     Args:
         vm_name: VM to delete. Must be powered off.
@@ -257,6 +268,10 @@ def vm_create_snapshot(
 ) -> str:
     """[WRITE] Create a snapshot of a VM.
 
+    Returns a status string. Use this before a risky change so vm_revert_snapshot
+    can undo it, then reclaim the space with vm_delete_snapshot — snapshots left
+    for days grow delta disks and must not be treated as backups.
+
     Args:
         vm_name: VM to snapshot.
         snapshot_name: Snapshot name.
@@ -282,6 +297,10 @@ def vm_revert_snapshot(
 ) -> str:
     """[WRITE] Revert a VM to a named snapshot (loses changes since snapshot).
 
+    Returns a status string. Run vm_list_snapshots first for exact names.
+    Irreversible — everything written since the snapshot is lost, so confirm with
+    the user. To reclaim space without changing state use vm_delete_snapshot.
+
     Args:
         vm_name: VM to revert.
         snapshot_name: Snapshot to revert to.
@@ -303,23 +322,22 @@ def vm_delete_snapshot(
 ) -> str:
     """[WRITE] Permanently delete a named snapshot, consolidating its delta disk into the parent.
 
-    Frees disk space and does NOT change the VM's current state (unlike vm_revert_snapshot,
-    which discards changes since the snapshot). Works while the VM is powered on. Run
-    vm_list_snapshots first for exact names — unknown names return the available list.
-    Irreversible: confirm with the user before calling. Audited to ~/.vmware/audit.db.
+    Frees disk space and does NOT change the VM's current state (unlike
+    vm_revert_snapshot, which discards changes since the snapshot). Works while the VM
+    is powered on. Run vm_list_snapshots first for exact names. Irreversible: confirm
+    with the user before calling.
 
-    Snapshot consolidation is slow for old/large delta disks (often minutes). By default
-    (wait=False) this fires the delete and returns a task id immediately so it does not block
-    your context — poll completion with vm_task_status. Set wait=True only for small snapshots
-    where you want the final confirmation inline (blocks up to 30 min, then returns the task id).
+    Consolidation is slow for old/large deltas (often minutes). By default (wait=False)
+    this returns a task id immediately so it does not block your context — poll it with
+    vm_task_status. Set wait=True only for small snapshots (blocks up to 30 min).
 
     Args:
         vm_name: Exact name of the VM owning the snapshot.
         snapshot_name: Exact snapshot name from vm_list_snapshots output.
         remove_children: False (default) = children are kept and consolidated;
             True = delete the entire snapshot subtree below this one as well.
-        wait: False (default) = async, return task id immediately; True = block on consolidation.
-        target: vCenter/ESXi target name from config.yaml; omit to use the default target.
+        wait: False (default) = async, return task id at once; True = block.
+        target: vCenter/ESXi target from config.yaml; omit for the default target.
 
     Returns:
         Status string with a task id (poll via vm_task_status), or a not-found message.
@@ -336,10 +354,10 @@ def vm_delete_snapshot(
 def vm_task_status(task_id: str, target: Optional[str] = None) -> dict:
     """[READ] Poll a long-running vSphere task by its id (from an async vm_delete_snapshot).
 
-    Use after vm_delete_snapshot returns a task id to check whether the consolidation has
-    finished, instead of re-running the delete. Returns state (queued/running/success/error/
-    gone), progress percent, and the entity name. 'gone' means vCenter already garbage-collected
-    a completed task — re-list the resource to confirm the final state.
+    Use after vm_delete_snapshot returns a task id, instead of re-running the delete.
+    Returns state (queued/running/success/error/gone), progress percent, and the entity
+    name. 'gone' means vCenter already garbage-collected a completed task — re-list the
+    resource to confirm the final state.
 
     Args:
         task_id: The task id string returned by an async write operation.
@@ -367,11 +385,9 @@ def vm_list_snapshots(vm_name: str, target: Optional[str] = None) -> dict:
         target: vCenter/ESXi target name from config.yaml; omit to use the default target.
 
     Returns:
-        The list envelope. 'items' holds one dict per snapshot: name, description,
-        created (timestamp), state (poweredOn/poweredOff at snapshot time), level
-        (0 = root, higher = nesting depth). No pagination — snapshot trees are small
-        and the whole tree is walked, so 'total' is the real count and 'truncated'
-        is always false.
+        The list envelope. 'items' is one dict per snapshot: name, description,
+        created, state (power state at snapshot time), level (0 = root). The whole
+        tree is walked, so 'total' is the real count and 'truncated' is always false.
     """
     si = _get_connection(target)
     snaps = list_snapshots(si, vm_name)
