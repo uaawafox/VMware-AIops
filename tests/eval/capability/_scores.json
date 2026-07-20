@@ -1,5 +1,5 @@
 {
-  "_comment": "Capability eval scores. Regenerate with: pytest -m capability. These are tracked trends, not pass/fail gates \u2014 see _scoring.py.",
+  "_comment": "Capability eval scores. Regenerate with: pytest -m capability. These are tracked trends, not pass/fail gates \u2014 see _scoring.py. Entries marked stale=true were carried over from an earlier run because this run did not measure them.",
   "scores": {
     "entity_reachability_full": {
       "detail": {
@@ -88,16 +88,16 @@
           }
         ],
         "per_dimension_pct": {
-          "names_artifact": 91.8,
-          "names_input": 98.0,
-          "states_remedy": 95.9
+          "names_artifact": 86.5,
+          "names_input": 98.1,
+          "states_remedy": 96.2
         },
-        "raise_sites": 49
+        "raise_sites": 52
       },
-      "maximum": 147,
-      "pct": 95.2,
+      "maximum": 156,
+      "pct": 93.6,
       "unit": "points",
-      "value": 140
+      "value": 146
     },
     "manifest_context_headroom": {
       "detail": {
@@ -108,15 +108,15 @@
           "deploy_vm_from_template": 347,
           "vm_create": 368
         },
-        "manifest_tokens": 10871,
-        "mean_tokens_per_tool": 221.9,
+        "manifest_tokens": 10891,
+        "mean_tokens_per_tool": 222.3,
         "reference_context": 16384,
         "tool_count": 49
       },
       "maximum": 16384,
-      "pct": 33.6,
+      "pct": 33.5,
       "unit": "tokens",
-      "value": 5513
+      "value": 5493
     },
     "parameter_documentation_coverage": {
       "detail": {
@@ -143,9 +143,9 @@
     },
     "read_only_manifest_saving": {
       "detail": {
-        "full_manifest_tokens": 10871,
+        "full_manifest_tokens": 10891,
         "full_tool_count": 49,
-        "gated_manifest_tokens": 2400,
+        "gated_manifest_tokens": 2420,
         "gated_tool_count": 13,
         "withheld_tools": [
           "acknowledge_vcenter_alarm",
@@ -186,8 +186,8 @@
           "vm_set_ttl"
         ]
       },
-      "maximum": 10871,
-      "pct": 77.9,
+      "maximum": 10891,
+      "pct": 77.8,
       "unit": "tokens",
       "value": 8471
     },
@@ -210,22 +210,22 @@
           "_common.py:211",
           "_common.py:193",
           "_common.py:198",
-          "config.py:213",
-          "config.py:247",
-          "config.py:165",
-          "config.py:236",
-          "alarm_mgmt.py:88"
+          "config.py:223",
+          "config.py:257",
+          "config.py:175",
+          "config.py:246",
+          "connection.py:154"
         ]
       },
-      "maximum": 47,
+      "maximum": 50,
       "pct": 100.0,
       "unit": "messages",
-      "value": 47
+      "value": 50
     },
     "teaching_error_rate": {
       "detail": {},
-      "maximum": 49,
-      "pct": 91.8,
+      "maximum": 52,
+      "pct": 86.5,
       "unit": "messages",
       "value": 45
     },
@@ -259,7 +259,7 @@
     "tool_failure_payload_quality": {
       "detail": {
         "bare_string_error_lines": [
-          117
+          149
         ],
         "carries_hint": 2,
         "dict_shaped": 2,

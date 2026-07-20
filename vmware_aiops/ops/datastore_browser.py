@@ -33,6 +33,16 @@ IMAGE_REGISTRY_FILE = CONFIG_DIR / "image_registry.json"
 IMAGE_PATTERNS = ("*.ova", "*.ovf", "*.iso", "*.vmdk")
 
 
+class DatastoreBrowseError(Exception):
+    """Raised when a datastore browse task fails.
+
+    A domain type rather than ``RuntimeError`` because the message is authored:
+    ``_safe_error`` reduces unrecognised exceptions to their class name, so a
+    ``RuntimeError`` reached the agent as "operation failed." and the remedy
+    written into it never arrived.
+    """
+
+
 def _wait_for_task(task, timeout: int = 120) -> object:
     """Wait for a vSphere task to complete."""
     start = time.time()
@@ -49,7 +59,7 @@ def _wait_for_task(task, timeout: int = 120) -> object:
     error_msg = str(task.info.error.msg) if task.info.error else "Unknown error"
     # Cap the vCenter fault text: the remedy that follows it must survive the
     # MCP layer's 300-char sanitize truncation, and fault strings are unbounded.
-    raise RuntimeError(
+    raise DatastoreBrowseError(
         f"Datastore browse failed: {error_msg[:120]}. The datastore may be unmounted or "
         f"the 'path' may not exist — check it with list_all_datastores "
         f"(vmware-monitor skill), then retry from the root (path='')."

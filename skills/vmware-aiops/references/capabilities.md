@@ -125,7 +125,8 @@ operational language — do not dump it raw.
 > write (today: `vm_delete_snapshot`) instead of re-running the operation. Returns
 > state (`queued` / `running` / `success` / `error` / `gone`), progress percent, and
 > the entity name. `gone` means vCenter already garbage-collected a completed task —
-> re-list the resource to confirm the final state.
+> re-list the resource to confirm the final state. A failed task carries its fault
+> under `task_error`, not `error` — the poll succeeded, the task did not.
 > **Typical response tokens**: ~40–80 (single status record).
 
 ## Plan → Apply (Multi-step Operations)

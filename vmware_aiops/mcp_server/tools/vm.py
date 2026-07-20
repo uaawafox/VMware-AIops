@@ -357,14 +357,16 @@ def vm_task_status(task_id: str, target: Optional[str] = None) -> dict:
     Use after vm_delete_snapshot returns a task id, instead of re-running the delete.
     Returns state (queued/running/success/error/gone), progress percent, and the entity
     name. 'gone' means vCenter already garbage-collected a completed task — re-list the
-    resource to confirm the final state.
+    resource to confirm the final state. A failed task reports its fault under
+    'task_error'; a top-level 'error' key would mean this poll itself failed.
 
     Args:
         task_id: The task id string returned by an async write operation.
         target: vCenter/ESXi target name from config.yaml; omit to use the default target.
 
     Returns:
-        Dict with task_id, state, progress_pct, operation, entity, and error/note when relevant.
+        Dict with task_id, state, progress_pct, operation, entity, and task_error/note
+        when relevant.
     """
     si = _get_connection(target)
     return get_task_status(si, task_id)
