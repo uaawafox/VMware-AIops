@@ -28,11 +28,11 @@ class FakeNetworkSystem:
         self.added = []
         self.removed = []
 
-    def AddVirtualNic(self, portgroup, nic):
+    def AddVirtualNic(self, portgroup, nic):  # noqa: N802 - pyVmomi API name
         self.added.append((portgroup, nic))
         return "vmk2"
 
-    def RemoveVirtualNic(self, device):
+    def RemoveVirtualNic(self, device):  # noqa: N802 - pyVmomi API name
         self.removed.append(device)
 
 
@@ -150,8 +150,16 @@ def test_remove_preview_then_confirm(env):
 
 # --- list ------------------------------------------------------------------------
 
+def _fake_collect_one_host(host):
+    """Mimic inventory._collect over [HostSystem]: one (obj, props) tuple with
+    the batched name + vnic list list_host_vmks now requests."""
+    return lambda si, obj_type, paths: [
+        (host, {"name": host.name, "config.network.vnic": host.config.network.vnic})
+    ]
+
+
 def test_list_reports_services_and_shape(env, monkeypatch):
-    monkeypatch.setattr(hnm, "_get_objects", lambda si, t: [env.host])
+    monkeypatch.setattr(hnm, "_collect", _fake_collect_one_host(env.host))
     out = list_host_vmks(env.si)
     by_dev = {v["device"]: v for v in out["vmks"]}
     assert by_dev["vmk0"]["services"] == ["management"]
@@ -317,7 +325,7 @@ def test_remove_fails_closed_when_route_table_unreadable(env):
             self.vnic = vnic
 
         @property
-        def routeTableInfo(self):
+        def routeTableInfo(self):  # noqa: N802 - pyVmomi attribute name
             raise RuntimeError("host disconnected mid-read")
 
     env.host.config.network = RaisingNetwork(env.host.config.network.vnic)
@@ -385,13 +393,13 @@ def test_remove_management_vmk_forceable_when_redundant(env):
 
 def test_list_reports_unknown_services_as_none(env, monkeypatch):
     env.host.configManager.virtualNicManager = None
-    monkeypatch.setattr(hnm, "_get_objects", lambda si, t: [env.host])
+    monkeypatch.setattr(hnm, "_collect", _fake_collect_one_host(env.host))
     out = list_host_vmks(env.si)
     assert all(v["services"] is None for v in out["vmks"])
 
 
 def test_list_paging_window_and_total(env, monkeypatch):
-    monkeypatch.setattr(hnm, "_get_objects", lambda si, t: [env.host])
+    monkeypatch.setattr(hnm, "_collect", _fake_collect_one_host(env.host))
     first = list_host_vmks(env.si, limit=1)
     assert first["total"] == 2 and first["returned"] == 1
     assert "hint" in first

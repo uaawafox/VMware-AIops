@@ -31,7 +31,7 @@ from pyVmomi import vim
 from vmware_policy import sanitize
 
 from vmware_aiops.connection import get_verify_ssl
-from vmware_aiops.ops.inventory import find_host_by_name
+from vmware_aiops.ops.inventory import _collect, find_host_by_name
 
 if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
@@ -139,21 +139,30 @@ def list_host_vmks(
 
     ``services`` is ``None`` (not ``[]``) for vmks on a host whose service
     map could not be read - unknown is reported as unknown.
+
+    The all-hosts path batches name + vnic list through PropertyCollector
+    (the inventory ``_collect`` path) so a large estate is one server-side
+    call, not a container-view walk with a per-host ``.config`` round-trip.
+    The service map still reads per host - it lives on a separate managed
+    object (virtualNicManager) the collector traversal doesn't cover.
     """
-    hosts = (
-        [_require_host(si, host_name)]
-        if host_name
-        else _get_objects(si, [vim.HostSystem])
-    )
+    if host_name:
+        host = _require_host(si, host_name)
+        host_rows = [(host, sanitize(host.name, 200), host.config.network.vnic or [])]
+    else:
+        host_rows = [
+            (obj, sanitize(p.get("name", ""), 200), p.get("config.network.vnic") or [])
+            for obj, p in _collect(si, [vim.HostSystem], ["name", "config.network.vnic"])
+        ]
     out = []
-    for host in hosts:
-        services = _vmk_services(host)
-        for vnic in host.config.network.vnic or []:
+    for host_obj, host_display, vnics in host_rows:
+        services = _vmk_services(host_obj)
+        for vnic in vnics:
             ip = vnic.spec.ip
             dv_port = getattr(vnic.spec, "distributedVirtualPort", None)
             netstack = getattr(vnic.spec, "netStackInstanceKey", None)
             out.append({
-                "host": sanitize(host.name, 200),
+                "host": host_display,
                 "device": sanitize(vnic.device, 40),
                 "ip": ip.ipAddress if ip else None,
                 "netmask": ip.subnetMask if ip else None,
@@ -486,8 +495,9 @@ def vmk_ping(
     host = _require_host(si, host_name)
     devices = {v.device for v in host.config.network.vnic or []}
     if source_vmk not in devices:
+        present = sanitize(str(sorted(devices)), 300)
         raise HostNetworkError(
-            f"'{source_vmk}' not found on '{host_name}'. Present: {sanitize(str(sorted(devices)), 300)}"
+            f"'{source_vmk}' not found on '{host_name}'. Present: {present}"
         )
 
     from xml.sax.saxutils import escape

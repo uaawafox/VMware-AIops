@@ -7,7 +7,6 @@ from vmware_policy import vmware_tool
 from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops import host_network_mgmt, network_mgmt
 
-
 # ---------------------------------------------------------------------------
 # dvSwitch portgroups
 # ---------------------------------------------------------------------------

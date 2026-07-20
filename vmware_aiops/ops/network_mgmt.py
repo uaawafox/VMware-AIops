@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from pyVmomi import vim
 from vmware_policy import sanitize
 
+from vmware_aiops.ops.inventory import _collect
 from vmware_aiops.ops.vm_lifecycle import _wait_for_task
 
 if TYPE_CHECKING:
@@ -86,24 +87,51 @@ def list_dvs_portgroups(
     limit: int = 200,
     offset: int = 0,
 ) -> dict:
-    """List distributed portgroups, optionally scoped to one dvSwitch."""
-    switches = (
-        [_find_dvs_by_name(si, dvs_name)]
-        if dvs_name
-        else _get_objects(si, [vim.DistributedVirtualSwitch])
-    )
+    """List distributed portgroups, optionally scoped to one dvSwitch.
+
+    Batched via PropertyCollector (the inventory ``_collect`` path) so a large
+    estate is one server-side call rather than a container-view walk with a
+    per-portgroup ``.config`` round-trip. Parent-switch names resolve through a
+    single companion ``_collect`` (the ``list_virtual_machines`` host-name
+    pattern).
+    """
+    dvs_names = {
+        obj: p.get("name")
+        for obj, p in _collect(si, [vim.DistributedVirtualSwitch], ["name"])
+    }
+    target_refs = None
+    if dvs_name is not None:
+        target_refs = {ref for ref, nm in dvs_names.items() if nm == dvs_name}
+        if not target_refs:
+            available = sorted(n for n in dvs_names.values() if n)
+            raise DvsNotFoundError(
+                f"Distributed switch '{dvs_name}' not found. "
+                f"Available: {available or 'none'}"
+            )
     out = []
-    for dvs in switches:
-        for pg in dvs.portgroup or []:
-            cfg = pg.config
-            out.append({
-                "name": sanitize(pg.name, 200),
-                "dvs": sanitize(dvs.name, 200),
-                "binding": str(cfg.type),
-                "vlan": _vlan_description(cfg.defaultPortConfig),
-                "num_ports": cfg.numPorts,
-                "uplink": bool(getattr(cfg, "uplink", False)),
-            })
+    for _obj, p in _collect(
+        si,
+        [vim.dvs.DistributedVirtualPortgroup],
+        [
+            "name",
+            "config.type",
+            "config.numPorts",
+            "config.defaultPortConfig",
+            "config.uplink",
+            "config.distributedVirtualSwitch",
+        ],
+    ):
+        parent = p.get("config.distributedVirtualSwitch")
+        if target_refs is not None and parent not in target_refs:
+            continue
+        out.append({
+            "name": sanitize(p.get("name", ""), 200),
+            "dvs": sanitize(dvs_names.get(parent) or "N/A", 200),
+            "binding": str(p.get("config.type", "N/A")),
+            "vlan": _vlan_description(p.get("config.defaultPortConfig")),
+            "num_ports": p.get("config.numPorts") or 0,
+            "uplink": bool(p.get("config.uplink") or False),
+        })
     total = len(out)
     window = out[offset : offset + limit] if limit > 0 else out[offset:]
     result = {"total": total, "returned": len(window), "portgroups": window}

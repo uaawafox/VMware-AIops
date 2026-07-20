@@ -35,7 +35,7 @@ class FakeDVS:
         self.portgroup = list(portgroups)
         self.created_specs = []
 
-    def CreateDVPortgroup_Task(self, spec):
+    def CreateDVPortgroup_Task(self, spec):  # noqa: N802 - pyVmomi API name
         self.created_specs.append(spec)
         return "fake-task"
 
@@ -117,6 +117,27 @@ def test_confirm_ephemeral_leaves_numports_unset(env):
 
 # --- list ----------------------------------------------------------------------
 
+def _make_fake_collect(dvs_list):
+    """Stand in for inventory._collect over a set of FakeDVS objects, dispatching
+    on requested obj_type as PropertyCollector would: [(obj, {path: value})]."""
+    def fake(si, obj_type, paths):
+        if obj_type[0] is vim.DistributedVirtualSwitch:
+            return [(d, {"name": d.name}) for d in dvs_list]
+        rows = []
+        for d in dvs_list:
+            for pg in d.portgroup:
+                rows.append((pg, {
+                    "name": pg.name,
+                    "config.type": pg.config.type,
+                    "config.numPorts": pg.config.numPorts,
+                    "config.defaultPortConfig": pg.config.defaultPortConfig,
+                    "config.uplink": pg.config.uplink,
+                    "config.distributedVirtualSwitch": d,
+                }))
+        return rows
+    return fake
+
+
 def test_list_reports_vlan_shapes(env, monkeypatch):
     trunk = vim.dvs.VmwareDistributedVirtualSwitch.TrunkVlanSpec()
     r = vim.NumericRange()
@@ -132,14 +153,25 @@ def test_list_reports_vlan_shapes(env, monkeypatch):
         FakePG("c", vlan=pvlan),
         FakePG("d", vlan=None),
     ])
-    monkeypatch.setattr(network_mgmt, "_get_objects", lambda si, types_: [dvs])
+    monkeypatch.setattr(network_mgmt, "_collect", _make_fake_collect([dvs]))
     out = list_dvs_portgroups(object())
     vlans = {p["name"]: p["vlan"] for p in out["portgroups"]}
     assert vlans == {"a": "100", "b": "trunk 100-200", "c": "pvlan 42", "d": "unset"}
 
 
-def test_list_scoped_to_named_dvs(env):
+def test_list_scoped_to_named_dvs(env, monkeypatch):
+    # A second switch whose portgroups must be filtered OUT by the dvs_name scope.
+    other = FakeDVS("OtherSwitch", [FakePG("other-pg")])
+    monkeypatch.setattr(
+        network_mgmt, "_collect", _make_fake_collect([env.dvs, other])
+    )
     out = list_dvs_portgroups(env.si, dvs_name="DSwitch")
     assert out["total"] == 1
     assert out["portgroups"][0]["name"] == "existing-pg"
     assert out["portgroups"][0]["vlan"] == "100"
+
+
+def test_list_unknown_dvs_scope_raises_with_available(env, monkeypatch):
+    monkeypatch.setattr(network_mgmt, "_collect", _make_fake_collect([env.dvs]))
+    with pytest.raises(NetworkError, match="not found"):
+        list_dvs_portgroups(env.si, dvs_name="nope-vds")
