@@ -11,53 +11,34 @@
             "producer_on_surface": [],
             "routed_in_description": [],
             "tool": "cluster_remove_host"
-          },
-          {
-            "companion_skill_named": [],
-            "entity": "snapshot",
-            "param": "snapshot_name",
-            "producer_on_surface": [],
-            "routed_in_description": [],
-            "tool": "batch_linked_clone_vms"
-          },
-          {
-            "companion_skill_named": [],
-            "entity": "snapshot",
-            "param": "snapshot_name",
-            "producer_on_surface": [],
-            "routed_in_description": [],
-            "tool": "vm_create_snapshot"
-          },
-          {
-            "companion_skill_named": [],
-            "entity": "snapshot",
-            "param": "snapshot_name",
-            "producer_on_surface": [],
-            "routed_in_description": [],
-            "tool": "vm_revert_snapshot"
           }
         ],
         "entry_points": [
           "list_vcenter_alarms",
+          "cluster_create",
+          "cluster_add_host",
           "scan_datastore_images",
-          "batch_clone_vms",
+          "deploy_vm_from_template",
           "batch_deploy_from_spec",
+          "vm_guest_provision",
           "vm_create_plan",
           "vm_list_plans",
           "cluster_health_summary",
           "cross_vcenter_attention",
           "vm_list_ttl",
+          "vm_create",
+          "vm_create_snapshot",
           "vm_task_status"
         ],
         "reachable_on_surface": 37,
-        "reachable_only_via_description": 4,
-        "required_entity_params": 45,
+        "reachable_only_via_description": 3,
+        "required_entity_params": 41,
         "tool_count": 49
       },
-      "maximum": 45,
-      "pct": 91.1,
+      "maximum": 41,
+      "pct": 97.6,
       "unit": "required entity params",
-      "value": 41
+      "value": 40
     },
     "entity_reachability_read_only": {
       "detail": {
@@ -83,7 +64,7 @@
     },
     "entry_point_availability": {
       "detail": {
-        "full_entry_points": 10,
+        "full_entry_points": 15,
         "read_only_entry_points": 7
       },
       "maximum": 13,

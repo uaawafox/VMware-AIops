@@ -33,3 +33,40 @@ COMPANION_SKILLS = (
     "vmware-harden",
     "vmware-pilot",
 )
+#: Entity tokens this skill's tools name, mapped to the words its listing tools
+#: use. Drives ``test_entity_reachability``: a required parameter whose stem is
+#: not here is invisible to that eval, so an incomplete map understates the
+#: surface rather than failing — which is why the suite asserts coverage.
+ENTITY_WORDS = {
+    "vm": ("vm", "virtual_machine", "virtualmachine", "vms", "source_vm"),
+    "host": ("host", "esxi", "hosts"),
+    "datastore": ("datastore", "datastores", "ds"),
+    "cluster": ("cluster", "clusters"),
+    "network": ("network", "networks", "portgroup"),
+    "snapshot": ("snapshot", "snapshots"),
+    "image": ("image", "images", "ova", "iso", "template"),
+    "alarm": ("alarm", "alarms"),
+    "plan": ("plan", "plans"),
+    # The vSphere object an alarm fires on. Deliberately mapped to nothing that
+    # enumerates it: no tool is named for producing entity names, so this stays
+    # reachable only if a description says where to get one. Inventing a producer
+    # here would make the eval green without making the surface navigable.
+    "entity": ("entity",),
+}
+
+#: Skill-specific parameters that end in an entity suffix but are supplied by the
+#: operator rather than discovered from an API. Universal exclusions (``target``,
+#: paths, filters) live in the eval itself.
+NOT_AN_ENTITY = frozenset(
+    {
+        "folder_filter",
+        "cluster_filter",
+        "power_state",
+        "task_id",
+        "spec_name",
+        # The name of the VM being created — chosen by the operator, not looked
+        # up. The creation-verb rule misses it because the stem is "new", not the
+        # entity, so it has to be named explicitly.
+        "new_name",
+    }
+)
