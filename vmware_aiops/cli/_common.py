@@ -9,6 +9,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from vmware_policy import PolicyDenied
 
 from vmware_aiops.notify.audit import AuditLogger
 
@@ -70,6 +71,13 @@ def cli_errors(fn):
             return fn(*args, **kwargs)
         except (typer.Exit, typer.Abort):
             raise
+        except PolicyDenied as e:
+            # A deny rule or maintenance window refused this write — @guarded ran
+            # guard() before the body and already wrote the status="denied" audit
+            # row. Teach the operator which rule fired instead of a traceback.
+            rule = f" [dim](rule: {e.result.rule})[/]" if e.result.rule else ""
+            console.print(f"[red]Denied by policy: {e.result.reason}[/]{rule}")
+            raise typer.Exit(1) from e
         except _cli_error_types() as e:
             from pyVmomi import vim
 

@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 from rich.table import Table
+from vmware_policy import guarded
 
 from vmware_aiops.cli._common import (
     ConfigOption,
@@ -89,6 +90,7 @@ def ds_scan_images(
 
 @deploy_app.command("ova")
 @cli_errors
+@guarded(risk_level='medium')
 def deploy_ova_cmd(
     ova_path: Annotated[str, typer.Argument(help="Local path to .ova file")],
     name: Annotated[str, typer.Option(help="VM name")],
@@ -129,6 +131,7 @@ def deploy_ova_cmd(
 
 @deploy_app.command("template")
 @cli_errors
+@guarded(risk_level='medium')
 def deploy_template_cmd(
     template_name: Annotated[str, typer.Argument(help="Source template name")],
     name: Annotated[str, typer.Option(help="New VM name")],
@@ -168,6 +171,7 @@ def deploy_template_cmd(
 
 @deploy_app.command("linked-clone")
 @cli_errors
+@guarded(risk_level='medium')
 def deploy_linked_clone_cmd(
     source: Annotated[str, typer.Option(help="Source VM name")],
     snap: Annotated[str, typer.Option("--snapshot", help="Source snapshot name")],
@@ -207,6 +211,7 @@ def deploy_linked_clone_cmd(
 
 @deploy_app.command("batch")
 @cli_errors
+@guarded(risk_level='high')
 def deploy_batch_cmd(
     spec: Annotated[str, typer.Argument(help="Path to deploy.yaml spec file")],
     target: TargetOption = None,
@@ -259,6 +264,7 @@ def deploy_batch_cmd(
 
 @deploy_app.command("batch-clone")
 @cli_errors
+@guarded(risk_level='medium')
 def deploy_batch_clone_cmd(
     source: Annotated[str, typer.Option(help="Source VM name")],
     prefix: Annotated[str, typer.Option(help="VM name prefix")] = "vm",
@@ -310,6 +316,7 @@ def deploy_batch_clone_cmd(
 
 @deploy_app.command("mark-template")
 @cli_errors
+@guarded(risk_level='medium')
 def deploy_mark_template(
     name: str,
     target: TargetOption = None,
@@ -330,6 +337,7 @@ def deploy_mark_template(
 
 @deploy_app.command("iso")
 @cli_errors
+@guarded(risk_level='medium')
 def deploy_iso_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     iso: Annotated[str, typer.Option(help="ISO datastore path, e.g. '[ds1] iso/ubuntu.iso'")],
