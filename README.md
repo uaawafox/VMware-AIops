@@ -7,7 +7,7 @@
 
 English | [中文](README-CN.md)
 
-AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 49 tools.
+AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 55 tools.
 
 > **Companion skills** handle everything else:
 >
@@ -139,6 +139,7 @@ operator an auditor can sign off on, that's what this family is for — see
 | **Plan/Apply** | multi-step planning with rollback | 4 |
 | **Cluster** | create, delete, HA/DRS config, add/remove hosts | 6 |
 | **Datastore** | browse files, scan for images | 2 |
+| **Network** | dvSwitch portgroup list/create, host VMkernel list/add/remove, DF-bit MTU-path ping | 6 |
 
 ### CLI vs MCP: Which Mode to Use
 

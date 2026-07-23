@@ -168,6 +168,21 @@ Plans are stored in `~/.vmware-aiops/plans/`, deleted on success, auto-cleaned a
 
 > For datastore management, iSCSI, and vSAN, use [vmware-storage](https://github.com/zw008/VMware-Storage). For Tanzu Kubernetes, use [vmware-vks](https://github.com/zw008/VMware-VKS).
 
+## Network (dvSwitch portgroups + host VMkernel)
+
+MCP-only (no CLI subcommand). Six tools for distributed-switch portgroup and host VMkernel authoring, plus an MTU-path diagnostic. Writes are preview/confirm gated; `remove_host_vmk` is fail-closed. For NSX overlay segments/gateways/NAT, use [vmware-nsx](https://github.com/zw008/VMware-NSX) — this surface is the underlay (VLAN-backed DVS portgroups, host kernel interfaces).
+
+| Tool | R/W | Risk | Operation |
+|------|:---:|:----:|-----------|
+| `list_dvs_portgroups` | R | low | Distributed portgroups: binding type, VLAN (id/trunk/pvlan), port count, uplink flag. Scope with `dvs_name`. |
+| `create_dvs_portgroup` | W | medium | VLAN-tagged portgroup on a dvSwitch; `earlyBinding` or `ephemeral` (ephemeral attaches with vCenter down — self-hosted-VCSA use case). `confirm=False` previews. |
+| `list_host_vmks` | R | low | VMkernel adapters per host: IP/netmask/dhcp, MTU, MAC, portgroup, netstack, selected services. `services` is `null` (not `[]`) when a host's service map can't be read. |
+| `add_host_vmk` | W | medium | Static-IP vmk on a DVS portgroup — no gateway, no services (throwaway test-vmk shape). `confirm=False` previews; returns the assigned device (`vmk2`). |
+| `remove_host_vmk` | W | high | Fail-closed removal. Refuses on service selection / non-default netstack / default route / unverifiable state; `force_unprotected=True` overrides all but the only-management-vmk absolute. |
+| `vmk_ping` | R | medium | DF-bit-capable ping sourced from a vmk via esxcli-over-API (no SSH). `df=True size=1572` proves a ≥1600 overlay floor; `size=8972` proves full jumbo. Oversized DF'd packets report `fault` structurally, not as an error. |
+
+> **Typical response tokens**: `list_*` ~60–400 (one compact row per portgroup/vmk, paginated at 200/100); `create`/`add`/`remove` ~40–120 (preview or result record); `vmk_ping` ~80–200 (request + per-summary stats or the esxcli fault text).
+
 ## Cluster Management
 
 | Operation | Command | Confirmation | vCenter | ESXi |
