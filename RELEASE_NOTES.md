@@ -1,3 +1,80 @@
+## v1.8.9 — Network authoring: dvSwitch portgroups + host VMkernel adapters (49 → 55 tools)
+
+Six new MCP tools land the family's first network-authoring surface (community
+contribution, PR #35 by @wright-bench):
+
+- `list_dvs_portgroups` / `create_dvs_portgroup` — distributed-switch portgroups.
+  Create is preview/confirm gated and supports `earlyBinding` and `ephemeral`
+  (ephemeral attaches from the ESXi host client with vCenter down — the
+  self-hosted-VCSA case). `lateBinding` is deprecated by vSphere and not offered.
+- `list_host_vmks` / `add_host_vmk` / `remove_host_vmk` — host VMkernel adapters.
+  `add` is the throwaway-test-vmk shape (static IP, no gateway, no services).
+  `remove` is **fail-closed**: it refuses when the vmk is selected for a host
+  service (management/vMotion/vSAN), lives on a non-default netstack (NSX TEPs,
+  dedicated vMotion/provisioning stacks), carries a default route, or when any of
+  that cannot be verified — `force_unprotected=True` overrides all but the
+  only-management-vmk absolute (the call rides the interface it would delete).
+- `vmk_ping` — DF-bit-capable ping sourced from a vmk via esxcli-over-API (no host
+  SSH). `df=True size=1572` proves a ≥1600 overlay floor; `size=8972` proves full
+  jumbo. Oversized DF'd packets report the esxcli fault structurally, not as an
+  error — that failure *is* the MTU diagnostic.
+
+This is the underlay surface (VLAN-backed DVS portgroups, host kernel
+interfaces); for NSX overlay segments/gateways/NAT use vmware-nsx. Writes are
+preview/confirm gated, risk-tiered, and audit-logged like every other AIops write.
+Tool count 49 → 55 (17 read / 38 write). No dependency or breaking changes.
+
+## v1.8.8 — CLI writes now route through policy + audit, exactly like the MCP tools
+
+Every state-changing CLI command is now wrapped by `@guarded`, the CLI counterpart
+to the MCP `@vmware_tool` decorator: it runs the same vmware-policy `guard()`
+authorization and writes the same `audit_call()` row to `~/.vmware/audit.db`. A
+`delete`/`disable`/destructive command run through a shell is now authorized and
+recorded exactly like the equivalent MCP tool — closing the gap where CLI writes
+bypassed policy and landed only in the legacy per-skill log (HLD I-1/I-8).
+
+- a policy `deny` rule now refuses the operation on the CLI with a teaching line
+  naming the rule that fired, not a traceback
+- the legacy per-skill audit log is still written this release (dual-write); it is
+  removed at 2.0
+- **requires vmware-policy >= 1.8.8** (the release that adds the shared `guarded` core)
+- a regression test derives the write-command set from the MCP `[WRITE]` markers and
+  asserts every one is `@guarded`, so a new write command cannot ship unguarded
+
+Also carries the environment-field docstring correction (an optional label a `deny`
+rule may scope to — there is no "warn now / refuse next major" gate).
+
+## v1.8.7 (2026-07-21) — the skill-level read-only switch is removed; read/write authorization is the vCenter account's job (RBAC)
+
+### Removed: `VMWARE_READ_ONLY` / `read_only:` — give the agent a read-only service account instead
+
+The skill-level read-only switch is gone. It was enforced only on the MCP tool
+registry, and any agent with a shell (every SKILL.md grants `allowed-tools: Bash`)
+could reach the same change one CLI command away — so it withheld the *tool*, not
+the *capability*. It was never a real boundary.
+
+To run an agent read-only, give it a **read-only vCenter/NSX service account
+(RBAC)**. Writes are then refused at the platform, un-bypassably, regardless of
+surface or shell — the one place read/write control cannot be stepped around. A
+config still carrying `read_only: true` is ignored, with a one-time warning that
+names the replacement (no silent behavior change).
+
+### Removed: approval tiers and the declared-environment gate (via vmware-policy)
+
+The graduated-autonomy approval tiers (`confirm`/`dual`/`review`) and the "declare
+an environment or be refused" baseline are removed — they only ever fired on the
+rarest configuration while carrying the family's most complex machinery. Opt-in
+`deny` rules and the maintenance window remain, and apply identically wherever a
+tool runs.
+
+### Added: offline / air-gapped install docs
+
+The README now covers installing from source without editable mode (for older
+`pip`) and building wheels to carry onto an air-gapped host — the modern PEP 517
+layout has no `setup.py` by design, which is expected, not a missing file.
+
+This release also carries the accumulated fixes staged since 1.8.5.
+
 ## v1.8.5 (2026-07-20) — the two fixes v1.8.4 announced now actually work
 
 Four adversarial reviews of v1.8.4 found that both of its headline fixes were

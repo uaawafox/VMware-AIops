@@ -145,11 +145,10 @@ class TargetConfig:
     environment: str = ""
     """Which environment this target is, e.g. production / staging / lab.
 
-    Policy rules scope by environment, so a target that declares none matches
-    none of them — it is treated as unknown, not as safe. The shipped baseline
-    currently warns when a state-changing operation runs against such a target;
-    the next major release refuses it. Read-only operations are never affected.
-    See :mod:`vmware_policy.environment`.
+    An optional label. A ``deny`` rule may scope itself to an environment
+    (for example, refusing a tool only where ``environment: production``); a
+    target that declares none is simply not matched by such a rule and is
+    never refused for lacking a label. See :mod:`vmware_policy.environment`.
     """
 
     @property
@@ -208,12 +207,6 @@ class AppConfig:
     targets: tuple[TargetConfig, ...] = ()
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
-    read_only: bool = False
-    """Withhold every write tool from the MCP registry.
-
-    Env vars ``VMWARE_AIOPS_READ_ONLY`` / ``VMWARE_READ_ONLY`` override this.
-    See :mod:`vmware_policy.readonly`.
-    """
 
     def get_target(self, name: str) -> TargetConfig:
         for t in self.targets:
@@ -263,6 +256,14 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     with open(path) as f:
         raw = yaml.safe_load(f) or {}
 
+    if isinstance(raw, dict) and "read_only" in raw:
+        _log.warning(
+            "'read_only' in config is no longer honored (the skill-level read-only "
+            "switch was removed in v1.8.7). To run this agent read-only, point it at "
+            "a read-only vCenter/NSX service account (RBAC) — enforced at the "
+            "platform. Remove the 'read_only' key to silence this warning."
+        )
+
     # `username` is a property on TargetConfig, resolved env-first at access
     # time like `password`. See TargetConfig.username for why late binding
     # matters here.
@@ -299,5 +300,4 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         targets=targets,
         scanner=scanner,
         notify=notify,
-        read_only=bool(raw.get("read_only", False)),
     )

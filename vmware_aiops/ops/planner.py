@@ -480,12 +480,10 @@ def list_plans() -> dict:
     Returns the family list envelope; every plan file on disk is read, so
     ``total`` is the real plan count and nothing is truncated.
 
-    Listing does NOT expire stale plans. It is the one plan tool that survives
-    read-only mode, and a failed plan is the only on-disk record of which steps
-    landed — deleting it from an inspection path (where create/apply/rollback
-    are all withheld) would destroy exactly what the operator opened the
-    session to read. Expiry runs on ``create_plan`` instead, so plans are still
-    swept on every write.
+    Listing does NOT expire stale plans. A failed plan is the only on-disk
+    record of which steps landed, so expiring it during a plain listing would
+    destroy exactly what the operator opened the session to read. Expiry runs
+    on ``create_plan`` instead, so plans are still swept on every write.
     """
     if not _PLANS_DIR.exists():
         return paginated([])

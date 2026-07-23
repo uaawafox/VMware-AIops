@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 from rich.table import Table
+from vmware_policy import guarded
 
 from vmware_aiops.cli._common import (
     ConfigOption,
@@ -30,6 +31,7 @@ vm_app = typer.Typer(help="VM lifecycle: power, snapshot, clone, migrate.")
 
 @vm_app.command("power-on")
 @cli_errors
+@guarded(risk_level='medium')
 def vm_power_on(
     name: str,
     target: TargetOption = None,
@@ -63,6 +65,7 @@ def vm_power_on(
 
 @vm_app.command("power-off")
 @cli_errors
+@guarded(risk_level='medium')
 def vm_power_off(
     name: str,
     force: Annotated[bool, typer.Option(help="Force power off")] = False,
@@ -101,6 +104,7 @@ def vm_power_off(
 
 @vm_app.command("create")
 @cli_errors
+@guarded(risk_level='medium')
 def vm_create(
     name: str,
     cpu: Annotated[int, typer.Option(help="Number of CPUs")] = 2,
@@ -148,6 +152,7 @@ def vm_create(
 
 @vm_app.command("delete")
 @cli_errors
+@guarded(risk_level='critical')
 def vm_delete(
     name: str,
     target: TargetOption = None,
@@ -191,6 +196,7 @@ def vm_delete(
 
 @vm_app.command("reconfigure")
 @cli_errors
+@guarded(risk_level='medium')
 def vm_reconfigure(
     name: str,
     cpu: Annotated[int | None, typer.Option(help="New CPU count")] = None,
@@ -253,6 +259,7 @@ def vm_reconfigure(
 
 @vm_app.command("snapshot-create")
 @cli_errors
+@guarded(risk_level='medium')
 def vm_snapshot_create(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name")] = "snapshot",
@@ -315,6 +322,7 @@ def vm_snapshot_list(
 
 @vm_app.command("snapshot-revert")
 @cli_errors
+@guarded(risk_level='high')
 def vm_snapshot_revert(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name to revert to")],
@@ -352,6 +360,7 @@ def vm_snapshot_revert(
 
 @vm_app.command("snapshot-delete")
 @cli_errors
+@guarded(risk_level='high')
 def vm_snapshot_delete(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name to delete")],
@@ -420,6 +429,7 @@ def vm_task_status(
 
 @vm_app.command("clone")
 @cli_errors
+@guarded(risk_level='high')
 def vm_clone(
     name: str,
     new_name: Annotated[str, typer.Option("--new-name", help="Name for the clone")],
@@ -478,6 +488,7 @@ def vm_clone(
 
 @vm_app.command("migrate")
 @cli_errors
+@guarded(risk_level='high')
 def vm_migrate(
     name: str,
     to_host: Annotated[str, typer.Option("--to-host", help="Target ESXi host name")],
@@ -530,6 +541,7 @@ def vm_migrate(
 
 @vm_app.command("set-ttl")
 @cli_errors
+@guarded(risk_level='medium')
 def vm_set_ttl(
     vm_name: str,
     minutes: Annotated[int, typer.Option("--minutes", "-m", help="Minutes until auto-deletion")],
@@ -561,6 +573,7 @@ def vm_set_ttl(
 
 @vm_app.command("cancel-ttl")
 @cli_errors
+@guarded(risk_level='medium')
 def vm_cancel_ttl(vm_name: str) -> None:
     """Cancel an existing TTL for a VM."""
     from vmware_aiops.ops.ttl import cancel_ttl
@@ -599,6 +612,7 @@ def vm_list_ttl() -> None:
 
 @vm_app.command("clean-slate")
 @cli_errors
+@guarded(risk_level='high')
 def vm_clean_slate(
     vm_name: str,
     snapshot: Annotated[str, typer.Option("--snapshot", "-s", help="Snapshot name")] = "baseline",
@@ -638,6 +652,7 @@ def vm_clean_slate(
 
 @vm_app.command("guest-exec")
 @cli_errors
+@guarded(risk_level='medium', sensitive_params=['password'])
 def vm_guest_exec_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     command: Annotated[str, typer.Option("--cmd", help="Full path to program (e.g. /bin/bash)")],
@@ -646,10 +661,24 @@ def vm_guest_exec_cmd(
     password: Annotated[str, typer.Option("--password", "-p", help="Guest OS password", prompt=True, hide_input=True)] = "",
     target: TargetOption = None,
     config: ConfigOption = None,
+    dry_run: DryRunOption = False,
 ) -> None:
     """Execute a command inside a VM via VMware Tools."""
     from vmware_aiops.ops.guest_ops import guest_exec
 
+    if dry_run:
+        # Never echo the password into the preview.
+        _dry_run_print(
+            target=_resolve_target(target), vm_name=vm_name, operation="guest_exec",
+            api_call="GuestProcessManager.StartProgramInGuest()",
+            parameters={"command": command, "arguments": arguments, "username": username},
+        )
+        return
+    # Arbitrary command execution inside a guest OS is the most powerful thing
+    # this CLI does, and it was the only destructive command without a
+    # confirmation — 25 others had one. `_double_confirm` is where that
+    # confirmation now lives.
+    _double_confirm(f"在客户机执行命令({command})", vm_name, _resolve_target(target))
     si, _ = _get_connection(target, config)
     result = guest_exec(si, vm_name, command, username, password, arguments=arguments)
     _audit.log(
@@ -671,6 +700,7 @@ def vm_guest_exec_cmd(
 
 @vm_app.command("guest-upload")
 @cli_errors
+@guarded(risk_level='medium', sensitive_params=['password'])
 def vm_guest_upload_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     local_path: Annotated[str, typer.Option("--local", help="Local file path")],
@@ -679,10 +709,21 @@ def vm_guest_upload_cmd(
     password: Annotated[str, typer.Option("--password", "-p", help="Guest OS password", prompt=True, hide_input=True)] = "",
     target: TargetOption = None,
     config: ConfigOption = None,
+    dry_run: DryRunOption = False,
 ) -> None:
     """Upload a file to a VM via VMware Tools."""
     from vmware_aiops.ops.guest_ops import guest_upload
 
+    if dry_run:
+        _dry_run_print(
+            target=_resolve_target(target), vm_name=vm_name, operation="guest_upload",
+            api_call="GuestFileManager.InitiateFileTransferToGuest()",
+            parameters={"local_path": local_path, "guest_path": guest_path, "username": username},
+        )
+        return
+    # Writes a file inside the guest OS — destructive by the same standard as
+    # the 25 commands that already confirm.
+    _double_confirm(f"上传文件到客户机({guest_path})", vm_name, _resolve_target(target))
     si, _ = _get_connection(target, config)
     result = guest_upload(si, vm_name, local_path, guest_path, username, password)
     _audit.log(

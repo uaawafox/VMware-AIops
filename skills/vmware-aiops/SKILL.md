@@ -12,7 +12,7 @@ installer:
 argument-hint: "[vm-name or describe your task]"
 allowed-tools:
   - Bash
-metadata: {"openclaw":{"requires":{"env":["VMWARE_AIOPS_CONFIG"],"bins":["vmware-aiops"],"config":["~/.vmware-aiops/config.yaml","~/.vmware-aiops/.env"]},"optional":{"env":["VMWARE_TARGET_PASSWORD","VMWARE_<TARGET>_USERNAME","SLACK_WEBHOOK_URL","DISCORD_WEBHOOK_URL","VMWARE_READ_ONLY","VMWARE_AIOPS_READ_ONLY","VMWARE_AUDIT_APPROVED_BY"],"bins":["vmware-policy"]},"primaryEnv":"VMWARE_AIOPS_CONFIG","homepage":"https://github.com/zw008/VMware-AIops","emoji":"🖥️","os":["macos","linux"]}}
+metadata: {"openclaw":{"requires":{"env":["VMWARE_AIOPS_CONFIG"],"bins":["vmware-aiops"],"config":["~/.vmware-aiops/config.yaml","~/.vmware-aiops/.env"]},"optional":{"env":["VMWARE_TARGET_PASSWORD","VMWARE_<TARGET>_USERNAME","SLACK_WEBHOOK_URL","DISCORD_WEBHOOK_URL","VMWARE_AUDIT_APPROVED_BY"],"bins":["vmware-policy"]},"primaryEnv":"VMWARE_AIOPS_CONFIG","homepage":"https://github.com/zw008/VMware-AIops","emoji":"🖥️","os":["macos","linux"]}}
 compatibility: >
   vmware-policy auto-installed as Python dependency (provides @vmware_tool decorator and audit logging). All write operations audited to ~/.vmware/audit.db.
   Credentials: Each vCenter/ESXi target requires a per-target password env var in ~/.vmware-aiops/.env following the pattern VMWARE_<TARGET_NAME_UPPER>_PASSWORD. Passwords are never logged or echoed.
@@ -27,7 +27,7 @@ compatibility: >
 
 > **Disclaimer**: This is a community-maintained open-source project and is **not affiliated with, endorsed by, or sponsored by VMware, Inc. or Broadcom Inc.** "VMware" and "vSphere" are trademarks of Broadcom. Source code is publicly auditable at [github.com/zw008/VMware-AIops](https://github.com/zw008/VMware-AIops) under the MIT license.
 
-VMware family entry point — AI-powered VM lifecycle, deployment, and alarm management — 49 MCP tools.
+VMware family entry point — AI-powered VM lifecycle, deployment, and alarm management — 55 MCP tools.
 
 > **Start here**: install vmware-aiops first, then add modules as needed.
 > Run `vmware-aiops hub status` to see which family members are installed.
@@ -44,6 +44,7 @@ VMware family entry point — AI-powered VM lifecycle, deployment, and alarm man
 | **Plan/Apply** | multi-step planning with rollback | 4 |
 | **Cluster** | create, delete, HA/DRS config, add/remove hosts | 6 |
 | **Datastore** | browse files, scan for images | 2 |
+| **Network** | dvSwitch portgroup list/create, host VMkernel list/add/remove, DF-bit MTU-path ping | 6 |
 | **Alarm Management** | list alarms, acknowledge, reset | 3 |
 | **Triage & Investigation** (read-only, delegates to vmware-monitor) | one-glance cluster health summary, object-centered VM/host/datastore drill-down bundles, cross-vCenter "what needs attention now?" | 5 |
 
@@ -181,7 +182,7 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 | Cloud models (Claude, GPT-4o) | Either | MCP gives structured JSON I/O |
 | Automated pipelines | **MCP** | Type-safe parameters, structured output |
 
-## MCP Tools (49 — 14 read, 35 write)
+## MCP Tools (55 — 17 read, 38 write)
 
 | Category | Tools | R/W |
 |----------|-------|:---:|
@@ -193,6 +194,8 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 | Plan/Apply (4) | `vm_list_plans` | Read |
 | | `vm_create_plan`, `vm_apply_plan`, `vm_rollback_plan` | Write |
 | Datastore (2) | `browse_datastore`, `scan_datastore_images` | Read |
+| Network (6) | `list_dvs_portgroups`, `list_host_vmks`, `vmk_ping` | Read |
+| | `create_dvs_portgroup`, `add_host_vmk`, `remove_host_vmk` | Write |
 | Cluster (6) | `cluster_info` | Read |
 | | `cluster_create`, `cluster_delete`, `cluster_add_host`, `cluster_remove_host`, `cluster_configure` | Write |
 | Alarm Management (3) | `list_vcenter_alarms` | Read |
@@ -202,13 +205,11 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 
 **List envelope**: the read list tools — `browse_datastore`, `list_vcenter_alarms`, `vm_list_plans`, `vm_list_snapshots`, `vm_list_ttl` — return `{items, returned, limit, total, truncated, hint}` rather than a bare array. Read the rows from `items` and check `truncated` before concluding a listing is complete; empty `items` with `truncated: false` means checked-and-none, not a failure. The write `batch_*` tools keep their bare list (complete by construction). Rationale, `total` semantics, error shape: `references/capabilities.md`.
 
-**Read/write split**: 14 tools are read-only (per `[READ]` docstring marker), 35 modify state. All write tools require explicit parameters and are audit-logged. Destructive operations (`vm_delete`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl` (schedules an unattended auto-delete), force power-off, cluster delete/remove-host, alarm reset) require double confirmation at the CLI layer and support `--dry-run`.
+**Read/write split**: 17 tools are read-only (per `[READ]` docstring marker), 38 modify state. All write tools require explicit parameters and are audit-logged. Destructive operations (`vm_delete`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl` (schedules an unattended auto-delete), force power-off, cluster delete/remove-host, alarm reset, `remove_host_vmk`) require double confirmation at the CLI layer and support `--dry-run`.
+
+**Network write gating**: `create_dvs_portgroup` and `add_host_vmk` are preview/confirm-gated — `confirm=False` (default) returns the exact spec that would be applied without writing. `remove_host_vmk` is **fail-closed**: it refuses when the vmk is selected for a host service (management/vMotion/vSAN), lives on a non-default netstack (NSX TEPs, dedicated vMotion stacks), carries a default gateway route, or when any of that cannot be verified — pass `force_unprotected=True` to override the non-absolute protections. The host's only management-enabled vmk is never removable (no override).
 
 **Alarm reset blast radius**: vSphere has no per-alarm clear API. `reset_vcenter_alarm` uses `AlarmManager.ClearTriggeredAlarms`, which clears **all** triggered alarms matching the named alarm's entity type (host/VM/all) and current status (red/yellow) — not just the one named. The response's `scope` field states exactly what was cleared. The named alarm is looked up first, so a typo fails fast without clearing anything.
-
-## Read-Only Mode
-
-If a write tool described above is absent from `list_tools()`, this deployment is in read-only mode: `VMWARE_READ_ONLY=true` (or `VMWARE_AIOPS_READ_ONLY`, or `read_only: true` in config.yaml) withholds all 36 write-effecting tools at start-up — the 35 writes plus `vm_guest_download`, which writes to a local path. That is a deliberate lockdown, not a fault — do not retry, and do not look for another tool that achieves the same change. Name the operation that is blocked and say an operator must clear the switch and restart the server. The 13 read tools are unaffected. `vmware-aiops doctor` reports the current state and its source. Running with local or small models? See [`references/agent-guardrails.md`](references/agent-guardrails.md).
 
 ## CLI Quick Reference
 
@@ -277,18 +278,6 @@ Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to
 ### Connection refused / SSL error
 1. Verify target is reachable: `vmware-aiops doctor`
 2. For self-signed certs: set `disableSslCertValidation: true` in config.yaml (lab environments only)
-
-### Warning: "ran against a target that declares no environment"
-Policy scopes its rules by each target's `environment:` declaration, not its
-name — an unlabelled target matches none of them. **Today** an undeclared
-write still runs and logs this warning; **the next major release refuses it**.
-Add `environment: production` (or `staging`, `lab`, your own label) to that
-target in `~/.vmware-aiops/config.yaml` now and the upgrade is a no-op.
-Read-only operations are never affected. Labelling a target `production`
-activates the two-person rule for irreversible work — set
-`VMWARE_AUDIT_APPROVED_BY` (and `VMWARE_AUDIT_RATIONALE`) when running those.
-Check what is in force with `vmware-audit policy`; config example and exact
-refusal text: `references/setup-guide.md`.
 
 ## Setup
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import typer
+from vmware_policy import guarded
 
 from vmware_aiops.cli._common import (
     ConfigOption,
@@ -50,6 +51,7 @@ def cluster_info_cmd(
 
 @cluster_app.command("create")
 @cli_errors
+@guarded(risk_level='medium')
 def cluster_create_cmd(
     name: str,
     ha: Annotated[bool, typer.Option("--ha", help="Enable HA")] = False,
@@ -88,6 +90,7 @@ def cluster_create_cmd(
 
 @cluster_app.command("delete")
 @cli_errors
+@guarded(risk_level='high')
 def cluster_delete_cmd(
     name: str,
     target: TargetOption = None,
@@ -95,7 +98,7 @@ def cluster_delete_cmd(
     dry_run: DryRunOption = False,
 ) -> None:
     """Delete an empty cluster (destructive!)."""
-    from vmware_aiops.ops.cluster_mgmt import get_cluster_info, delete_cluster
+    from vmware_aiops.ops.cluster_mgmt import delete_cluster, get_cluster_info
 
     si, _ = _get_connection(target, config)
     info = get_cluster_info(si, name)
@@ -118,6 +121,7 @@ def cluster_delete_cmd(
 
 @cluster_app.command("add-host")
 @cli_errors
+@guarded(risk_level='medium')
 def cluster_add_host_cmd(
     name: str,
     host: Annotated[str, typer.Option("--host", help="Host name to add")],
@@ -148,6 +152,7 @@ def cluster_add_host_cmd(
 
 @cluster_app.command("remove-host")
 @cli_errors
+@guarded(risk_level='medium')
 def cluster_remove_host_cmd(
     name: str,
     host: Annotated[str, typer.Option("--host", help="Host name to remove")],
@@ -178,6 +183,7 @@ def cluster_remove_host_cmd(
 
 @cluster_app.command("configure")
 @cli_errors
+@guarded(risk_level='medium')
 def cluster_configure_cmd(
     name: str,
     ha: Annotated[bool | None, typer.Option("--ha/--no-ha", help="Enable/disable HA")] = None,

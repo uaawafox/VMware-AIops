@@ -7,9 +7,7 @@
 
 English | [中文](README-CN.md)
 
-AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 49 tools.
-
-- **Read-only mode** (v1.8.0) — one env var (`VMWARE_READ_ONLY=true`) strips all 36 write-effecting tools (35 writes **plus `vm_guest_download`**) from the MCP registry at startup, leaving the 13 read tools; ideal for audits, PoCs, and untrusted/local models. See [Read-Only Mode](#read-only-mode).
+AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 55 tools.
 
 > **Companion skills** handle everything else:
 >
@@ -71,6 +69,34 @@ pip install vmware-aiops
 pip install vmware-aiops -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
+### Offline / Air-Gapped Install (from source)
+
+This project uses the modern PEP 517 build system (hatchling), so there is **no
+`setup.py`** by design — that is expected, not a missing file. If you cloned the
+source and hit `ERROR: File "setup.py" or "setup.cfg" not found ... editable mode
+currently requires a setuptools-based build`, your `pip` is older than 21.3 and
+cannot do an *editable* (`-e`) install with a non-setuptools backend. Editable
+mode is a developer convenience, not needed to run the tool — do one of:
+
+```bash
+# From the source tree — a normal (non-editable) install builds a wheel:
+pip install .              # NOT  pip install -e .
+
+# ...or upgrade pip first, and editable works too:
+pip install --upgrade pip && pip install -e .
+```
+
+For a **truly air-gapped host**, build the wheels on a connected machine and copy
+them over — the target then needs no network:
+
+```bash
+# On a connected machine, collect this package + its dependencies as wheels:
+pip wheel . -w dist        # → dist/*.whl   (or: uv build, for just this package)
+
+# Copy dist/ to the air-gapped host, then install offline:
+pip install --no-index --find-links dist vmware-aiops
+```
+
 ---
 
 ## Why this over other VMware MCP servers
@@ -113,6 +139,7 @@ operator an auditor can sign off on, that's what this family is for — see
 | **Plan/Apply** | multi-step planning with rollback | 4 |
 | **Cluster** | create, delete, HA/DRS config, add/remove hosts | 6 |
 | **Datastore** | browse files, scan for images | 2 |
+| **Network** | dvSwitch portgroup list/create, host VMkernel list/add/remove, DF-bit MTU-path ping | 6 |
 
 ### CLI vs MCP: Which Mode to Use
 
@@ -286,31 +313,6 @@ Plans stored in `~/.vmware-aiops/plans/`, auto-deleted on success, auto-cleaned 
 | Webhook | Slack, Discord, or any HTTP endpoint |
 | Daemon Management | `daemon start/stop/status`, PID file, graceful shutdown |
 
-## Read-Only Mode
-
-A prompt instruction is advisory — a model can ignore it. Read-only mode is structural: set `VMWARE_READ_ONLY=true` and all 36 write tools (VM lifecycle and power, snapshots, clone/migrate, OVA/template/linked-clone and batch provisioning, guest operations, cluster management, plans and TTL, alarm acknowledge/reset) are removed from the MCP registry at startup, leaving the 13 read tools. `list_tools()` never offers them, so the model cannot call what it cannot see. Off by default, and fail-closed: if the mode is requested but cannot be guaranteed, the server refuses to start.
-
-`vm_guest_download` is marked `[READ]` — it changes no vCenter state — but it is deliberately classified as a write tool and withheld too, because it writes a file to an operator-supplied local path and accepts guest credentials.
-
-Three ways to enable:
-
-```json
-{
-  "mcpServers": {
-    "vmware-aiops": {
-      "command": "vmware-aiops",
-      "args": ["mcp"],
-      "env": { "VMWARE_READ_ONLY": "true" }
-    }
-  }
-}
-```
-
-- Per-skill override: `VMWARE_AIOPS_READ_ONLY=true` (takes precedence over the family-wide `VMWARE_READ_ONLY`)
-- Config alternative: `read_only: true` in `~/.vmware-aiops/config.yaml`
-
-Precedence: per-skill env → family env → config → off. Startup logs list exactly which tools were withheld.
-
 ## Safety Features
 
 | Feature | Details |
@@ -395,6 +397,7 @@ The vmware-aiops MCP server works with **any MCP-compatible agent or tool**. Rea
 
 | Agent / Tool | Local Model Support | Config Template | Integration Guide |
 |-------------|:-------------------:|-----------------|-------------------|
+| **[Xiaoguai (小怪)](https://github.com/xiaoguai-agent/xiaoguai)** | ✅ Self-hosted, any LLM | [MCP setup](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/book/src/api/mcp.md) | [Guide](https://github.com/xiaoguai-agent/xiaoguai) |
 | **[Goose](https://github.com/block/goose)** | ✅ Ollama, LM Studio | [`goose.json`](examples/mcp-configs/goose.json) | [Guide](docs/integrations/goose.md) |
 | **[LocalCowork](https://github.com/Liquid4All/localcowork)** | ✅ Fully offline | [`localcowork.json`](examples/mcp-configs/localcowork.json) | [Guide](docs/integrations/localcowork.md) |
 | **[mcp-agent](https://github.com/lastmile-ai/mcp-agent)** | ✅ Ollama, vLLM | [`mcp-agent.yaml`](examples/mcp-configs/mcp-agent.yaml) | [Guide](docs/integrations/mcp-agent.md) |
@@ -402,6 +405,8 @@ The vmware-aiops MCP server works with **any MCP-compatible agent or tool**. Rea
 | **[Cursor](https://www.cursor.com)** | — | [`cursor.json`](examples/mcp-configs/cursor.json) | [Guide](docs/integrations/cursor.md) |
 | **Continue** | ✅ Ollama | [`continue.yaml`](examples/mcp-configs/continue.yaml) | [Guide](docs/integrations/continue.md) |
 | **Claude Code** | — | [`claude-code.json`](examples/mcp-configs/claude-code.json) | — |
+
+> **[Xiaoguai (小怪)](https://github.com/xiaoguai-agent/xiaoguai)** — a self-hostable, audit-first agent platform (Rust, single binary + embedded SQLite) from the same maintainer. It runs the vmware-aiops MCP server as one of its toolboxes; being both an MCP *consumer* and an MCP *server*, its HMAC-chained audit log and human-on-the-loop approval gates line up with this skill's own audit + confirm design. See its [MCP integration guide](https://github.com/xiaoguai-agent/xiaoguai/blob/main/docs/book/src/api/mcp.md).
 
 **Fully local operation** (no cloud API required):
 

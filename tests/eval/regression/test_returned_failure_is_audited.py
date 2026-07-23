@@ -63,7 +63,10 @@ def audit_rows(monkeypatch):
         def log(self, **kw):
             rows.append(kw)
 
-    monkeypatch.setattr("vmware_policy.decorators.get_engine", lambda: _Recorder())
+    # v1.8.7 extracted the single audit sink into vmware_policy.guard.audit_call,
+    # which resolves get_engine in the guard module's namespace; patch it there
+    # (the decorators module no longer looks get_engine up itself).
+    monkeypatch.setattr("vmware_policy.guard.get_engine", lambda: _Recorder())
     return rows
 
 
