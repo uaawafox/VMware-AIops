@@ -1,4 +1,4 @@
-<!-- mcp-name: io.github.zw008/vmware-aiops -->
+<!-- mcp-name: io.github.vmware-skills/vmware-aiops -->
 # VMware AIops
 
 > **作者**: Wei Zhou, VMware by Broadcom — wei-wz.zhou@broadcom.com
@@ -13,20 +13,20 @@ AI 驱动的 VMware vCenter/ESXi VM 生命周期管理与部署工具 — 60 个
 >
 > | 技能 | 范围 | 安装 |
 > |------|------|------|
-> | **[vmware-monitor](https://github.com/zw008/VMware-Monitor)** | 只读：资源清单、健康检查、告警、事件、指标 | `uv tool install vmware-monitor` |
-> | **[vmware-storage](https://github.com/zw008/VMware-Storage)** | 数据存储、iSCSI、vSAN 管理 | `uv tool install vmware-storage` |
-> | **[vmware-vks](https://github.com/zw008/VMware-VKS)** | Tanzu 命名空间、TKC 集群生命周期 | `uv tool install vmware-vks` |
+> | **[vmware-monitor](https://github.com/vmware-skills/VMware-Monitor)** | 只读：资源清单、健康检查、告警、事件、指标 | `uv tool install vmware-monitor` |
+> | **[vmware-storage](https://github.com/vmware-skills/VMware-Storage)** | 数据存储、iSCSI、vSAN 管理 | `uv tool install vmware-storage` |
+> | **[vmware-vks](https://github.com/vmware-skills/VMware-VKS)** | Tanzu 命名空间、TKC 集群生命周期 | `uv tool install vmware-vks` |
 >
-> **只需要只读监控？** 使用 [VMware-Monitor](https://github.com/zw008/VMware-Monitor) — 代码库中零破坏性函数。
+> **只需要只读监控？** 使用 [VMware-Monitor](https://github.com/vmware-skills/VMware-Monitor) — 代码库中零破坏性函数。
 
 [![ClawHub](https://img.shields.io/badge/ClawHub-vmware--aiops-orange)](https://clawhub.ai/skills/vmware-aiops)
-[![Skills.sh](https://img.shields.io/badge/Skills.sh-Install-blue)](https://skills.sh/zw008/VMware-AIops)
-[![Claude Code Marketplace](https://img.shields.io/badge/Claude_Code-Marketplace-blueviolet)](https://github.com/zw008/VMware-AIops)
+[![Skills.sh](https://img.shields.io/badge/Skills.sh-Install-blue)](https://skills.sh/vmware-skills/VMware-AIops)
+[![Claude Code Marketplace](https://img.shields.io/badge/Claude_Code-Marketplace-blueviolet)](https://github.com/vmware-skills/VMware-AIops)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ## ⚡ 快速调查报告（只读）
 
-总览 → 调查 → 处置，一次对话完成。五个有主见的只读报告在**服务端聚合并关联**数据、返回高信号结果（绝不灌 raw inventory），让你在动手改之前先判断*该看哪里*。每个都支持 `--html` 生成**自包含离线 HTML 快照**（零外链；下钻细节用原生 `<details>` 折叠，零 JavaScript）。全部委托 [vmware-monitor](https://github.com/zw008/VMware-Monitor) 库、用 AIops 自己的 vCenter 连接。
+总览 → 调查 → 处置，一次对话完成。五个有主见的只读报告在**服务端聚合并关联**数据、返回高信号结果（绝不灌 raw inventory），让你在动手改之前先判断*该看哪里*。每个都支持 `--html` 生成**自包含离线 HTML 快照**（零外链；下钻细节用原生 `<details>` 折叠，零 JavaScript）。全部委托 [vmware-monitor](https://github.com/vmware-skills/VMware-Monitor) 库、用 AIops 自己的 vCenter 连接。
 
 | 问题 | 命令 | 关联什么 |
 |------|------|---------|
@@ -50,10 +50,10 @@ MCP 下对应工具为 `cluster_health_summary`、`cross_vcenter_attention`、`v
 
 ```bash
 # 通过 Skills.sh 安装
-npx skills add zw008/VMware-AIops
+npx skills add vmware-skills/VMware-AIops
 
 # 通过 ClawHub 安装
-clawhub install vmware-aiops
+clawhub install @zw008/vmware-aiops
 ```
 
 ### PyPI 安装（无需访问 GitHub）
@@ -119,7 +119,7 @@ pip install --no-index --find-links dist vmware-aiops
 | **Token 敏感场景** | **CLI** | SKILL.md + Bash = 最小开销 |
 | **云端大模型**（Claude、GPT-4o） | 均可 | MCP 提供结构化 JSON 输入输出 |
 | **自动化管道 / Agent 链式调用** | **MCP** | 类型安全参数，结构化输出，无需 Shell 解析 |
-| **监控 / 存储 / K8s** | 配套技能 | 见 [vmware-monitor](https://github.com/zw008/VMware-Monitor)、[vmware-storage](https://github.com/zw008/VMware-Storage)、[vmware-vks](https://github.com/zw008/VMware-VKS) |
+| **监控 / 存储 / K8s** | 配套技能 | 见 [vmware-monitor](https://github.com/vmware-skills/VMware-Monitor)、[vmware-storage](https://github.com/vmware-skills/VMware-Storage)、[vmware-vks](https://github.com/vmware-skills/VMware-VKS) |
 
 > **经验法则**：追求成本和兼容性选 CLI，追求结构化自动化选 MCP。
 
@@ -185,28 +185,28 @@ ESXi 独立主机 ──→ VM
 | 开机 | `vm power-on <name>` | — | ✅ | ✅ |
 | 优雅关机 | `vm power-off <name>` | 双重 | ✅ | ✅ |
 | 强制关机 | `vm power-off <name> --force` | 双重 | ✅ | ✅ |
-| 重置 | `vm reset <name>` | — | ✅ | ✅ |
-| 挂起 | `vm suspend <name>` | — | ✅ | ✅ |
+| 重置 | plan 动作 `reset`，经 `vm_create_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
+| 挂起 | plan 动作 `suspend`，经 `vm_create_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
 | 创建 | `vm create <name> --cpu --memory --disk` | — | ✅ | ✅ |
 | 删除 | `vm delete <name>` | 双重 | ✅ | ✅ |
 | 调整配置 | `vm reconfigure <name> --cpu --memory` | 双重 | ✅ | ✅ |
 | 创建快照 | `vm snapshot-create <name> --name <snap>` | — | ✅ | ✅ |
 | 列出快照 | `vm snapshot-list <name>` | — | ✅ | ✅ |
-| 恢复快照 | `vm snapshot-revert <name> --name <snap>` | — | ✅ | ✅ |
-| 删除快照 | `vm snapshot-delete <name> --name <snap> [--no-wait]` | — | ✅ | ✅ |
+| 恢复快照 | `vm snapshot-revert <name> --name <snap>` | 双重 | ✅ | ✅ |
+| 删除快照 | `vm snapshot-delete <name> --name <snap> [--no-wait]` | 双重 | ✅ | ✅ |
 | 任务状态 | `vm task-status <task-id>` | — | ✅ | ✅ |
-| 克隆 | `vm clone <name> --new-name <new>` | — | ✅ | ✅ |
-| 迁移 | `vm migrate <name> --to-host <host>` | — | ✅ | ❌ |
-| **设置 TTL** | `vm set-ttl <name> --minutes <n>` | — | ✅ | ✅ |
+| 克隆 | `vm clone <name> --new-name <new>` | 双重 | ✅ | ✅ |
+| 迁移 | `vm migrate <name> --to-host <host>` | 双重 | ✅ | ❌ |
+| **设置 TTL** | `vm set-ttl <name> --minutes <n>` | 双重 | ✅ | ✅ |
 | **取消 TTL** | `vm cancel-ttl <name>` | — | ✅ | ✅ |
 | **列出 TTL** | `vm list-ttl` | — | ✅ | ✅ |
 | **Clean Slate** | `vm clean-slate <name> [--snapshot baseline]` | 双重 | ✅ | ✅ |
-| **Guest 执行** | `vm guest-exec <name> --cmd /bin/bash --args "..."` | — | ✅ | ✅ |
-| **Guest 执行（含输出）** | `vm guest-exec-output <name> --cmd "df -h"` | — | ✅ | ✅ |
-| **Guest 上传** | `vm guest-upload <name> --local f.sh --guest /tmp/f.sh` | — | ✅ | ✅ |
-| **Guest 下载** | `vm guest-download <name> --guest /var/log/syslog --local ./syslog` | — | ✅ | ✅ |
+| **Guest 执行** | `vm guest-exec <name> --cmd /bin/bash --args "..." --user <account>` | 双重 | ✅ | ✅ |
+| **Guest 执行（含输出）** | 仅 MCP：`vm_guest_exec_output`（`username` 必填）——没有 CLI 命令 | — | ✅ | ✅ |
+| **Guest 上传** | `vm guest-upload <name> --local f.sh --guest /tmp/f.sh --user <account>` | 双重 | ✅ | ✅ |
+| **Guest 下载** | `vm guest-download <name> --guest /var/log/syslog --local ./syslog --user <account>` | — | ✅ | ✅ |
 
-> Guest Operations 需要 VM 内运行 VMware Tools。`guest-exec-output` 自动检测 Linux/Windows shell 并捕获 stdout/stderr。
+> Guest Operations 需要 VM 内运行 VMware Tools，且客户机账号必须显式指定——CLI 用 `--user`，MCP 用 `username`。没有默认值，所以任何调用都不会在没选 root 的情况下以 root 身份执行。`vm_guest_exec_output`（仅 MCP，CLI 没有对应命令）自动检测 Linux/Windows shell 并捕获 stdout/stderr。
 
 ### Plan → Apply（多步操作编排）
 
@@ -216,8 +216,8 @@ ESXi 独立主机 ──→ VM
 |------|------|
 | 1. **创建 Plan** | AI 调用 `vm_create_plan` — 校验操作、检查 vSphere 中目标是否存在、生成带回滚信息的 plan |
 | 2. **审查** | AI 展示 plan 给用户：步骤、影响的 VM、不可逆操作警告 |
-| 3. **执行** | `vm_apply_plan` 按顺序执行；某步失败立即停止 |
-| 4. **回滚**（如失败） | 询问用户是否回滚，`vm_rollback_plan` 逆序撤销已执行步骤（不可逆操作跳过） |
+| 3. **执行** | `vm_apply_plan` 先预览；`confirm=True` 时按顺序执行，某步失败立即停止。每个受门控的步骤都按其自身工具的方式检查；iSCSI/重扫步骤会被拒绝（请用 vmware-storage） |
+| 4. **回滚**（如失败） | 询问用户是否回滚，`vm_rollback_plan` 逆序撤销已执行步骤（不可逆操作跳过）；每个破坏性回滚步骤先经检查，检查拒绝即停止回滚 |
 
 Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小时自动清理。
 
@@ -269,26 +269,30 @@ Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小�
 |------|------|
 | 守护进程 | 基于 APScheduler，可配置间隔（默认 15 分钟） |
 | 多目标扫描 | 依次扫描所有配置的 vCenter/ESXi 目标 |
-| 日志分析 | 正则匹配：error, fail, critical, panic, timeout, corrupt |
-| 结构化日志 | JSONL 输出到 `~/.vmware-aiops/scan.log` |
-| Webhook 通知 | 支持 Slack、Discord 或任意 HTTP 端点 |
+| 扫描内容 | 每轮：已触发告警、最近 `lookback_hours` 内的 vCenter 事件，以及 ESXi 主机日志 `hostd`、`vmkernel`、`vpxa` 的新增行 |
+| 主机日志 | 增量读取：同一个 daemon 进程内每行只报告一次（daemon 重启后会把每个日志的最后 500 行再读一遍）。日志轮转，或两轮之间新增超过 500 行时，会追加一条 `info` 记录说明哪些行没被扫描。读取主机日志需要 `Global.Diagnostics` 权限，vCenter 内置的 Read-Only 角色不含该权限；读不到的日志会变成一条带原因的 `info` 记录，绝不会被当成“一切正常” |
+| 日志分析 | 匹配 error、fail、critical、panic、lost access、cannot、timeout、refused、corrupt 的主机日志行——含 critical/panic/corrupt 的为 `critical`，其余为 `warning` |
+| 结构化日志 | JSONL 输出到 `~/.vmware-aiops/scan.log`——记录所有问题，包括 `info` 记录 |
+| Webhook 通知 | 支持 Slack、Discord 或任意 HTTP 端点。发送所有 critical 问题和所有告警/事件类 warning；主机日志的 warning 只写入扫描日志，`info` 记录从不发送 |
+| 每轮摘要 | daemon 日志输出里每轮一行：发现数（以及其中发往 webhook 的数量）、读不到的主机日志数、有未扫描行的日志数、失败的扫描环节数。只要有环节失败或某个目标连不上，就显示 `Scan INCOMPLETE`，绝不会说“一切正常” |
 
 ## 安全特性
 
 | 功能 | 说明 |
 |------|------|
-| 预演模式（Dry-Run） | 任何破坏性命令加 `--dry-run` 可预览 API 调用而不执行，便于信任验证 |
-| Plan → Confirm → Execute → Log | 结构化工作流：展示当前状态、确认变更、执行、审计日志 |
-| 双重确认 | 所有破坏性操作（关机、删除、配置变更、快照恢复/删除、克隆、迁移）需连续两次确认，无绕过参数 |
-| 拒绝记录 | 用户拒绝的操作也会记录到审计日志，便于安全审计 |
+| 预演模式（Dry-Run，**仅 CLI**） | 加 `--dry-run` 只打印将要发出的 API 调用而不执行；除 `deploy iso`、`deploy mark-template`、`vm cancel-ttl`、`vm guest-download` 外，每个 CLI 写操作都支持 |
+| Plan → Confirm → Execute → Log | CLI 工作流：展示当前状态、确认变更、执行、审计日志 |
+| 双重确认（**仅 CLI**） | 破坏性与部署类 CLI 命令（`vm` power-off, delete, reconfigure, snapshot-revert/delete, clone, migrate, set-ttl, clean-slate, guest-exec, guest-upload; `deploy` ova, template, linked-clone, batch, batch-clone, mark-template; `cluster` delete, add-host, remove-host, configure, drs-rule-set/create/delete; `alarm reset`）需连续两次确认，无绕过参数 |
+| MCP 上只有破坏性工具需要确认 | agent 通过 MCP 看到的 43 个写工具里，22 个（所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具）先预览、需 `confirm=True` 才执行；其余 21 个（创建、克隆、部署、开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、告警）**第一次调用就直接执行**。没有审批分级、没有只读开关。决定一次写入能否落地的是 vCenter 账号的权限，记录它的是审计日志。见[真正保护你的是什么](#真正保护你的是什么) |
+| 拒绝记录 | 用户在 CLI 拒绝的操作也会记录到审计日志，便于安全审计 |
 | 审计日志 | 所有操作记录到 `~/.vmware-aiops/audit.log`（JSONL），包含操作前后状态 |
 | 输入校验 | VM 名称长度/格式、CPU（1-128）、内存（128-1048576 MB）、磁盘（1-65536 GB）参数校验 |
 | 密码保护 | 通过 `.env` 加载密码并检查文件权限（warn if not 600），不出现在 shell 历史 |
 | 配置文件内容 | `config.yaml` 仅存储主机名、端口和 `.env` 引用路径，**不含密码或 Token** |
 | SSL 自签名 | 仅用于 ESXi 自签名证书的隔离实验环境；生产环境应使用 CA 签名证书 |
 | Prompt 注入防护 | vSphere 事件消息和主机日志在输出前进行截断、控制字符清理和边界标记包裹 |
-| Webhook 数据范围 | **默认禁用**。启用后仅向用户自配置的 URL 发送告警摘要，payload 不含凭据、IP 或 PII |
-| 最小权限 | 推荐使用专用 vCenter 服务账户，仅授予所需最小权限。仅需监控时使用 [VMware-Monitor](https://github.com/zw008/VMware-Monitor) |
+| Webhook 数据范围 | **默认禁用**。配置后，daemon 只向你配置的 URL 发送：所有 critical 问题（告警、事件、匹配 critical/panic/corrupt 的 ESXi 日志行、连不上的目标）和所有告警/事件类 warning——主机日志的 warning 只写入扫描日志，`info` 记录从不发送。每条问题带实体名和消息：经过清洗的告警、事件或 ESXi 日志文本，或连接错误信息，其中可能含主机名、IP 地址和用户名。不会发送 skill 配置或 `.env` 里的任何凭据 |
+| 最小权限 | 推荐使用专用 vCenter 服务账户，仅授予所需最小权限。仅需监控时使用 [VMware-Monitor](https://github.com/vmware-skills/VMware-Monitor) |
 | 任务等待 | 所有异步操作等待完成并报告结果 |
 
 ### vCenter vs ESXi 对比
@@ -304,7 +308,47 @@ Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小�
 | 快照 | ✅ | ✅ |
 | Guest 操作 | ✅ | ✅ |
 
-> 资源清单、告警、事件、传感器、主机服务、扫描已迁移至 [vmware-monitor](https://github.com/zw008/VMware-Monitor)。
+> 资源清单、告警、事件、传感器、主机服务、扫描已迁移至 [vmware-monitor](https://github.com/vmware-skills/VMware-Monitor)。
+
+### 真正保护你的是什么
+
+上表里的两类保护措施分别属于**两个不同的入口**，必须说清楚哪条适用于哪个——
+搞错比完全没有保护更糟：**你相信存在的那道闸门，正是你不再为它做补偿的那一道。**
+
+**CLI 上**，破坏性命令会连问两次、没有绕过参数，除 `deploy iso`、`deploy mark-template`、
+`vm cancel-ttl`、`vm guest-download` 外，每个写操作都可用 `--dry-run` 预览。
+这防的是人手误敲的命令，**防不住 agent**——一个 `yes |` 就能同时满足两次确认。
+
+**MCP 上**，所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具——43 个写工具中的 22 个，包括 `vm_power_off`、`vm_migrate`、
+`cluster_delete`，以及快照、guest、TTL、Clean Slate 和计划类工具——都接受同一个参数
+`confirm`，默认是不写入的预览：不带参数调用只返回影响范围（blast radius），什么都不改。
+`confirm=True` 会重新测量；如果预览发现阻断项（VM 里 VMware Tools 没在运行、目标主机处于
+维护模式、集群里还有主机、快照不存在或重名）或有读不到的字段，调用会被拒绝，返回教学性
+错误并在审计中记为失败。`vm_delete` 还要求把预览里的 `acknowledge_with` 原样传回，
+VM 在预览之后变了、处于开机或挂起状态都会被拒绝。其余 21 个写工具——创建、克隆、部署、
+开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、告警——第一次调用就执行。确认不是授权，所以 `VMWARE_READ_ONLY` 开关依然不恢复
+（它只在 MCP 路径上生效，有 shell 的 agent 走 CLI 就绕过去了）。预览换来的东西更窄：
+agent 不会销毁一个它没看过的东西。
+
+**真正决定一次写入能否落地的，是 vCenter/ESXi 服务账号。** 给这个 skill 一个
+刚好够用、不多一分的账号；其余的由 vCenter 自己拒绝，对所有入口一视同仁，从
+skill 内部无法绕过。**想让 agent 只读，就给它一个只读的 vCenter 角色**——一个
+决定，在它被作出的地方生效。之后每一次调用都会在调用方看到结果之前写入
+`~/.vmware/audit.db`，这是你事后弄清发生过什么的依据。`~/.vmware/rules.yaml` 里可选的
+`deny` 规则会在每次 MCP 调用前检查，可以拒绝操作——例如对标注了
+`environment: production` 的目标的写入。随包附带的基线什么都不拒绝，而且规则与工具
+运行在同一进程内：它是 RBAC 之上的护栏，不是替代品。
+
+**`vm_guest_exec` 是最需要想清楚的那个。** 它用传入的凭据在客户机里执行调用方
+给的任意命令——它的 `username` 是必填项（没有默认账号）；没有任何东西限制这条命令的内容。
+**客户机账号是与 vCenter 账号相互独立的第二道授权边界**——一个只读的 vCenter
+角色约束不了这个工具在 VM *内部*做什么。skill 自身不保存客户机凭据：在 MCP 上它们是
+agent 看得到的工具参数（审计行里会脱敏密码）。请传入最小权限的客户机账号，不要把
+agent 用不到的客户机凭据交给它。`vm_guest_upload` 能读取 server 进程可读的任何本地文件。
+
+哪些工具有闸门、哪些没有，完整清单见
+[references/capabilities.md](skills/vmware-aiops/references/capabilities.md#what-gates-a-write)；
+那里的数字由测试套件对着真实工具注册表核对，不是手工维护的。
 
 ---
 
@@ -324,7 +368,7 @@ vSphere 中 VM 名称区分大小写。请使用 `vmware-monitor inventory vms` 
 
 ### 连接被拒 / SSL 错误
 1. 验证目标可达：`vmware-aiops doctor`
-2. 自签名证书：在 config.yaml 中设置 `disableSslCertValidation: true`（仅限实验环境）
+2. 自签名证书：在 config.yaml 中设置 `verify_ssl: false`（仅限实验环境）
 
 ---
 
@@ -379,7 +423,7 @@ node --version      # Gemini/Codex CLI 需要 Node.js 18+
 所有平台共用同一个 Python 后端：
 
 ```bash
-git clone https://github.com/zw008/VMware-AIops.git
+git clone https://github.com/vmware-skills/VMware-AIops.git
 cd VMware-AIops
 python3 -m venv .venv
 source .venv/bin/activate
@@ -420,9 +464,9 @@ chmod 600 ~/.vmware-aiops/.env
 - **始终**使用 `~/.vmware-aiops/.env` 并设置 `chmod 600`
 - **始终**通过 `config.yaml` 配置连接 — 凭据自动从 `.env` 加载
 - **TLS**：默认启用。仅在使用自签名证书的隔离实验环境中才禁用
-- **Webhook**：仅向您自己配置的 URL 发送通知，默认不向第三方服务发送数据
-- **代码审查**：建议在生产部署前审查[源代码](https://github.com/zw008/VMware-AIops)和提交历史
-- **生产环境安全**：生产环境建议使用只读的 [VMware-Monitor](https://github.com/zw008/VMware-Monitor)。AI Agent 可能误解上下文并执行非预期的破坏性操作 — 已有真实案例表明，缺乏隔离的 AI 驱动基础设施工具可能删除生产数据库和整个环境。VMware-Monitor 在代码级别消除此风险：代码库中不存在任何破坏性函数
+- **Webhook**：默认禁用。启用后 daemon 只向您自己配置的 URL 发送（不发往任何第三方服务）：所有 critical 问题（告警、事件、匹配 critical/panic/corrupt 的 ESXi 日志行、连不上的目标）和所有告警/事件类 warning——主机日志的 warning 只写入扫描日志，`info` 记录从不发送。payload 带完整的问题文本（实体名、告警名、事件消息、ESXi 日志摘录、连接错误），其中可能含主机名、IP 地址和用户名；不含您配置或 `.env` 里的任何凭据
+- **代码审查**：建议在生产部署前审查[源代码](https://github.com/vmware-skills/VMware-AIops)和提交历史
+- **生产环境安全**：生产环境建议使用只读的 [VMware-Monitor](https://github.com/vmware-skills/VMware-Monitor)。AI Agent 可能误解上下文并执行非预期的破坏性操作 — 已有真实案例表明，缺乏隔离的 AI 驱动基础设施工具可能删除生产数据库和整个环境。VMware-Monitor 在代码级别消除此风险：代码库中不存在任何破坏性函数
 
 ### 第 3 步：连接 AI 工具
 
@@ -430,12 +474,12 @@ chmod 600 ~/.vmware-aiops/.env
 
 ```bash
 # 方式一：由安装器放置 skill（推荐）
-npx skills add zw008/VMware-AIops
+npx skills add vmware-skills/VMware-AIops
 # 或
-clawhub install vmware-aiops
+clawhub install @zw008/vmware-aiops
 
 # 方式二：手工安装 skill
-git clone https://github.com/zw008/VMware-AIops.git
+git clone https://github.com/vmware-skills/VMware-AIops.git
 cd VMware-AIops
 mkdir -p ~/.claude/skills/vmware-aiops
 cp -r skills/vmware-aiops/. ~/.claude/skills/vmware-aiops/
@@ -447,7 +491,7 @@ cp -r skills/vmware-aiops/. ~/.claude/skills/vmware-aiops/
 claude mcp add vmware-aiops -- vmware-aiops mcp
 ```
 
-> 生产环境建议改用只读的 [VMware-Monitor](https://github.com/zw008/VMware-Monitor)（`npx skills add zw008/VMware-Monitor`），代码级零破坏性。
+> 生产环境建议改用只读的 [VMware-Monitor](https://github.com/vmware-skills/VMware-Monitor)（`npx skills add vmware-skills/VMware-Monitor`），代码级零破坏性。
 
 #### Gemini CLI
 
@@ -559,10 +603,6 @@ vmware-aiops-mcp
 
 </details>
 
-**通过 Smithery 安装**：
-```bash
-npx -y @smithery/cli install @zw008/VMware-AIops --client claude
-```
 
 ---
 
@@ -626,7 +666,7 @@ vmware-aiops mcp-config list                          # 列出所有支持的 Ag
 # 虚拟机操作
 vmware-aiops vm power-on|power-off|reset|suspend <vm-name>
 vmware-aiops vm create <name> --cpu 4 --memory 8192 --disk 100
-vmware-aiops vm delete <name> --confirm
+vmware-aiops vm delete <name>
 vmware-aiops vm reconfigure <name> --cpu 4 --memory 8192
 vmware-aiops vm snapshot-create|snapshot-list|snapshot-revert|snapshot-delete <name>
 vmware-aiops vm snapshot-delete <name> --name <snap> --no-wait   # 异步发起，立即返回 task id
@@ -721,15 +761,15 @@ VMware-AIops/
 
 | Skill | 范围 | 工具数 | 安装 |
 |-------|------|:-----:|------|
-| **[vmware-aiops](https://github.com/zw008/VMware-AIops)** | VM 生命周期、部署、Guest Ops、集群、数据存储浏览、健康速览 | 49 | `uv tool install vmware-aiops` |
-| **[vmware-monitor](https://github.com/zw008/VMware-Monitor)** | 只读监控、告警、事件、对象调查 bundle | 27 | `uv tool install vmware-monitor` |
-| **[vmware-storage](https://github.com/zw008/VMware-Storage)** | 数据存储、iSCSI、vSAN | 11 | `uv tool install vmware-storage` |
-| **[vmware-vks](https://github.com/zw008/VMware-VKS)** | Tanzu 命名空间、TKC 集群生命周期 | 20 | `uv tool install vmware-vks` |
-| **[vmware-nsx](https://github.com/zw008/VMware-NSX)** | NSX 网络：Segment、Gateway、NAT、路由、IPAM | 33 | `uv tool install vmware-nsx-mgmt` |
-| **[vmware-nsx-security](https://github.com/zw008/VMware-NSX-Security)** | DFW 策略/规则、安全组、Traceflow、IDS/IPS | 21 | `uv tool install vmware-nsx-security` |
-| **[vmware-aria](https://github.com/zw008/VMware-Aria)** | Aria Operations 指标、告警、容量、异常检测 | 28 | `uv tool install vmware-aria` |
-| **[vmware-avi](https://github.com/zw008/VMware-AVI)** | AVI (NSX ALB) 负载均衡、AKO Kubernetes 操作 | 28 | `uv tool install vmware-avi` |
-| **[vmware-harden](https://github.com/zw008/VMware-Harden)** | 合规基线（CIS / vSphere SCG / 等保 / PCI-DSS）、Drift 检测 | 6 | `uv tool install vmware-harden` |
+| **[vmware-aiops](https://github.com/vmware-skills/VMware-AIops)** | VM 生命周期、部署、Guest Ops、集群、数据存储浏览、健康速览 | 49 | `uv tool install vmware-aiops` |
+| **[vmware-monitor](https://github.com/vmware-skills/VMware-Monitor)** | 只读监控、告警、事件、对象调查 bundle | 27 | `uv tool install vmware-monitor` |
+| **[vmware-storage](https://github.com/vmware-skills/VMware-Storage)** | 数据存储、iSCSI、vSAN | 11 | `uv tool install vmware-storage` |
+| **[vmware-vks](https://github.com/vmware-skills/VMware-VKS)** | Tanzu 命名空间、TKC 集群生命周期 | 20 | `uv tool install vmware-vks` |
+| **[vmware-nsx](https://github.com/vmware-skills/VMware-NSX)** | NSX 网络：Segment、Gateway、NAT、路由、IPAM | 33 | `uv tool install vmware-nsx-mgmt` |
+| **[vmware-nsx-security](https://github.com/vmware-skills/VMware-NSX-Security)** | DFW 策略/规则、安全组、Traceflow、IDS/IPS | 21 | `uv tool install vmware-nsx-security` |
+| **[vmware-aria](https://github.com/vmware-skills/VMware-Aria)** | Aria Operations 指标、告警、容量、异常检测 | 28 | `uv tool install vmware-aria` |
+| **[vmware-avi](https://github.com/vmware-skills/VMware-AVI)** | AVI (NSX ALB) 负载均衡、AKO Kubernetes 操作 | 28 | `uv tool install vmware-avi` |
+| **[vmware-harden](https://github.com/vmware-skills/VMware-Harden)** | 合规基线（CIS / vSphere SCG / 等保 / PCI-DSS）、Drift 检测 | 6 | `uv tool install vmware-harden` |
 
 ---
 

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from pyVmomi import vim
 from vmware_policy import sanitize
 
+from vmware_aiops.ops._paging import paginated_window
 from vmware_aiops.ops.inventory import _collect
 from vmware_aiops.ops.vm_lifecycle import _wait_for_task
 
@@ -134,10 +135,14 @@ def list_dvs_portgroups(
         })
     total = len(out)
     window = out[offset : offset + limit] if limit > 0 else out[offset:]
-    result = {"total": total, "returned": len(window), "portgroups": window}
-    if offset or len(window) < total:
-        result["offset"] = offset
-        result["hint"] = "Use limit/offset to page through the remainder."
+    # The family envelope, not a hand-rolled near-miss. The previous shape —
+    # {total, returned, portgroups} — was self-consistent and still wrong: an
+    # agent that knows this family reads `items` and got nothing, and there was
+    # no `truncated`/`hint`, which is precisely what issue #31 showed a model
+    # cannot infer for itself. `portgroups` is kept as a deprecated alias so
+    # nothing that reads it breaks.
+    result = paginated_window(window, total=total, limit=limit, offset=offset)
+    result["portgroups"] = result["items"]
     return result
 
 
@@ -185,7 +190,9 @@ def create_dvs_portgroup(
         return {
             "action": "preview",
             "would_create": planned,
-            "hint": "Re-run with confirm=True to create.",
+            "blast_radius": {**planned, "blockers": [], "unmeasured": []},
+            "hint": "Nothing was changed. Show blast_radius to the user; re-run with "
+                    "confirm=True only after they agree.",
         }
 
     spec = vim.dvs.DistributedVirtualPortgroup.ConfigSpec()

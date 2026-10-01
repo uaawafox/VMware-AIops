@@ -6,7 +6,7 @@ from typing import Annotated
 
 import typer
 from rich.table import Table
-from vmware_policy import guarded
+from vmware_policy import audited, guarded
 
 from vmware_aiops.cli._common import (
     ConfigOption,
@@ -26,6 +26,7 @@ alarm_app = typer.Typer(help="vCenter alarm management: list, acknowledge, reset
 
 @alarm_app.command("list")
 @cli_errors
+@audited("list_vcenter_alarms")
 def alarm_list(
     target: TargetOption = None,
     config: ConfigOption = None,
@@ -62,7 +63,7 @@ def alarm_list(
 
 @alarm_app.command("acknowledge")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('acknowledge_vcenter_alarm', risk_level='medium')
 def alarm_acknowledge(
     entity_name: Annotated[str, typer.Argument(help="Entity name (VM/host/cluster)")],
     alarm_name: Annotated[str, typer.Argument(help="Alarm definition name")],
@@ -96,7 +97,7 @@ def alarm_acknowledge(
 
 @alarm_app.command("reset")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('reset_vcenter_alarm', risk_level='medium')
 def alarm_reset(
     entity_name: Annotated[str, typer.Argument(help="Entity name (VM/host/cluster)")],
     alarm_name: Annotated[str, typer.Argument(help="Alarm definition name")],

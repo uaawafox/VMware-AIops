@@ -1,6 +1,6 @@
 """Network tools: dvSwitch portgroups + host VMkernel adapters and MTU diagnostics."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from vmware_policy import vmware_tool
 
@@ -35,8 +35,9 @@ def list_dvs_portgroups(
         target: vCenter target name from config.yaml; omit to use the default target.
 
     Returns:
-        Dict with total, returned, and portgroups list. Errors return a
-        dict with "error" + hint.
+        The family list envelope {items, returned, limit, total, truncated,
+        hint}; each item is one portgroup. `portgroups` is kept as a deprecated
+        alias for `items`. Errors return a dict with "error" + hint.
     """
     si = _get_connection(target)
     return network_mgmt.list_dvs_portgroups(
@@ -51,7 +52,7 @@ def create_dvs_portgroup(
     name: str,
     dvs_name: str,
     vlan_id: int,
-    binding: str = "earlyBinding",
+    binding: Literal["earlyBinding", "ephemeral"] = "earlyBinding",
     num_ports: int = 8,
     confirm: bool = False,
     target: Optional[str] = None,
@@ -74,7 +75,9 @@ def create_dvs_portgroup(
         vlan_id: VLAN ID to tag (0-4094; 0 = none).
         binding: "earlyBinding" (default) or "ephemeral".
         num_ports: Port count for earlyBinding portgroups (default 8).
-        confirm: False previews; True creates.
+        confirm: False (default) returns the blast radius and changes nothing.
+            True creates it. Do not set True because the user asked
+            earlier; they have not seen the preview yet.
         target: vCenter target name from config.yaml; omit to use the default target.
 
     Returns:
@@ -108,6 +111,16 @@ def list_host_vmks(
     netstack, and which host services it is selected for (management,
     vmotion, vsan, ...). The verify pair for add_host_vmk/remove_host_vmk.
 
+    Gotcha - this list is not automatically a complete estate inventory.
+    vCenter answers property reads for a host it has lost contact with out of
+    its own cache, so hosts it never reached appear here as rows with
+    `reachable: false`, `device: null` and a `note` naming the connectionState,
+    rather than being dropped. Check `hosts_unreachable` (and the
+    `unreachable_note` present only when it is non-zero) before reporting the
+    result as the full picture, and do not read a null field on such a row as a
+    measurement - it means nobody looked. Adapters shown for an unreachable
+    host are vCenter's last cached view.
+
     Args:
         host_name: ESXi host name; omit to list across all hosts.
         limit: Max vmks to return (default 100).
@@ -115,8 +128,14 @@ def list_host_vmks(
         target: vCenter target name from config.yaml; omit to use the default target.
 
     Returns:
-        Dict with total, returned, and vmks list (services is null when a
-        host's service map could not be read). Errors return "error" + hint.
+        The family list envelope {items, returned, limit, total, truncated,
+        hint} plus `hosts_unreachable` (int) and, when that is non-zero,
+        `unreachable_note` (str). Each item is one VMkernel adapter, or one
+        unread host when `reachable` is false; `services` is null when a host's
+        service map could not be read. `truncated` stays a paging fact - an
+        incomplete estate is reported by `hosts_unreachable`, not by it.
+        `vmks` is kept as a deprecated alias for `items`. Errors return
+        "error" + hint.
     """
     si = _get_connection(target)
     return host_network_mgmt.list_host_vmks(
@@ -152,7 +171,9 @@ def add_host_vmk(
         ip: Static IPv4 address for the vmk.
         netmask: Subnet mask (e.g. 255.255.255.0).
         mtu: MTU for the vmk (default 1500; 9000 for jumbo tests).
-        confirm: False previews; True creates.
+        confirm: False (default) returns the blast radius and changes nothing.
+            True creates it. Do not set True because the user asked
+            earlier; they have not seen the preview yet.
         target: vCenter target name from config.yaml; omit to use the default target.
 
     Returns:
@@ -196,7 +217,9 @@ def remove_host_vmk(
     Args:
         host_name: ESXi host the vmk lives on.
         vmk: Device name to remove (e.g. "vmk2").
-        confirm: False previews; True removes.
+        confirm: False (default) returns the blast radius and changes nothing.
+            True removes it. Do not set True because the user asked
+            earlier; they have not seen the preview yet.
         force_unprotected: True bypasses the non-absolute protections above.
         target: vCenter target name from config.yaml; omit to use the default target.
 
@@ -244,7 +267,9 @@ def set_vmk_service(
         vmk: Device name to change (e.g. "vmk3").
         service: Service/nicType name to enable or disable.
         enabled: True selects the vmk for the service; False deselects.
-        confirm: False previews; True applies.
+        confirm: False (default) returns the blast radius and changes nothing.
+            True applies it. Do not set True because the user asked
+            earlier; they have not seen the preview yet.
         target: vCenter target name from config.yaml; omit to use the default target.
 
     Returns:

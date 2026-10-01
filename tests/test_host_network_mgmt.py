@@ -152,9 +152,21 @@ def test_remove_preview_then_confirm(env):
 
 def _fake_collect_one_host(host):
     """Mimic inventory._collect over [HostSystem]: one (obj, props) tuple with
-    the batched name + vnic list list_host_vmks now requests."""
+    the batched name + connection state + vnic list list_host_vmks now requests.
+
+    ``runtime.connectionState`` is part of the fake because the tool now asks
+    for it and treats anything but "connected" — an unreadable state included —
+    as a host it did not measure. See
+    tests/eval/regression/test_unreachable_host_vmks.py."""
     return lambda si, obj_type, paths: [
-        (host, {"name": host.name, "config.network.vnic": host.config.network.vnic})
+        (
+            host,
+            {
+                "name": host.name,
+                "runtime.connectionState": "connected",
+                "config.network.vnic": host.config.network.vnic,
+            },
+        )
     ]
 
 
@@ -399,14 +411,26 @@ def test_list_reports_unknown_services_as_none(env, monkeypatch):
 
 
 def test_list_paging_window_and_total(env, monkeypatch):
+    """Paging semantics, now expressed in the family envelope.
+
+    The truncation signal moved: this used to assert `"hint" not in everything`,
+    because the hand-rolled shape omitted the key when the page was complete.
+    The envelope always carries all six keys and says `truncated: False`,
+    `hint: None` instead — deliberately, since an absent key is exactly what a
+    model fills in with invention (see vmware_policy.envelope). The paging
+    behaviour this test protects is unchanged.
+    """
     monkeypatch.setattr(hnm, "_collect", _fake_collect_one_host(env.host))
     first = list_host_vmks(env.si, limit=1)
     assert first["total"] == 2 and first["returned"] == 1
-    assert "hint" in first
+    assert first["truncated"] is True and first["hint"]
     second = list_host_vmks(env.si, limit=1, offset=1)
-    assert second["vmks"][0]["device"] != first["vmks"][0]["device"]
+    assert second["items"][0]["device"] != first["items"][0]["device"]
     everything = list_host_vmks(env.si)
-    assert everything["returned"] == 2 and "hint" not in everything
+    assert everything["returned"] == 2
+    assert everything["truncated"] is False and everything["hint"] is None
+    # the deprecated alias still mirrors items, so existing readers keep working
+    assert everything["vmks"] == everything["items"]
 
 
 # --- sanitization of host-supplied text --------------------------------------------
@@ -583,3 +607,59 @@ def test_set_service_confirm_enable_and_disable_roundtrip(monkeypatch):
     assert out["action"] == "set"
     assert out["services_now"] == []
     assert mgr.calls == [("select", "vmotion", "vmk3"), ("deselect", "vmotion", "vmk3")]
+
+
+def test_previews_state_their_blast_radius(env):
+    """HLD §7 L1: every gated preview carries ``blast_radius`` (remove_host_vmk,
+    add_host_vmk), and its hint does not invite stepping over the gate."""
+    added = add_host_vmk(env.si, env.host.name, "pg-tep-test", "198.51.100.1", "255.255.255.0")
+    assert added["blast_radius"].items() >= added["would_create"].items()
+    removed = remove_host_vmk(env.si, env.host.name, "vmk1")
+    assert removed["action"] == "preview"
+    assert removed["blast_radius"].items() >= removed["would_remove"].items()
+    for out in (added, removed):
+        assert "only after they agree" in out["hint"]
+
+
+def test_vmk_previews_carry_blockers_and_unmeasured(env):
+    """Review L2: add/remove previews carry blockers and unmeasured."""
+    added = add_host_vmk(env.si, env.host.name, "pg-tep-test", "198.51.100.1", "255.255.255.0")
+    removed = remove_host_vmk(env.si, env.host.name, "vmk1")
+    for out in (added, removed):
+        assert out["blast_radius"]["blockers"] == []
+        assert out["blast_radius"]["unmeasured"] == []
+
+
+def test_remove_vmk_preview_reports_refusals_as_blockers(env):
+    """Review L2: the refusals are blockers in the preview; confirm still raises."""
+    env.host.config.network.vnic[1].spec.netStackInstanceKey = "vxlan"
+    out = remove_host_vmk(env.si, env.host.name, "vmk1")
+    assert out["action"] == "preview"
+    assert any("netstack" in b for b in out["blast_radius"]["blockers"])
+    last = remove_host_vmk(env.si, env.host.name, "vmk0")
+    assert any("no override" in b for b in last["blast_radius"]["blockers"])
+    assert env.ns.removed == []
+
+
+def test_remove_vmk_preview_reports_an_unreadable_map_as_unmeasured(env):
+    env.host.configManager.virtualNicManager = None
+    out = remove_host_vmk(env.si, env.host.name, "vmk1")
+    assert out["blast_radius"]["unmeasured"] == ["service_map"]
+    forced = remove_host_vmk(env.si, env.host.name, "vmk1", force_unprotected=True)
+    assert forced["blast_radius"]["unmeasured"] == []
+    assert forced["protections_bypassed_by_force"]
+
+
+def test_set_service_preview_reports_refusals(monkeypatch):
+    host, mgr = _svc_env(monkeypatch, {"vmk0": ["management"], "vmk3": []})
+    out = hnm.set_vmk_service(object(), host.name, "vmk3", "vmotion", True)
+    assert out["blast_radius"]["blockers"] == [] and out["blast_radius"]["unmeasured"] == []
+    out = hnm.set_vmk_service(object(), host.name, "vmk0", "management", False)
+    assert any("ONLY management-enabled" in b for b in out["blast_radius"]["blockers"])
+    host.configManager.virtualNicManager = types.SimpleNamespace(
+        info=None, SelectVnicForNicType=mgr.SelectVnicForNicType,
+        DeselectVnicForNicType=mgr.DeselectVnicForNicType,
+    )
+    out = hnm.set_vmk_service(object(), host.name, "vmk3", "vmotion", True)
+    assert out["blast_radius"]["unmeasured"] == ["service_map"]
+    assert mgr.calls == []

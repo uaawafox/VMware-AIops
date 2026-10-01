@@ -10,16 +10,18 @@ tool signature — on Python 3.10 with older mcp/pydantic the union is eval'd to
 ``types.UnionType`` and FastMCP's ``issubclass`` check crashes (踩坑 #33).
 """
 
+import contextvars
 import functools
+import inspect
 import logging
-import os
 import ssl
-from pathlib import Path
 from typing import Any, Callable, Optional
 
+from mcp import types as mcp_types
 from mcp.server.fastmcp import FastMCP
 from vmware_policy import report_tool_failure, sanitize
 
+from vmware_aiops import __version__
 from vmware_aiops.config import ConfigError, load_config
 from vmware_aiops.connection import ConnectionManager
 from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
@@ -29,11 +31,20 @@ from vmware_aiops.ops.host_network_mgmt import HostNetworkError
 from vmware_aiops.ops.inventory import InventoryError
 from vmware_aiops.ops.iscsi_config import HostNotFoundError, ISCSIError
 from vmware_aiops.ops.network_mgmt import NetworkError
+from vmware_aiops.ops.gate import GateRefusedError
 from vmware_aiops.ops.vm_lifecycle import TaskFailedError, TaskStillRunning, VMNotFoundError
 
 logger = logging.getLogger(__name__)
 
 _DOCTOR_HINT = "Run 'vmware-aiops doctor' to verify connectivity and credentials."
+
+
+#: Cap for messages this skill authored. 500 is sanitize's own default; it was
+#: 300, and 300 applied to *exactly* the authored messages cut the closing
+#: remedy off the longest and most useful of them on any host whose home
+#: directory is longer than a developer's. Named so the tests assert against it
+#: rather than repeating the number (形态 #6).
+AUTHORED_MESSAGE_CAP = 500
 
 
 def _safe_error(exc: Exception, tool: str) -> str:
@@ -88,6 +99,7 @@ def _safe_error(exc: Exception, tool: str) -> str:
         ConnectionError,
         ConfigError,
         VMNotFoundError,
+        GateRefusedError,
         GuestOpsError,
         TaskFailedError,
         TaskStillRunning,
@@ -101,8 +113,128 @@ def _safe_error(exc: Exception, tool: str) -> str:
         NetworkError,
     )
     if isinstance(exc, _passthrough):
-        return sanitize(str(exc), 300)
+        # 500 is sanitize's own default, not 300. The list above is precisely
+        # "text this skill authored", and a 300-char cap applied to exactly
+        # those messages cut the closing remedy off the longest and most useful
+        # ones — the missing-password error loses the `.env` path, and the
+        # config-not-found error loses the `init` instruction, on any host whose
+        # home directory is longer than a developer's. The family's Windows test
+        # host is one (形态 #3, found four times in one day across four repos).
+        #
+        # Unplanned exceptions are not affected: they never reach here, they are
+        # reduced to a bare type name below. So the cap only ever governed
+        # authored text, which is the one thing it should not have been cutting.
+        # It stays bounded rather than removed because authored messages do
+        # interpolate inventory names.
+        return sanitize(str(exc), AUTHORED_MESSAGE_CAP)
     return f"{type(exc).__name__}: operation failed."
+
+
+# ---------------------------------------------------------------------------
+# Protocol-level failure reporting
+# ---------------------------------------------------------------------------
+
+#: Set by :class:`_FrameErrorFastMCP` for the tool call it is dispatching, and
+#: appended to by :func:`_mark_call_failed` from inside the tool body. A list is
+#: used rather than a plain value because it is the binding, not the variable,
+#: that has to survive: the marker is written deep inside the call and read
+#: after it returns, and mutating an object both sides already hold works
+#: whether FastMCP calls the tool inline (it does today) or moves it to a
+#: worker thread with a copied context (it would not carry a rebind back).
+#: One binding per dispatch, so concurrent calls cannot mark each other.
+_call_failed: contextvars.ContextVar[list[bool] | None] = contextvars.ContextVar(
+    "vmware_aiops_mcp_call_failed", default=None
+)
+
+
+def _mark_call_failed() -> None:
+    """Declare that the in-flight tool call failed, though it will *return*."""
+    sink = _call_failed.get()
+    if sink is not None:
+        sink.append(True)
+
+
+def _is_error_envelope(result: Any) -> bool:
+    """True if ``result`` is the family's documented error envelope.
+
+    Not every failure travels as an exception: ``apply_plan`` answers an unknown
+    plan id with ``{"error": "Plan 'x' not found"}`` and never raises, so
+    ``@tool_errors`` sees a perfectly ordinary return.
+
+    A truthy top-level ``error`` key is this family's convention for "the call
+    failed", and vmware-policy already audits by exactly that rule — a falsy
+    ``error`` is a result reporting that nothing went wrong (``guest_provision``
+    returns ``{"error": None}`` on a clean run), and a multi-element list is a
+    batch with partial results, which is a successful call.
+
+    This duplicates ``vmware_policy.decorators._returned_failure``, which is
+    private and not exported. The duplication is deliberate but not left to
+    trust: ``test_failure_envelope_rule_matches_vmware_policys`` pins the two
+    against each other over a table of shapes, so they cannot drift into a state
+    where the audit row and the protocol frame disagree about the same call
+    (形态 #6). The right home for the rule is a public export from vmware-policy,
+    which every skill's boundary could then share.
+    """
+    if isinstance(result, dict):
+        return bool(result.get("error"))
+    if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
+        return bool(result[0].get("error"))
+    return False
+
+
+def _error_frame(converted: Any) -> mcp_types.CallToolResult:
+    """Re-wrap an already-converted tool result as an error frame.
+
+    ``converted`` is whatever ``FuncMetadata.convert_result`` produced — a list
+    of content blocks, or an ``(unstructured, structured)`` pair for a tool with
+    an output schema. Re-wrapping *after* that conversion rather than building a
+    ``CallToolResult`` inside the tool is the whole point: the content and
+    ``structuredContent`` are then byte-identical to what the same payload
+    produced before this change, and nothing here has to know FastMCP's
+    ``{"result": ...}`` wrapping convention or which of the 60 tools it applies
+    to. Only ``isError`` is new.
+    """
+    if isinstance(converted, mcp_types.CallToolResult):
+        return converted.model_copy(update={"isError": True})
+    if isinstance(converted, tuple) and len(converted) == 2:
+        unstructured, structured = converted
+    else:
+        unstructured, structured = converted, None
+    return mcp_types.CallToolResult(
+        content=list(unstructured), structuredContent=structured, isError=True
+    )
+
+
+class _FrameErrorFastMCP(FastMCP):
+    """FastMCP that reports a caught tool failure as ``isError`` on the wire.
+
+    ``@tool_errors`` catches every exception and returns an error payload, so
+    the lowlevel server saw an ordinary return and built
+    ``CallToolResult(isError=False)``. A client over stdio could not tell a
+    missing VM from a powered-on one without parsing prose.
+
+    Raising instead would set the flag — the lowlevel handler turns any
+    exception into an error result — but at the cost of the payload: it keeps
+    only ``str(exc)``, prefixed with "Error executing tool <name>: ", and drops
+    ``structuredContent`` entirely. Returning a ``CallToolResult`` is the other
+    shape ``mcp`` 1.28.1 accepts (``convert_result`` passes it through and the
+    lowlevel handler returns it verbatim), and it is the one that keeps the
+    authored message exactly as it was.
+
+    Both paths were established by reading the installed package and driving it,
+    not from memory (踩坑 #36).
+    """
+
+    async def call_tool(self, name: str, arguments: dict) -> Any:
+        sink: list[bool] = []
+        token = _call_failed.set(sink)
+        try:
+            converted = await super().call_tool(name, arguments)
+        finally:
+            _call_failed.reset(token)
+        if not sink:
+            return converted
+        return _error_frame(converted)
 
 
 def tool_errors(shape: str = "str") -> Callable:
@@ -138,7 +270,7 @@ def tool_errors(shape: str = "str") -> Callable:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
-                return func(*args, **kwargs)
+                result = func(*args, **kwargs)
             except Exception as e:  # noqa: BLE001 — sanitised below
                 msg = _safe_error(e, name)
                 # This wrapper swallows the exception, so @vmware_tool above it
@@ -146,29 +278,202 @@ def tool_errors(shape: str = "str") -> Callable:
                 # Declare the failure explicitly — unconditionally, because a
                 # single call is easier to keep true than one per shape.
                 report_tool_failure(msg)
+                # The same declaration, aimed at the protocol frame instead of
+                # the audit row. Both have to hear it: the audit trail is for
+                # the operator afterwards, ``isError`` is for the agent now.
+                _mark_call_failed()
                 if shape == "dict":
                     return {"error": msg, "hint": _DOCTOR_HINT}
                 if shape == "list":
                     return [{"error": msg, "hint": _DOCTOR_HINT}]
                 return f"Error: {msg} {_DOCTOR_HINT}"
+            # A tool can also fail by *returning* the family's error envelope
+            # without ever raising — the plan guards do exactly that. Policy
+            # already reads that envelope when it audits; the frame agrees.
+            if _is_error_envelope(result):
+                _mark_call_failed()
+            return result
 
         return wrapper
 
     return decorator
 
 
-mcp = FastMCP(
-    "vmware-aiops",
-    instructions=(
-        "VMware vCenter/ESXi VM lifecycle and deployment operations. "
-        "Manage VM power state, deploy VMs (OVA/template/clone/batch), "
-        "browse datastores, manage clusters, execute guest commands, "
-        "and plan multi-step operations. "
-        "For read-only monitoring (inventory/alarms/events/VM info), "
-        "use vmware-monitor. For storage/iSCSI/vSAN, use vmware-storage. "
-        "For Tanzu Kubernetes, use vmware-vks."
-    ),
+_BASE_INSTRUCTIONS = (
+    "VMware vCenter/ESXi VM lifecycle and deployment operations. "
+    "Manage VM power state, deploy VMs (OVA/template/clone/batch), "
+    "browse datastores, manage clusters, execute guest commands, "
+    "and plan multi-step operations. "
+    "For read-only monitoring (inventory/alarms/events/VM info), "
+    "use vmware-monitor. For storage/iSCSI/vSAN, use vmware-storage. "
+    "For Tanzu Kubernetes, use vmware-vks."
 )
+
+#: The half of this that is not the payload. Results carry the target they came
+#: from, but 24 tools answer in prose and cannot, and nothing told the agent
+#: which targets exist — so a call that omitted ``target`` reached whichever one
+#: the config lists first and said nothing about it (scenario test, 2026-09-16).
+_TARGET_RULE = (
+    " Choosing a target: every tool that reaches vSphere takes `target`. Choose "
+    "it from what the user asked. A vCenter, the whole environment, clusters or "
+    "several hosts: a vcenter target. One ESXi host the user names: the vcenter "
+    "target that manages it, because vCenter holds that host's VMs, tasks and "
+    "alarms; use the host's own esxi target only when the user asks about that "
+    "host directly or no vCenter manages it. If the request does not say which, "
+    "and targets of different types could answer differently, ask the user "
+    "before acting — doubly so before a write. Structured results name the "
+    "`target` that answered; say it in your answer, and for the tools that reply "
+    "in prose say which target you sent the call to."
+)
+
+
+def _target_instructions() -> str:
+    """Server instructions that name the configured targets and how to choose one.
+
+    Never raises: a missing or broken config must not stop the server from
+    starting — the tools report that error themselves, with the remedy. The
+    first configured target is the default because this skill has no
+    ``default_target`` key; saying so beats implying a choice nobody made.
+
+    A config it could not read is still said out loud, under the same heading.
+    Dropping the line was this function's own version of the bug it exists to
+    prevent: on a machine that has not run ``init`` yet — every customer, on day
+    one — the client saw no listing at all, and "this skill has no targets worth
+    naming" reads exactly like "this skill could not read them" (2026-09-20).
+    """
+    try:
+        targets = load_config().targets
+    except Exception as exc:  # noqa: BLE001 — instructions must not gate startup
+        # Only the exception's type: its text quotes the config path.
+        detail = f"could not be read ({type(exc).__name__}) — run `vmware-aiops doctor`"
+    else:
+        listed = "; ".join(
+            f"{t.name} ({t.type}, {t.host}{', default' if i == 0 else ''})"
+            for i, t in enumerate(targets)
+        )
+        detail = listed or (
+            "none yet — add one under `targets:` in ~/.vmware-aiops/config.yaml"
+        )
+    return f"{_BASE_INSTRUCTIONS} Configured targets: {detail}.{_TARGET_RULE}"
+
+
+mcp = _FrameErrorFastMCP("vmware-aiops", instructions=_target_instructions())
+
+
+# `Optional[dict]`, not `dict | None`: this module is scanned whole by the
+# family's PEP 604 gate (踩坑 #33 — FastMCP/Pydantic eval'ing a union in a
+# reflected signature crashes on older stacks). ruff wants the modern form and
+# is overruled here by the gate, which is the stronger authority.
+def _resolved_target(signature: inspect.Signature, args: tuple, kwargs: dict) -> Optional[dict]:  # noqa: UP045
+    """``{name, type}`` for the target this call reached, or None if unresolvable.
+
+    Resolved the same way ``ConnectionManager.connect`` resolves it — the named
+    target, else the default (this skill has no ``default_target`` key, so that
+    is ``targets[0]``).
+    """
+    try:
+        name = signature.bind_partial(*args, **kwargs).arguments.get("target")
+        cfg = _ensure_conn_mgr()._config
+        resolved = cfg.get_target(name) if name else cfg.default_target
+    except Exception:  # noqa: BLE001 — naming the target must never break the answer
+        return None
+    return {"name": resolved.name, "type": resolved.type}
+
+
+def _names_a_target(value: Any) -> bool:
+    """True when a result's ``target`` already holds a resolved ``{name, type}``."""
+    return isinstance(value, dict) and "name" in value and "type" in value
+
+
+def _stamp_target(result: Any, stamp: dict) -> Any:
+    """Return ``result`` with the target named, for the shapes that can carry it.
+
+    A dict is stamped at the top level; a list of dicts row by row (the
+    ``batch_*`` tools). A string is returned untouched: 24 write tools answer
+    with a sentence for a person, and prefixing a label there would change the
+    output contract of every write in this skill — the server instructions carry
+    the rule for those instead.
+
+    An existing ``target`` that is already ``{name, type}`` wins: a tool that
+    knows better than the argument (it looked at the connection) keeps its
+    answer. A raw string or ``None`` under that key is REPLACED — ``create_plan``
+    and ``apply_plan`` echo the argument back there, which made one key hold two
+    types across sibling tools and reported ``target: null`` for a call that did
+    reach a target (independent review, 2026-09-16).
+    """
+    if isinstance(result, dict):
+        if _names_a_target(result.get("target")):
+            return result
+        if "target" in result:
+            return {**result, "target": stamp}
+        return {"target": stamp, **result}
+    if isinstance(result, list) and result and all(isinstance(row, dict) for row in result):
+        return [_stamp_target(row, stamp) for row in result]
+    return result
+
+
+def _with_target(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Name the target in what a target-taking tool returns.
+
+    vmware-monitor grew this in 1.15.0 for a failure this server has too: a
+    result that does not say where it came from cannot be told apart, and a call
+    that omits ``target`` reaches whichever target the config happens to list
+    first. In a scenario test on 2026-09-16 the answer named the right vCenter
+    only because the model had chosen it itself — the payload said nothing.
+
+    Tools without a ``target`` parameter (those that span every target, or reach
+    no target at all) are returned unchanged. Error payloads that are dicts are
+    stamped too: which target was tried is most of the diagnosis.
+    """
+    signature = inspect.signature(fn)
+    if "target" not in signature.parameters:
+        return fn
+
+    if inspect.iscoroutinefunction(fn):
+        # None registered today. A sync wrapper around one would return the
+        # coroutine unstamped and make FastMCP treat the tool as synchronous,
+        # which is a failure nobody would attribute to this decorator.
+        @functools.wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            result = await fn(*args, **kwargs)
+            stamp = _resolved_target(signature, args, kwargs)
+            return result if stamp is None else _stamp_target(result, stamp)
+
+        async_wrapper._names_target = True  # type: ignore[attr-defined]
+        return async_wrapper
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        result = fn(*args, **kwargs)
+        stamp = _resolved_target(signature, args, kwargs)
+        return result if stamp is None else _stamp_target(result, stamp)
+
+    wrapper._names_target = True  # type: ignore[attr-defined]
+    return wrapper
+
+
+_register_tool = mcp.tool
+
+
+def _tool_naming_its_target(*args: Any, **kwargs: Any) -> Any:
+    """``mcp.tool`` that wraps every registered function with :func:`_with_target`.
+
+    Installed here rather than asked of each tool module: a per-tool opt-in is a
+    marker some tool always forgets (形态 #7), and this server registers 60 of
+    them across ten modules.
+    """
+    if args and callable(args[0]):
+        return _register_tool(**kwargs)(_with_target(args[0]))
+    decorator = _register_tool(*args, **kwargs)
+    return lambda fn: decorator(_with_target(fn))
+
+
+mcp.tool = _tool_naming_its_target  # type: ignore[method-assign]
+
+# FastMCP takes no version argument and leaves the lowlevel server's at
+# None, which makes `initialize` answer with the MCP SDK's version rather
+# than ours. Set it so a client can tell which release it is talking to.
+mcp._mcp_server.version = __version__
 
 # ---------------------------------------------------------------------------
 # Connection helper
@@ -181,9 +486,11 @@ def _ensure_conn_mgr() -> ConnectionManager:
     """Lazily build the shared ConnectionManager (does not connect anything)."""
     global _conn_mgr  # noqa: PLW0603
     if _conn_mgr is None:
-        config_path_str = os.environ.get("VMWARE_AIOPS_CONFIG")
-        config_path = Path(config_path_str) if config_path_str else None
-        config = load_config(config_path)
+        # No env-var read here: load_config resolves the path (explicit arg,
+        # then the environment, then the default). This copy was the reason the
+        # server and the CLI opened different files — load_config did not look
+        # at the variable at all, so only this path honoured it (形态 #6).
+        config = load_config()
         _conn_mgr = ConnectionManager(config)
     return _conn_mgr
 

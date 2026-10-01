@@ -1,3 +1,693 @@
+## v1.12.0 — the MCP instructions name the configured targets
+
+`initialize` hands the client this server's `instructions`, and for a skill whose every tool takes a target that
+text is the only place the client learns which targets exist. Until now this one shipped a static description that never named them. The model then
+called tools with no target, got whatever the default was, and answered confidently about the wrong system —
+measured in vmware-monitor on 2026-09-15, where a standalone ESXi host was the default, so "how many VMs does the
+vCenter have" was answered from that host.
+
+The instructions now carry, built from the loaded config on every server start:
+
+* **`Configured targets:`** — each configured target with its host, and which one answers when none is named.
+* **`Choosing a target:`** — how to pick one from what the user asked, and to ask rather than guess when the
+  request does not say and the targets would answer differently.
+
+**A config that cannot be read is said out loud, not dropped.** On a machine that has not run `init` yet — every
+new install — this server now reports `Configured targets: could not be read (FileNotFoundError) — run `vmware-aiops doctor`.` instead of falling silent. A client shown no listing cannot
+tell "this skill has no targets worth naming" from "this skill could not read them", and only the first reading
+produces a confident answer about a system nobody chose. Only the error's type is included; its text quotes the
+config path.
+
+No tool, parameter or result shape changed. A new family gate (`mcp_instructions_name_targets.py`, in
+`family_smoke`) probes every server under an empty HOME, so the check runs in the state a new user is in rather
+than the one the developer happens to be in.
+
+## v1.11.0 — destructive MCP tools preview by default
+
+HLD §7, second batch. `vm_delete` (v1.10.0) and the seven host-network/DRS tools already previewed; now every
+MCP write tool annotated `destructiveHint: true` does. 22 of the 43 write tools take `confirm: bool = False`; the
+other 21 still act on the first call: creates, clones and deploys (`vm_create`, `vm_clone`, `batch_*`, `deploy_*`,
+`cluster_create`), `vm_power_on`, `vm_reconfigure`, `vm_create_snapshot`, `cluster_add_host`, `cluster_configure`,
+`convert_vm_to_template`, `attach_iso_to_vm`, `vm_guest_download`, `vm_cancel_ttl`, `vm_create_plan`, and the two
+alarm tools. Six of the 22 are not annotated destructive but take `confirm` anyway (`vm_migrate` and the five
+network/DRS authoring tools).
+
+### Breaking changes (MCP callers)
+
+* **14 more tools preview by default**: `vm_power_off`, `vm_migrate`, `vm_revert_snapshot`, `vm_delete_snapshot`,
+  `vm_clean_slate`, `vm_set_ttl`, `vm_guest_exec`, `vm_guest_exec_output`, `vm_guest_upload`,
+  `vm_guest_provision`, `cluster_delete`, `cluster_remove_host`, `vm_apply_plan`, `vm_rollback_plan`. A bare call
+  measures with reads only and returns `{"action": "preview", "blast_radius": {...}}` without changing anything.
+  They used to act on the first call. A vmware-pilot step calling one of them now previews unless it passes
+  `confirm=True`.
+* **Return type changed from string to dict**: `vm_power_off`, `vm_migrate`, `vm_revert_snapshot`,
+  `vm_delete_snapshot`, `cluster_delete`, `cluster_remove_host`, `vm_set_ttl`, `vm_clean_slate`, `vm_guest_upload`.
+* **`confirm=True` re-measures and refuses** — a teaching error, audited as a failure — when the measurement found a
+  blocker or could not read a field it needs:
+  * guest tools: VM not powered on; VMware Tools not running; a local upload source missing or unreadable; a
+    malformed `vm_guest_provision` step; a `service` step on a Windows guest (it runs `systemctl`).
+  * VM tools: graceful shutdown without running VMware Tools, or of a suspended VM (`force=True` is a hard
+    power-off — preview it); a migration target host that is missing, disconnected, in maintenance mode, outside a
+    cluster (no resource pool) or cannot reach the VM's storage; a `to_datastore` that is not found; a VM with no
+    current host; a snapshot that is not found or whose name is duplicated.
+  * cluster tools: hosts or VMs still in the cluster; a host that is not in maintenance mode or still runs
+    powered-on VMs.
+  * `vm_clean_slate`: the baseline snapshot missing or ambiguous — refused before anything happens, so a failed
+    Clean Slate no longer powers the VM off first and then fails.
+  * plans: `target` not matching the plan's; a `delete_vm` step without `acknowledge_blast_radius`, refused before
+    step 0 rather than half-applied.
+  Only `vm_delete` additionally requires `acknowledge_blast_radius`.
+
+### Other changes
+
+* `vm_apply_plan` is annotated `destructiveHint: true` (a plan can delete VMs).
+* The gated tools file undo tokens only when the call actually changed something — never for a preview, a no-op,
+  or a shutdown that did not finish. Ungated tools are unchanged (`vm_power_on` still files one on every success).
+* Requires `vmware-policy>=1.17.0`, which audits a `confirm=False` preview as `dry_run` and redacts long audit
+  text in linear time.
+* `vm_set_ttl` now connects to vCenter to measure the VM it will delete and refuses when it cannot read it; it
+  used to only write the local TTL file.
+* Blast radius and blockers live in `vmware_aiops/ops/{vm_gate,guest_gate,cluster_gate,plan_gate,vm_delete_gate}.py`
+  and `ops/ttl.py`.
+* The CLI keeps its double confirmation and `--dry-run`. It shares the ops layer, so it now also refuses a
+  duplicated snapshot name in revert/delete, `clean-slate` refuses a missing baseline before powering the VM off,
+  and the TTL daemon deletes only a VM whose recorded instance UUID still matches.
+* **Review fixes (2026-09-19)**:
+  * A plan created without `target` is refused on a named target (the default was treated as a wildcard).
+  * `vm_apply_plan`'s preview shows every step's full parameters, secrets redacted. Each destructive step is
+    measured by its own tool's gate and refuses the plan on that tool's blockers; a step on something an earlier
+    step creates or changes is shown `check: "deferred"`, and every destructive step is re-checked immediately
+    before it runs — a failed check stops the plan.
+  * Guest commands, arguments and paths longer than the preview shows are refused (they used to be shown cut and
+    run whole); previews carry `command_length` / `arguments_length` and `truncated`.
+  * Refusal messages lead with the first blocker and its remedy, count the rest, and stay within 480 characters.
+  * `vm_clean_slate` reports an error when the revert did not happen. A snapshot name now matches its raw or
+    displayed (sanitized) form in the gate and the executors alike, and a name matching two snapshots is refused
+    by `revert_to_snapshot` / `delete_snapshot` (CLI and plans too) instead of taking the first.
+  * TTL entries record `instance_uuid`; the daemon deletes only a VM that still has it (older entries without
+    one behave as before). `vm_set_ttl` keeps every `vm_delete` blocker except the power state.
+  * Plan rollback deletes a created VM only if its instance UUID matches the one recorded when the step ran.
+  * `vm_create_plan` / `vm_apply_plan` responses redact step passwords.
+* **Narrow-review fixes (2026-09-19)** — a plan is never a way around a tool's gate:
+  * **Breaking for plans**: a plan containing `iscsi_enable`, `iscsi_add_target`, `iscsi_remove_target` or
+    `storage_rescan` is refused at preview, apply and rollback (those tools are gated in vmware-storage, which
+    AIops cannot measure; `iscsi_remove_target` used to run "not measured"). Use `storage_iscsi_*` /
+    `storage_rescan` in vmware-storage. The actions stay loadable so existing plan files still open.
+  * A plan `migrate` step is measured as `vm_migrate` measures it and re-checked just before it runs.
+  * Every executor action is classified (measured, refused, or non-destructive with a reason); the step check
+    fails closed on anything else. A test walks the dispatch table.
+  * `vm_rollback_plan` measures each destructive rollback step in its preview (`check`, `measured`, blockers
+    prefixed `Step N (rollback action):`) and again just before it runs. A refused check stops the rollback:
+    the step is reported `refused`, nothing after it runs, the response carries `stopped_at_step` and a hint,
+    and the plan stays `failed` so rollback can be run again.
+  * Step-parameter redaction matches key tokens (`pwd`, `auth`, `db_pwd`, `authToken` now redacted;
+    `bypass`, `passthrough` no longer hidden).
+  * Network and DRS previews carry `blockers` / `unmeasured`; `remove_host_vmk`, `set_vmk_service` and
+    `delete_drs_rule` report their refusals there instead of raising on a preview (they still raise on confirm).
+* **Final-review fixes (2026-09-19)** — plan rollback can always undo what the plan itself made:
+  * The rollback of a plan `power_on` step is a **hard** power-off (`force: true`). A graceful one needs VMware
+    Tools, which a VM the plan just created never runs, so a `create_vm` → `power_on` plan used to stop its
+    rollback before the `delete_vm` that removes the VM.
+  * A plan step (forward or rollback) whose measurement says `noop` — a `power_off` of a VM already off, a
+    `migrate` to the host it is on — passes its check, as the tool itself returns `noop`; the preview shows
+    it `check: "measured"` with a `check_note`.
+  * A created VM whose instance UUID was not recorded (or whose name now belongs to a different VM) stops the
+    rollback at that step as `refused`, with `stopped_at_step`; the plan stays `failed`, as the preview said.
+    It used to be reported `failed`, the rollback continued and the plan ended `rolled_back`.
+
+## v1.10.0 — `vm_delete` previews what it destroys, and a duplicated VM name is refused
+
+The family security HLD §7 was revised on 2026-09-16: every MCP tool that destroys something not restorable
+moves to one argument, `confirm`, whose default is a no-write preview. Decision D-2 (2026-07-21), which cut a
+confirmation handshake as a speed-bump, is superseded. A confirmation is still not authorization — the vCenter
+account is — but a preview is what stops an agent acting on a guess. `vm_delete` is the first tool on the full
+design; the other destructive tools follow in later releases.
+
+* **`vm_delete` now previews by default** (breaking for MCP callers). A bare call returns `blast_radius` — VM,
+  instance UUID, host, power state, disks, total size, snapshot count, blockers — and deletes nothing. It used to
+  delete on the first call.
+  A vmware-pilot workflow step that calls `vm_delete` now previews rather than deletes; no shipped Pilot
+  template or rollback uses it.
+* **Deleting takes `confirm=True` plus `acknowledge_blast_radius`**, set to the preview's `acknowledge_with`
+  (instance UUID, disk count, snapshot count — keys that do not drift on their own). The VM is re-measured first
+  and the call refused if any of them changed: another snapshot taken, or a different VM recreated under the same
+  name. The object destroyed is the one measured; there is no second lookup by name.
+* **Refused outright**: a powered-on or suspended VM (the docstring always said "must be powered off", while the code powered
+  it off for you — power it off with `vm_power_off` first); a VM whose identity, disks or snapshots cannot be read.
+* **`vm_apply_plan` is not a way around it.** A plan's `delete_vm` step goes through the same gate: it needs
+  `acknowledge_blast_radius` from a `vm_delete` preview and is refused without it. Rolling back a failed plan
+  still deletes the VMs that plan itself created.
+* The TTL daemon drops an entry whose VM name has become ambiguous, without deleting anything, instead of retrying
+  it every cycle.
+* A template and a VM with the same name now count as a duplicate too, so `deploy_from_template` / `convert_to_vm`
+  refuse until one is renamed.
+* **A name that matches more than one VM is refused** everywhere this skill looks a VM up by name (`AmbiguousVMError`),
+  instead of acting on whichever the property collector listed first. vSphere allows duplicate names across folders,
+  and every caller of that lookup goes on to change the VM it gets back. `vm_create_plan` reports it as a step error.
+  Hosts, datastores and clusters still resolve to the first match (follow-up).
+* **The CLI `vm delete` prints the same blast radius** before its two prompts. It still powers a running VM off
+  before deleting it, and the TTL daemon's deletion is unchanged.
+* **Guest tools' `risk_level` raised** on both surfaces: `vm_guest_exec`, `vm_guest_exec_output`,
+  `vm_guest_provision` medium → critical; `vm_guest_upload`, `vm_guest_download` medium → high. This changes which
+  `deny` rules match them and what the audit row records, not whether they run.
+* Documentation that described the old contract — "no confirmation over MCP, by design", "a preview that one
+  `confirm=True` call skips", "a preview, not an approval" — is rewritten in SKILL.md, the references and both READMEs.
+
+## v1.9.7 — structured results say which target answered, and the server says which targets exist
+
+Found in a scenario test on 2026-09-16: asked for a VM's investigation bundle *and* to say where the data came
+from, the answer named `home-vcenter` — but the tool result carried no target at all. The model had read the name
+off the argument it chose itself. A call that omits `target` reaches whichever target the config lists first, and
+its result was indistinguishable from one read anywhere else; vmware-monitor fixed the same thing in 1.15.0.
+
+* Results from a tool that takes `target` now carry `target: {name, type}` — added by the shared tool
+  registration rather than declared per tool, because a per-tool marker is one some tool always forgets. Dict
+  results carry it at the top level; `batch_*` results carry it on each row. Error payloads that are dicts carry
+  it too: which target was tried is most of the diagnosis.
+* **The 24 tools that answer in prose do not carry it**, and are not rewritten to: their return value is a
+  sentence for a person (`"Powered on VM 'web-01'."`), and prefixing a label would change the output contract of
+  every write in this skill. For those, the rule now lives in the server instructions below.
+* **The server instructions list the configured targets** (name, type, host, which is the default), tell the
+  agent to choose one from the question rather than by accident, to ask when the request is ambiguous and the
+  targets would answer differently, and to say in its answer which target replied. Half of vmware-monitor 1.15.0
+  was the payload and half was this; only the payload half shipped in the first draft of this release
+  (independent review, same day).
+* **`create_plan` / `apply_plan` already returned a top-level `target`** — the raw argument, `null` when the call
+  omitted it. That is now the resolved `{name, type}` like everywhere else, so the key holds one type across
+  sibling tools; the plan file on disk is unchanged.
+* **Tool schemas are unchanged.** The label is added to results, never to the call signature: a test pins every
+  registered tool's parameters against its own function signature, and the 60 tools' schemas, output schemas and
+  annotations were diffed against the previous release.
+* A result that already names its target is left alone, as are non-dict results and tools with no `target`
+  parameter. A config too broken to resolve a name costs the label, not the answer.
+
+## v1.9.6 — a stopped MCP server exits within five seconds, even if its logout hangs
+
+> Never published on its own — this fix ships in 1.9.7 (there is no `vmware-aiops==1.9.6` on PyPI).
+
+A correction to 1.9.5, from an independent review on 2026-09-15. 1.9.5 made the server log out when Claude Code
+stops it: the first stop signal ignored further stop signals and ran the `atexit` logout. The logout had no time
+limit. pyVmomi connects with `httpConnectionTimeout=None`, so a logout to a vCenter that stopped answering, or
+one waiting on the SOAP connection lock a tool call held when the signal arrived, kept the server running and
+deaf to every further stop signal until something sent SIGKILL. Before 1.9.5, SIGTERM at least ended it.
+
+* The logout now runs on a worker thread and gets 5 seconds. If it has not finished, the server writes one line
+  to stderr without blocking (a full pipe cannot hold the exit) and exits with 128 + signal anyway; vCenter or
+  ESXi ends that session when it idles out.
+* New test: the real server with stdin held open, an `atexit` callback that blocks for ten minutes, then SIGINT
+  and SIGTERM. The server must exit within 15 seconds and say it gave up on the logout. It failed on 1.9.5.
+* Lab, on this code: a conversation that called this server's `list_vcenter_alarms` and `vm_list_snapshots`
+  against vCenter 8.0.3 left no session behind; afterwards both session lists held only the counting call's own
+  session.
+
+## v1.9.5 — stopping the MCP server logs out its vCenter session
+
+Measured in real Claude Code conversations against the lab vCenter 8.0.3 / ESXi 8.0.3 on 2026-09-15:
+Claude Code stops a stdio MCP server with SIGINT and then SIGTERM about a millisecond later, with stdin still
+open. Python's default SIGTERM ended the server before `atexit`, so the vSphere logout the connection layer
+registers never ran and every conversation left its session open — 13 root sessions on one ESXi host and 11
+Administrator sessions on vCenter in about eleven minutes.
+
+**The server now logs out when it is stopped.** The first stop signal ignores the rest, runs the `atexit`
+callbacks (the `Disconnect`), and exits with status 128 + signal. Raising `SystemExit` from the handler was tried
+first and is not enough: the interpreter then waits on the thread reading stdin and hangs without logging out.
+The new test starts the real server with stdin held open, completes the MCP handshake and sends the same two
+signals; it failed on the `SystemExit` version. After the change, conversations against the lab left no session
+behind.
+
+## v1.9.4 — the scanner daemon's calls are audited, the TTL delete first
+
+A family survey on 2026-09-15 found that the scanner daemon deleted VMs whose TTL had expired with no row in
+either audit trail, on success or failure, and without the `guard()` that stops the same deletion over MCP or the
+CLI. Its scan cycles against vCenter and its webhook sends left no row either, and `daemon start` was marked
+`@cli_local`, so the family's CLI gate could not see it.
+
+* **TTL delete.** Before deleting, the daemon passes `guard()` as `vm_delete` (risk `critical`), so a deny rule on
+  `vm_delete` now stops an expiry too; the entry is kept for when the rule is lifted. Each attempt writes one
+  `vm_delete` row with `trigger: ttl_expiry`: `ok` when deleted, `denied` when refused, `error` when the delete
+  failed (entry kept for retry) or the VM was already gone (stale entry dropped). A policy check that fails is an
+  `error` and skips the delete.
+* **Scan cycle.** One `daemon_scan` row per cycle, `error` when a connection or a pass failed, with the failed
+  passes in the result.
+* **Webhook.** One `webhook_send` row per send, `error` when it was not delivered. The URL is not recorded — it can
+  carry a token.
+* **No row flood.** The TTL check runs every minute, so a refused or failing entry records its outcome once and
+  again only when it changes (a different status, refusing rule or error class); every successful delete is
+  recorded. Retries still happen every minute. Without this, an entry refused by a deny rule wrote 1,440 rows a day.
+* **Interrupts are `interrupted`.** Ctrl+C during a scan or a webhook send (the first scan runs before the signal
+  handlers are installed) records `interrupted` instead of `ok`.
+* `daemon start` is `@audited` (`daemon_start`). Its row is written when the daemon stops.
+
+Tests: `tests/eval/regression/test_daemon_calls_are_audited.py` (12 tests, each red before its fix; suite 594 passed). Works with
+`vmware-policy` 1.15.0: the daemon passes each status explicitly.
+
+## v1.9.3 — CLI reads are audited
+
+No CLI read wrote `~/.vmware/audit.db` — only MCP calls and CLI writes (`@guarded`) did. A live
+`vmware-aria resource list` left the audit row count unchanged while the same read over MCP added a row.
+
+Every CLI command that reaches vCenter now passes the same `guard()` as its MCP twin and writes one
+audit row under that tool's name (17 commands, `@audited`). Commands that reach nothing remote say so, with a reason (8, `@cli_local`).
+A family gate now fails any CLI command that declares none of `@guarded` / `@audited` / `@cli_local`.
+
+**Behaviour change:** a deny rule in `~/.vmware/rules.yaml` whose `operations` name a read tool now stops
+that CLI command too, as it already stopped the MCP call.
+
+Docs that said only MCP calls (or only CLI writes) reach `audit.db` are corrected.
+
+Requires `vmware-policy>=1.15.0`.
+
+## v1.9.2 — the health summary names over-committed datastores
+
+`cluster_health_summary` and `vmware-aiops summary` delegate to vmware-monitor, and vmware-monitor 1.13.0 adds
+datastores thin-provisioned past 100% of capacity to `top_issues`, moving the owning row's status with it. This release
+requires `vmware-monitor>=1.13.0` so that behaviour is the one installed, and the tool description now says datastores
+are included — it listed hosts, VM power, CPU/memory and alarms only.
+
+The SKILL.md sentence about where the service account's password is kept is reworded. ClawHub's static scanner read
+"Its password: `~/.vmware-aiops/.env`" as a hardcoded secret (`suspicious.exposed_secret_literal`, the only static
+finding behind the bundle's `suspicious` rating). No secret was ever in the file; the guidance is unchanged.
+
+## v1.9.1 — the event sweep and scanner read and rank real events
+
+**The event sweep and the daemon's event scan rank real vCenter events.** AIops compared its bare-name
+event sets (`HostConnectionLostEvent`) with `type(event).__name__`, which on a real pyVmomi event is
+`vim.event.HostConnectionLostEvent`; nothing matched, so every event ranked "info" and the event scan,
+which keeps critical and warning only, found nothing. Found on a lab vCenter 8.0.3; the tests had used
+stand-ins named with the bare name.
+
+**The event sweep and the scanner read the newest events.** `ops/health.get_recent_events` and
+`scanner/log_scanner.scan_logs` called `QueryEvents`, which on vCenter returns only the oldest 1000
+events in the window (measured on vCenter 8.0.3), so a busy window hid its latest hours. Both now
+use vmware-monitor's shared read, which walks an event history collector newest first. **Release
+note for packaging:** this needs the vmware-monitor release that ships `read_events` — raise the
+`vmware-monitor` lower bound in `pyproject.toml` to that version when both are published.
+
+## v1.9.0 — guest operations name their account; CLI writes answer to the same rules
+
+**BREAKING: guest operations require `username`.** `vm_guest_exec`, `vm_guest_exec_output`,
+`vm_guest_upload`, `vm_guest_download` (MCP) and `vm guest-exec/-upload/-download` (CLI) defaulted
+to `root`, so an omitted argument ran as root without anyone choosing root. A call that relied on
+the default now fails and says why.
+
+The docs now state the security model exactly: MCP write tools act on the first call, and the
+boundary is the RBAC of the account the server connects with; the CLI's double confirmation and
+`--dry-run` do not apply to MCP calls. Several claims that overstated a gate were corrected.
+
+Requires vmware-monitor >= 1.11.3, which carries the cluster-count fix this skill delegates to:
+`cluster_health_summary` / `vmware-aiops summary` no longer count the standalone-host row as a
+cluster. (AIops has no `host_log_scan` tool; the daemon's host-log pass runs AIops's own copy of
+the scanner, fixed in this release as described next.)
+
+**The daemon's host-log pass never read a host log.** AIops keeps its own copy of the host-log
+scanner for the daemon, and the copy called `BrowseDiagnosticLog` on the host's
+`configManager.diagnosticSystem` — a type that has no such method. Every read raised, the error was
+swallowed, and every cycle reported the host logs clean. It now reads through
+`content.diagnosticManager` (naming the host through vCenter, not on a standalone ESXi). Run live
+read-only: 228 findings on a vCenter and 227 on a standalone ESXi where the old code found none,
+with hostd, vmkernel and vpxa all readable on both. A log that cannot be read is written to the
+scan log as an `info` issue (`host_log:unavailable`, with the reason — e.g. the missing
+`Global.Diagnostics` privilege) and as a WARNING naming the host, log and fault in the daemon log,
+instead of disappearing. Only vSphere faults and connection errors count as "could not be read": a
+bug in the scanner now fails the pass loudly instead of being filed as one more unreadable log,
+which is how the original bug stayed hidden.
+
+**The daemon reports each host-log line once, and pages only critical ones.** Reading for real,
+every 15-minute cycle re-read the last 500 lines of each log and reported the same lines again —
+of those 228 lines, 135 were a single routine hostd line — and every warning went to the webhook.
+The daemon now remembers, in process memory, the last line it read of each log (per target, host
+and log) and reads only what came after. After a restart, the first cycle reads the last 500
+lines again. A log whose line count went down has rotated: the daemon reads its last 500 lines and
+writes an `info` issue (`host_log:skipped`) saying lines written between its previous read and the
+rotation were not scanned. More than 500 new lines in one interval: the newest 500 are read and a
+`host_log:skipped` issue says how many were skipped. Host-log **warnings are written to the scan
+log only; host-log criticals** (lines containing critical/panic/corrupt) **still go to the
+webhook**, as do alarm and event warnings, unchanged; `info` issues never do. If you watched
+host-log warnings in the webhook, read them in the scan log now. The cycle summary counts findings,
+unreadable host logs and failed passes separately, and a cycle in which any pass raised ends with a
+WARNING "Scan INCOMPLETE" naming the pass — never "all clear".
+
+*With a Read-Only account* (vCenter's Read-Only role lacks `Global.Diagnostics`), no host log can
+be read: each cycle writes one `host_log:unavailable` issue per host and log to the scan log and a
+WARNING per log to the daemon log, pages nothing for it, and the summary shows the unreadable count
+instead of "all clear".
+
+**CLI writes are authorised and audited under their MCP tool names.** A deny rule in
+`~/.vmware/rules.yaml` names an operation, and 23 guarded CLI commands were checked under their
+Python function names instead — so a rule against `vm_guest_exec` stopped the agent and let
+`vm guest-exec` do the same thing from a shell. One rule now scopes both surfaces:
+
+| CLI command | Operation name (was) | risk |
+|---|---|---|
+| `alarm acknowledge` | `acknowledge_vcenter_alarm` (`alarm_acknowledge`) | medium |
+| `alarm reset` | `reset_vcenter_alarm` (`alarm_reset`) | medium |
+| `cluster create` | `cluster_create` (`cluster_create_cmd`) | medium |
+| `cluster delete` | `cluster_delete` (`cluster_delete_cmd`) | high |
+| `cluster add-host` | `cluster_add_host` (`cluster_add_host_cmd`) | medium |
+| `cluster remove-host` | `cluster_remove_host` (`cluster_remove_host_cmd`) | medium |
+| `cluster configure` | `cluster_configure` (`cluster_configure_cmd`) | medium |
+| `cluster drs-rule-set` | `set_drs_rule_enabled` (`cluster_drs_rule_set_cmd`) | medium |
+| `cluster drs-rule-create` | `create_drs_rule` (`cluster_drs_rule_create_cmd`) | medium |
+| `cluster drs-rule-delete` | `delete_drs_rule` (`cluster_drs_rule_delete_cmd`) | high |
+| `deploy ova` | `deploy_vm_from_ova` (`deploy_ova_cmd`) | medium |
+| `deploy template` | `deploy_vm_from_template` (`deploy_template_cmd`) | medium |
+| `deploy linked-clone` | `deploy_linked_clone` (`deploy_linked_clone_cmd`) | medium |
+| `deploy batch` | `batch_deploy_from_spec` (`deploy_batch_cmd`) | high |
+| `deploy batch-clone` | `batch_clone_vms` (`deploy_batch_clone_cmd`) | medium |
+| `deploy mark-template` | `convert_vm_to_template` (`deploy_mark_template`) | medium |
+| `deploy iso` | `attach_iso_to_vm` (`deploy_iso_cmd`) | medium |
+| `vm snapshot-create` | `vm_create_snapshot` (`vm_snapshot_create`) | medium |
+| `vm snapshot-revert` | `vm_revert_snapshot` (`vm_snapshot_revert`) | high |
+| `vm snapshot-delete` | `vm_delete_snapshot` (`vm_snapshot_delete`) | high |
+| `vm guest-exec` | `vm_guest_exec` (`vm_guest_exec_cmd`) | medium |
+| `vm guest-upload` | `vm_guest_upload` (`vm_guest_upload_cmd`) | medium |
+| `vm guest-download` | `vm_guest_download` (`vm_guest_download_cmd`) | medium |
+
+The other ten guarded CLI writes (`vm power-on`, `vm delete`, `vm clone`, …) already carried their
+MCP tool's name and are unchanged. Risk levels were already equal to the MCP tools' and are
+unchanged. **A rule you wrote against an old name no longer matches** — a deny rule naming
+`vm_guest_exec_cmd` or `deploy_ova_cmd` now stops nothing; rewrite it to the MCP tool name in the
+middle column. **Audit rows for these commands carry the new names from this release on**; rows
+written before it keep the old ones, so a query over `~/.vmware/audit.db` that spans the upgrade
+needs both. A regression test derives each command's MCP twin from the ops function both call and
+fails if the names or risks drift.
+
+**Environment-scoped deny rules now apply to CLI writes.** The skill's environment resolver was
+registered only when the MCP server was imported, which the CLI never does — so a
+`freeze-production-writes` rule stopped the MCP tool and not the CLI command doing the same
+thing. It now lives in `policy_environment.py`, imported by both surfaces. (With vmware-policy
+1.13.1 the CLI's `--config` file is the one whose labels are judged.)
+
+**OpenClaw could not show this skill to the model.** `metadata.openclaw.requires` listed
+config *file paths* under `requires.config`, which OpenClaw reads as `openclaw.json` keys that
+must be truthy — so the skill was "needs setup / not visible to the model" whatever was on disk
+(verified on OpenClaw 2026.6.35). `requires.env` named an optional override and `requires.bins`
+demanded a CLI that a plugin install (uvx) never has. `requires` is now `anyBins: [<cli>, "uvx"]`;
+the variables are still declared, under `optional.env`.
+
+**Install commands in the skill pin this release.** ClawHub reviews SKILL.md and references/,
+not the package they install, so an unpinned `uv tool install` vouched for code nobody reviewed.
+Every install command for this package in the skill now names this version.
+
+**A config path written as `~/…` now resolves.** Every MCP example config and setup-guide snippet
+sets `VMWARE_AIOPS_CONFIG` to `~/.vmware-aiops/config.yaml`, but MCP clients pass env values verbatim and the
+path was used unexpanded, so copying the snippet gave "Config file not found" for a file that was
+there. `~` is now expanded in the variable and in `--config`.
+
+## v1.8.22 — a dropped connection no longer keeps itself alive
+
+Every `connect()` registered an `atexit` cleanup that closes over the
+ServiceInstance, and `atexit` held that closure — and so the SI, its stub and
+its socket — until the process exited. Nothing ever unregistered it. A
+long-running MCP server that reconnects after each session expiry therefore
+pinned one dead connection per reconnect, and at exit would run a `Disconnect`
+against every session it had ever opened.
+
+Measured before the fix: 20 evict-and-reconnect cycles left all 20 evicted
+ServiceInstance objects reachable. The `id(si)` side stores were correctly down
+to one entry throughout — the side-store discipline was never the leak, the
+registration was.
+
+`_release_si()` now takes the handler back off at both points that drop a
+connection: the eviction inside `connect()` and `disconnect()`. Five repos had
+the identical shape, so `family_smoke` gained a gate for it (154 → 155).
+
+Not `WeakKeyDictionary`, which looks like the obvious fix and is a regression:
+pyVmomi's `ManagedObject.__eq__` compares moId, class and serverGuid, and every
+ServiceInstance carries moId `'ServiceInstance'` with serverGuid `None`. Two
+vCenters collapse into one entry — connecting to the second silently hands the
+first one's `verify_ssl` to both. Keying by `id()` is right precisely because
+it is identity.
+
+## v1.8.21 — snapshot-delete gains the flag its docs already promised
+
+The reference documented `vm snapshot-delete <name> --name <snap>
+[--remove-children]`. The option did not exist, so following the documentation
+got "No such option" — while the capability was real all along: the ops layer
+takes `remove_children` and the MCP tool exposes it. Only the CLI never passed
+it through. It reaches the `--dry-run` preview too, so the difference is visible
+before the delete rather than after.
+
+## v1.8.20 — `vm_cancel_ttl` is not destructive — it prevents a deletion
+
+The annotation was copied from `vm_set_ttl` directly above it, where
+`destructiveHint=True` is right and carefully argued: set_ttl schedules an
+unattended deletion that a daemon carries out later. cancel_ttl calls that off.
+
+No behaviour changes; the CLI already asked nothing, correctly. What changes is
+that a client reading the annotations is no longer told that preventing a
+deletion is a destructive act.
+
+## v1.8.19 — one answer per .env, on every platform
+
+`.env` permissions are decided by `vmware_policy.fsperms` instead of POSIX mode
+bits. On Windows a single command printed both a red "has permissions 0o666
+(should be 600). Run: chmod 600" from this hot path — where `chmod` does nothing
+— and a green "this platform does not express file permissions as POSIX mode
+bits ... run: icacls" from `doctor`, about the same file in the same run. `doctor`
+had been moved to the three-state check and the path that runs on *every* command
+had not. An unmeasurable platform is now silent here rather than loudly wrong.
+
+The `vmware-monitor` floor moves to 1.10.0: the investigation bundles this
+skill re-exports had a cluster check that never matched on real hardware, and
+the fix ships in Monitor.
+
+## v1.8.18 — the test suite runs on a non-UTF-8 machine, and the guardrail tests with it
+
+
+**The suite now runs on a cp936 machine.** Round 3 of the VCF 9 field testing ran
+on Windows Server 2025 with locale cp936. Across the family four repos' suites --
+1687 tests -- never executed at all, dying at collection reading our own UTF-8
+sources, and 101 more failed the same way. Most of those were the tests that
+verify the destructive-operation guardrails: the guardrails were fine, the tests
+that check them could not open a file. On the UTF-8 CI every one of them was
+green. A security test that cannot run is not a security test.
+
+Every text read and write here names its encoding now, `tests/` included -- the
+previous round fixed only the package, which is why this came back. A gate in
+`family_smoke` scans both trees by AST, and the whole family's suites were re-run
+under an ASCII locale to confirm: 15 of 15 green, from 1 of 15.
+
+**`--help` no longer dies on a console that cannot encode it.** On any console
+whose encoding cannot carry the characters in our own help text, `--help` exited
+with a `UnicodeEncodeError` traceback -- unavailable exactly on the machines
+where it is most needed. Four repos were affected; the handler is now relaxed in
+all fifteen so a glyph degrades instead of killing the command.
+
+**Its environment resolver no longer answers for other skills.**
+`set_environment_resolver` wrote one process-global slot and twelve servers
+registered into it at import time, so the last one won for all of them --
+measured taking a `freeze-production-writes` rule from DENY to ALLOW on another
+skill's production target. Registration is keyed by skill now (requires
+vmware-policy 1.12.0).
+
+**The `.env` permission check stopped being permanently red on Windows.** It was
+POSIX-only, and `chmod 600` there exits 0 without changing any bits -- so
+`doctor` printed a failure on every run with a remedy that could not clear it.
+Three states now, via `vmware_policy.fsperms`: only a demonstrated exposure
+fails, and "this platform cannot answer" says so and offers `icacls`.
+
+**Unknown tool arguments are refused instead of dropped.** The schema declared
+`additionalProperties: false` and the runtime accepted them anyway, so a filter
+argument whose name a model guessed wrong returned the *unfiltered* result with
+nothing to indicate anything had been discarded. Fixed in vmware-policy 1.12.0
+and in force here.
+
+Requires vmware-policy 1.12.0.
+
+## v1.8.17 — closed-value parameters now reach the MCP schema
+
+`drs_behavior` (cluster_create, cluster_configure), `rule_type` (create_drs_rule)
+and `binding` (create_dvs_portgroup) were typed `str`, with their valid values
+named only in prose. An MCP client sees the schema, not the prose, so a model had
+to guess the spelling. They are now `Literal[...]`, and a new regression test
+pins each enum against the set the ops layer actually validates against
+(`_VALID_DRS_BEHAVIORS`, `_CREATABLE_RULE_TYPES`, `_VALID_BINDINGS`), so the two
+cannot drift apart.
+
+## v1.8.16 — three MCP annotations that were lying, and errors invisible on the wire
+
+`vm_guest_download` claimed `readOnlyHint: true` while overwriting an arbitrary
+caller-supplied path — and that hint is what a client consults before asking for
+confirmation, so the annotation was a safety control that silently did not
+apply. It refuses an occupied destination now unless `overwrite=true`, refuses
+directories, and refuses symlinks even with it. `vm_set_ttl` claimed
+`destructive: false` while scheduling an unattended auto-delete.
+`vm_create_snapshot` claimed `idempotent: true` while calling
+`CreateSnapshot_Task` unconditionally — the field a client reads before
+*retrying*, and this family retries transient failures once.
+
+Exceptions were caught inside tools and returned as ordinary values, so
+`isError` was always false: over stdio a client could not tell "the target does
+not exist" from "succeeded". The frame is marked now, with the authored teaching
+message intact.
+
+The documentation claimed double confirmation with no bypass on a surface that
+has neither. The git history and the design record show that removal was a
+decision, not an accident — `vm_delete` never had a confirmation parameter — so
+the documents were corrected rather than the code, and each now names which
+surface it is describing.
+
+**The `vmware-policy` floor moves to >=1.11.0.** Policy 1.11.0 stops the engine
+failing open: on a host whose locale is not UTF-8, reading `rules.yaml` raised a
+decode error that was swallowed, and a `freeze-production-writes` rule came back
+ALLOW. No new API is used here, so the floor could have stayed — it is raised
+because leaving it low means a user resolving 1.10.0 keeps the permissive engine
+and the fix never reaches them. One behaviour travels with it: on a host whose
+rules file cannot be read, operations move from all-allowed to all-denied.
+`VMWARE_POLICY_DISABLED=1` is checked above the rules, so the escape hatch does
+not itself depend on them loading.
+
+Also in this release: the suite no longer appends to the operator's real
+`~/.vmware/audit.db`. It held over 30,000 rows dominated by tool names nobody
+had invoked, including 1,400 entries for a destructive operation that never
+happened — an audit trail carrying test fiction cannot answer the question it is
+kept for.
+
+## v1.8.15 — the schema an agent reads now carries the descriptions
+
+Parameter descriptions reach the JSON schema for the first time. An MCP client
+sees the schema, not the docstring, and this repo's coverage of `description`
+and `additionalProperties` was 0% — while nearly every parameter was already
+described in an `Args:` block no client ever receives.
+
+Measured on a real VCF 9.1 estate, the gap produced a silent failure with no
+error at any stage: a parameter name guessed wrong is discarded and the tool
+returns the full unfiltered result; a value guessed wrong (`power_state=
+"running"`) returns 0 rows where there were 11.
+
+vmware-policy 1.10.0's `describe_tool_parameters` copies what is already
+written, so the docstring is now load-bearing and the two cannot drift apart. It
+removes the `Args:` block from the description once copied — both travel in
+every `tools/list` response, so leaving it bills the same sentences twice
+against the manifest's token budget. `additionalProperties` is closed: an open
+schema is room for a model to invent arguments that are then silently
+discarded, which is the other half of the same failure.
+
+**The `vmware-policy` floor moves to >=1.10.0.** Older releases have no
+`describe_tool_parameters`, and resolving one gives an ImportError at server
+start rather than a missing feature.
+
+Also in this release: three MCP annotations that were lying, and errors that
+were invisible at the protocol level.
+
+`vm_guest_download` claimed `readOnlyHint: true` while overwriting an arbitrary
+caller-supplied local path — and `readOnlyHint` is what a client consults to
+decide whether a call needs confirmation, so the annotation was a safety control
+that silently did not apply. It is now a write, and it refuses an occupied
+destination unless `overwrite=true`, refuses directories, and refuses symlinks
+even with `overwrite=true`, because consenting to replace a path is not
+consenting to replace what it points at. `vm_set_ttl` claimed
+`destructive: false` while scheduling an unattended auto-delete.
+`vm_create_snapshot` claimed `idempotent: true` while calling
+`CreateSnapshot_Task` unconditionally — that is the field a client reads before
+*retrying*, and this family retries transient failures once, so a timeout on a
+snapshot that had in fact succeeded would be retried into a second delta-disk
+chain.
+
+Correcting the first one disarmed a second control by itself: the guarded-CLI
+test derives its write set from `readOnlyHint`, so `vm guest-download` had been
+the one file-writing command with no `@guarded`. It has one now.
+
+And exceptions were caught inside tools and returned as ordinary values, so
+`isError` was always false: over stdio a client could not tell "the target does
+not exist" from "succeeded". The frame is now marked, with the authored
+teaching message intact — verified in a live JSON-RPC session showing a failing
+call and a succeeding one in the same transcript.
+
+## v1.8.14 — a host nobody could reach is not a host with no adapters
+
+Found against a real VCF 9.1 estate where four of eight ESXi hosts were
+`notResponding`. vCenter keeps answering for such a host out of its own cache,
+with no error and no marker, so a read "succeeds" and looks authoritative.
+
+**`list_host_vmks` dropped unreachable hosts and still said the list was
+complete.** Asked for one, it raised a bare `AttributeError`; enumerating all
+of them, it skipped the four silently and reported `truncated: false` — the
+envelope positively certifying a list that was missing half the estate. Unread
+hosts now appear as rows with `reachable: false`, null facts and the
+`connectionState` in the note, and the envelope carries `hosts_unreachable`.
+Three sibling write tools carried the identical bare dereference and were found
+by grepping for the shape rather than waiting for them to be reported; they now
+raise a teaching error, because reading the adapter list in order to *change*
+it is a different question from listing it. The read and the writes deliberately
+answer differently, and the reasoning is in the docstrings.
+
+The distinction that makes it work: PropertyCollector *omits* a property it
+could not read, so an absent `config.network.vnic` means "not read" while `[]`
+means "read, and empty". `p.get(...) or []` collapsed the two, which is exactly
+how four hosts disappeared.
+
+**`doctor` cleared an estate it had not checked**, authenticating only the
+default target — so five targets with three wrong passwords came back "All
+checks passed", and the failure that followed told the user to run the doctor
+that had just cleared them.
+
+**The CLI, the doctor and the MCP server opened different config files.** With
+`VMWARE_AIOPS_CONFIG` set, the server read that file while `load_config()` read
+the default: the agent and the human on different vCenters, with the doctor
+reporting on the human's. The precedence now lives in one `resolve_config_path`.
+
+**`server.json` never started the MCP server** — it carried only the package
+identifier, so a registry client composed `uvx vmware-aiops`, which runs the CLI
+and exits.
+
+The floor on `vmware-monitor` moves to 1.8.13. The cluster-health triage this
+skill exposes is delegated to that package, and on anything older it reports
+unreachable hosts as healthy ones.
+
+## v1.8.13 — list tools that agents could not read, and a documented key the code ignores
+
+- **Three list tools answered in a shape the family contract does not use.**
+  `list_dvs_portgroups` returned `{total, returned, portgroups}`,
+  `list_host_vmks` returned `{total, returned, vmks}`, and
+  `scan_datastore_images` returned `{images, last_scan}` with no count at all.
+  Each is self-consistent; each is wrong, because an agent that has learned this
+  family reads `items` and gets nothing. The absent keys are the ones that
+  carry meaning: `truncated` and `hint` exist because of issue #31, where a
+  model handed a bare list "incorrectly states that no data was returned". All
+  three now return the envelope, with the old keys kept as deprecated aliases so
+  nothing that reads them breaks.
+- **Offset paging claimed there was more at the end of the list.** Truncation
+  was derived from `returned < total`, which is wrong once `offset` is
+  involved — the last page of five rows fetched with `offset=4` returns one and
+  reported `truncated: true`, advising the caller to raise a limit that cannot
+  help them. Both offset-supporting tools now share one helper.
+- **The SSL config key in every doc was one the code has never read.** Docs said
+  `disableSslCertValidation: true`; `config.py` reads `verify_ssl`. Following the
+  instruction produced a config that is ignored.
+
+Found by running against a real vCenter rather than a mock.
+
+## v1.8.12 — two wrong numbers: the server's own version, and the advertised tool count
+
+Both defects were invisible to the test suites and both were user-facing.
+
+- **The MCP server reported the SDK's version as its own.** `FastMCP` accepts no
+  `version` argument and leaves the lowlevel server's at `None`; with it `None`
+  the SDK answers `initialize` with its OWN version. Every skill in the family
+  therefore told its client it was mcp 1.29.1 — a number that exists for no
+  package here, and one that would change with an SDK bump and no code change of
+  ours. Verified end to end rather than by reading: unset the field and a probe
+  server reports the installed SDK's version; set it and it reports ours.
+- **server.json advertised a stale tool count.** That number is what MCP Registry
+  publishes and what the plugin manifest and marketplace copy, so one stale
+  integer was wrong in three public places. Corrected against the registered
+  tools: 31 advertised, 60 real. README and SKILL.md were already right.
+
+Also new: this repo is installable as a Claude Code plugin
+(`/plugin install vmware-aiops@vmware-skills`). The skill and its MCP server arrive in
+one step; nothing is duplicated, the manifest points at the existing `skills/`
+tree. family_smoke gained three gates — the server's reported version, the plugin
+manifest's agreement with pyproject, and the advertised tool count against the
+live registration.
+
+## v1.8.11 — moved to vmware-skills org + MCP Registry namespace io.github.vmware-skills/vmware-aiops
+
+Repo transferred from github.com/zw008 to github.com/vmware-skills (redirects preserve old links).
+MCP Registry server renamed to `io.github.vmware-skills/*`; the old `io.github.zw008/*` entry is deprecated.
+All in-repo links updated. No functional code change on this line beyond the org move.
+
 ## v1.8.10 — DRS VM-VM rules + vmk service tagging + UTF-8 I/O (55 → 60 tools)
 
 Three community contributions by @wright-bench (PRs #36, #37, #38), plus CLI
@@ -270,7 +960,7 @@ the live MCP registry and the live command tree, not against documentation.
 
 ### Added — the per-target username can come from the environment
 
-Adapted from [VMware-AIops#33](https://github.com/zw008/VMware-AIops/pull/33) by
+Adapted from [VMware-AIops#33](https://github.com/vmware-skills/VMware-AIops/pull/33) by
 @wright-bench, with thanks. The password already resolved from an env var; the
 username did not, so a deployment injecting credentials from a secret store
 (systemd `EnvironmentFile`, container secrets, a vault sidecar) could externalise
@@ -345,7 +1035,7 @@ with its own tool counts and failure modes, and are linked from every SKILL.md.
 
 A large model reads `VM 'web-99' not found` and recovers on its own. A small model
 either surfaces it as a dead end or smooths it into a confident, wrong summary — the
-failure [VMware-AIops#31](https://github.com/zw008/VMware-AIops/issues/31) reported.
+failure [VMware-AIops#31](https://github.com/vmware-skills/VMware-AIops/issues/31) reported.
 The difference is entirely in the message text.
 
     error_actionability  43.5% -> 90.5%
@@ -420,7 +1110,7 @@ worse than no doctor. Requires `vmware-policy>=1.8.1`.
 
 ## v1.8.0 (2026-07-18) — read-only mode, working policy defaults, declared environments
 
-Family release driven by [VMware-AIops#31](https://github.com/zw008/VMware-AIops/issues/31),
+Family release driven by [VMware-AIops#31](https://github.com/vmware-skills/VMware-AIops/issues/31),
 where an operator running Llama 3.3 70B (Goose / OpenShift AI, on-prem H100) had to
 hand-write 17 prompt guardrails to make tool calling reliable. A prompt is advisory — a
 model can ignore it. Every guardrail that could move into the harness has.
@@ -1306,7 +1996,7 @@ Terraform-style plan/apply for multi-step operations:
 - **FQDN recommended / 推荐使用 FQDN**: Config examples updated to prefer FQDN over bare IP addresses. Required for Kerberos authentication; IP still accepted.
   配置示例改为推荐 FQDN，Kerberos 认证需要 FQDN；IP 地址仍然支持。
 
-- **Cross-repo documentation / 跨仓库文档**: Added [VMware-Monitor](https://github.com/zw008/VMware-Monitor) cross-references to all skill files and README.
+- **Cross-repo documentation / 跨仓库文档**: Added [VMware-Monitor](https://github.com/vmware-skills/VMware-Monitor) cross-references to all skill files and README.
   所有 skill 文件和 README 添加了独立 VMware-Monitor 仓库交叉引用。
 
 

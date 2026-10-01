@@ -6,7 +6,7 @@ from typing import Annotated
 
 import typer
 from rich.table import Table
-from vmware_policy import guarded
+from vmware_policy import audited, guarded
 
 from vmware_aiops.cli._common import (
     ConfigOption,
@@ -160,10 +160,23 @@ def vm_delete(
     dry_run: DryRunOption = False,
 ) -> None:
     """Delete a VM (destructive!)."""
+    from vmware_aiops.ops.vm_delete_gate import vm_delete_blast_radius
     from vmware_aiops.ops.vm_lifecycle import delete_vm, get_vm_info
 
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, name)
+    radius = vm_delete_blast_radius(si, name)
+    if radius["unmeasured"]:
+        console.print(
+            f"[bold yellow]Could not read {', '.join(radius['unmeasured'])}: "
+            "what this deletes is not fully known.[/]"
+        )
+    else:
+        console.print(
+            f"[bold]Destroys:[/] {radius['disk_count']} disk(s), "
+            f"{radius['total_disk_gb']} GB, {radius['snapshot_count']} snapshot(s) "
+            f"on {radius['host']} (instance {radius['instance_uuid']})"
+        )
     if dry_run:
         _dry_run_print(
             target=_resolve_target(target), vm_name=name, operation="delete_vm",
@@ -259,7 +272,7 @@ def vm_reconfigure(
 
 @vm_app.command("snapshot-create")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('vm_create_snapshot', risk_level='medium')
 def vm_snapshot_create(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name")] = "snapshot",
@@ -302,6 +315,7 @@ def vm_snapshot_create(
 
 @vm_app.command("snapshot-list")
 @cli_errors
+@audited("vm_list_snapshots")
 def vm_snapshot_list(
     vm_name: str,
     target: TargetOption = None,
@@ -322,7 +336,7 @@ def vm_snapshot_list(
 
 @vm_app.command("snapshot-revert")
 @cli_errors
-@guarded(risk_level='high')
+@guarded('vm_revert_snapshot', risk_level='high')
 def vm_snapshot_revert(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name to revert to")],
@@ -360,7 +374,7 @@ def vm_snapshot_revert(
 
 @vm_app.command("snapshot-delete")
 @cli_errors
-@guarded(risk_level='high')
+@guarded('vm_delete_snapshot', risk_level='high')
 def vm_snapshot_delete(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name to delete")],
@@ -379,6 +393,14 @@ def vm_snapshot_delete(
         int,
         typer.Option(help="Seconds to wait for consolidation before returning the task id."),
     ] = 1800,
+    remove_children: Annotated[
+        bool,
+        typer.Option(
+            "--remove-children",
+            help="Also delete every snapshot below this one. Off by default: "
+            "children are kept and consolidated into their parent.",
+        ),
+    ] = False,
 ) -> None:
     """Delete a VM snapshot (waits up to 30 min for delta consolidation)."""
     from vmware_aiops.ops.vm_lifecycle import delete_snapshot
@@ -387,13 +409,16 @@ def vm_snapshot_delete(
         _dry_run_print(
             target=_resolve_target(target), vm_name=vm_name, operation="snapshot_delete",
             api_call="vim.vm.Snapshot.RemoveSnapshot_Task()",
-            parameters={"snap_name": snap_name},
+            parameters={"snap_name": snap_name, "remove_children": remove_children},
         )
         return
     si, _ = _get_connection(target, config)
     console.print(f"[bold yellow]⚠️  即将删除 VM '{vm_name}' 的快照 '{snap_name}'[/]")
     _double_confirm(f"删除快照 '{snap_name}'", vm_name, _resolve_target(target))
-    result = delete_snapshot(si, vm_name, snap_name, wait=not no_wait, timeout=timeout)
+    result = delete_snapshot(
+        si, vm_name, snap_name, wait=not no_wait, timeout=timeout,
+        remove_children=remove_children,
+    )
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -406,6 +431,7 @@ def vm_snapshot_delete(
 
 @vm_app.command("task-status")
 @cli_errors
+@audited("vm_task_status")
 def vm_task_status(
     task_id: Annotated[str, typer.Argument(help="Task id from a --no-wait operation")],
     target: TargetOption = None,
@@ -453,7 +479,10 @@ def vm_clone(
 
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, name)
-    params = {"new_name": new_name, "to_host": to_host, "to_datastore": to_datastore, "power_on": power_on}
+    params = {
+        "new_name": new_name, "to_host": to_host,
+        "to_datastore": to_datastore, "power_on": power_on,
+    }
     if dry_run:
         _dry_run_print(
             target=_resolve_target(target), vm_name=name, operation="clone_vm",
@@ -556,7 +585,10 @@ def vm_set_ttl(
         _dry_run_print(
             target=_resolve_target(target), vm_name=vm_name, operation="vm_set_ttl",
             api_call="scheduler.delete_vm() on TTL expiry",
-            parameters={"minutes": minutes, "preview": preview_ttl(vm_name, minutes, target=target)},
+            parameters={
+                "minutes": minutes,
+                "preview": preview_ttl(vm_name, minutes, target=target),
+            },
         )
         return
     _double_confirm(f"设置 TTL ({minutes} 分钟后自动删除)", vm_name, _resolve_target(target))
@@ -584,6 +616,7 @@ def vm_cancel_ttl(vm_name: str) -> None:
 
 @vm_app.command("list-ttl")
 @cli_errors
+@audited("vm_list_ttl")
 def vm_list_ttl() -> None:
     """List all VMs with TTLs registered."""
     from vmware_aiops.ops.ttl import list_ttl
@@ -652,13 +685,18 @@ def vm_clean_slate(
 
 @vm_app.command("guest-exec")
 @cli_errors
-@guarded(risk_level='medium', sensitive_params=['password'])
+@guarded('vm_guest_exec', risk_level='critical', sensitive_params=['password'])
 def vm_guest_exec_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     command: Annotated[str, typer.Option("--cmd", help="Full path to program (e.g. /bin/bash)")],
+    username: Annotated[
+        str, typer.Option("--user", "-u", help="Guest OS account to run as (required)")
+    ],
     arguments: Annotated[str, typer.Option("--args", help="Command arguments")] = "",
-    username: Annotated[str, typer.Option("--user", "-u", help="Guest OS username")] = "root",
-    password: Annotated[str, typer.Option("--password", "-p", help="Guest OS password", prompt=True, hide_input=True)] = "",
+    password: Annotated[
+        str,
+        typer.Option("--password", "-p", help="Guest OS password", prompt=True, hide_input=True),
+    ] = "",
     target: TargetOption = None,
     config: ConfigOption = None,
     dry_run: DryRunOption = False,
@@ -700,13 +738,18 @@ def vm_guest_exec_cmd(
 
 @vm_app.command("guest-upload")
 @cli_errors
-@guarded(risk_level='medium', sensitive_params=['password'])
+@guarded('vm_guest_upload', risk_level='high', sensitive_params=['password'])
 def vm_guest_upload_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     local_path: Annotated[str, typer.Option("--local", help="Local file path")],
     guest_path: Annotated[str, typer.Option("--guest", help="Destination path inside VM")],
-    username: Annotated[str, typer.Option("--user", "-u", help="Guest OS username")] = "root",
-    password: Annotated[str, typer.Option("--password", "-p", help="Guest OS password", prompt=True, hide_input=True)] = "",
+    username: Annotated[
+        str, typer.Option("--user", "-u", help="Guest OS account to run as (required)")
+    ],
+    password: Annotated[
+        str,
+        typer.Option("--password", "-p", help="Guest OS password", prompt=True, hide_input=True),
+    ] = "",
     target: TargetOption = None,
     config: ConfigOption = None,
     dry_run: DryRunOption = False,
@@ -737,20 +780,31 @@ def vm_guest_upload_cmd(
 
 @vm_app.command("guest-download")
 @cli_errors
+@guarded('vm_guest_download', risk_level='high', sensitive_params=['password'])
 def vm_guest_download_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     guest_path: Annotated[str, typer.Option("--guest", help="File path inside VM")],
     local_path: Annotated[str, typer.Option("--local", help="Local destination path")],
-    username: Annotated[str, typer.Option("--user", "-u", help="Guest OS username")] = "root",
-    password: Annotated[str, typer.Option("--password", "-p", help="Guest OS password", prompt=True, hide_input=True)] = "",
+    username: Annotated[
+        str, typer.Option("--user", "-u", help="Guest OS account to run as (required)")
+    ],
+    password: Annotated[
+        str,
+        typer.Option("--password", "-p", help="Guest OS password", prompt=True, hide_input=True),
+    ] = "",
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace an existing local file")
+    ] = False,
     target: TargetOption = None,
     config: ConfigOption = None,
 ) -> None:
-    """Download a file from a VM via VMware Tools."""
+    """Download a file from a VM via VMware Tools (writes the local filesystem)."""
     from vmware_aiops.ops.guest_ops import guest_download
 
     si, _ = _get_connection(target, config)
-    result = guest_download(si, vm_name, guest_path, local_path, username, password)
+    result = guest_download(
+        si, vm_name, guest_path, local_path, username, password, overwrite=overwrite
+    )
     _audit.log(
         target=_resolve_target(target),
         operation="guest_download",

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import json
 import socket
-import stat
 from typing import Callable
 
 from rich.console import Console
 from rich.table import Table
 
-from vmware_aiops.config import CONFIG_DIR, CONFIG_FILE, ENV_FILE
+from vmware_aiops.config import CONFIG_DIR, ENV_FILE, resolve_config_path
+from vmware_policy.fsperms import check_secret_file
 
 console = Console()
 
@@ -38,11 +38,21 @@ def _check(label: str, fn: Callable[[], tuple[bool, str]]) -> tuple[bool, str, s
 
 
 def _check_config_file() -> tuple[bool, str]:
-    if CONFIG_FILE.exists():
-        return True, f"Config found: {CONFIG_FILE}"
+    """Report on the file the tools will open, not on the default.
+
+    Every check below asks resolve_config_path() rather than reading the
+    default path, because $VMWARE_AIOPS_CONFIG moves the file the tools read
+    and this doctor used to keep reporting on ~/.vmware-aiops/config.yaml —
+    green, while every tool call opened a different vCenter (2026-08-30). The
+    remedy it prints names the resolved path for the same reason: advice about
+    a file nothing reads is not advice.
+    """
+    path = resolve_config_path()
+    if path.exists():
+        return True, f"Config found: {path}"
     return False, (
-        f"Config not found: {CONFIG_FILE}  →  Run: vmware-aiops init  "
-        f"(or manually: mkdir -p {CONFIG_DIR} && cp config.example.yaml {CONFIG_FILE})"
+        f"Config not found: {path}  →  Run: vmware-aiops init  "
+        f"(or manually: mkdir -p {path.parent} && cp config.example.yaml {path})"
     )
 
 
@@ -52,21 +62,20 @@ def _check_env_file() -> tuple[bool, str]:
             f".env not found: {ENV_FILE}  →  Run: vmware-aiops init  "
             f"(or manually: cp .env.example {ENV_FILE} && chmod 600 {ENV_FILE})"
         )
-    mode = ENV_FILE.stat().st_mode
-    if mode & (stat.S_IRWXG | stat.S_IRWXO):
-        return (
-            False,
-            f".env permissions too open ({oct(stat.S_IMODE(mode))})  →  Run: chmod 600 {ENV_FILE}",
-        )
-    return True, f".env found with correct permissions (600): {ENV_FILE}"
+    # Three states, not two: a platform without POSIX mode bits cannot answer
+    # this, and reporting that as "too open" gave Windows a permanent red whose
+    # remedy (`chmod 600`) exits 0 and changes nothing.
+    check = check_secret_file(ENV_FILE)
+    return not check.is_failure, check.message
 
 
 def _check_targets() -> tuple[bool, str]:
-    if not CONFIG_FILE.exists():
-        return False, "Config file missing — skipping target check"
+    path = resolve_config_path()
+    if not path.exists():
+        return False, f"Config file missing: {path} — skipping target check"
     import yaml
 
-    with open(CONFIG_FILE, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     targets = raw.get("targets", [])
     if not targets:
@@ -76,11 +85,12 @@ def _check_targets() -> tuple[bool, str]:
 
 
 def _check_connectivity() -> tuple[bool, str]:
-    if not CONFIG_FILE.exists():
-        return False, "Config file missing — skipping connectivity check"
+    path = resolve_config_path()
+    if not path.exists():
+        return False, f"Config file missing: {path} — skipping connectivity check"
     import yaml
 
-    with open(CONFIG_FILE, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     targets = raw.get("targets", [])
     if not targets:
@@ -102,26 +112,58 @@ def _check_connectivity() -> tuple[bool, str]:
 
 
 def _check_auth() -> tuple[bool, str]:
-    """Try to authenticate to the first configured target."""
-    if not CONFIG_FILE.exists():
-        return False, "Config file missing — skipping auth check"
+    """Log into EVERY configured target, not just the default one.
+
+    Until 2026-08-30 this authenticated ``config.default_target`` and stopped.
+    A tester configured five targets, put the wrong password on three of them,
+    and got "All checks passed" — then failed on the next call, whose error
+    message told them to run the doctor that had just cleared them. Three
+    sibling skills already iterated; this one did not (CLAUDE.md 形态 #7, a
+    pattern fixed in one repo and left standing in the rest).
+
+    One row, like the connectivity check above it, but naming every target and
+    failing if any of them does. Each target is attempted even after an earlier
+    one fails: aborting on the first would report one problem and leave the
+    operator to find the others one call at a time.
+    """
+    path = resolve_config_path()
+    if not path.exists():
+        return False, f"Config file missing: {path} — skipping auth check"
     try:
         from vmware_aiops.config import load_config
         from vmware_aiops.connection import ConnectionManager
 
         config = load_config()
-        if not config.targets:
-            return False, "No targets configured"
-        conn_mgr = ConnectionManager(config)
-        target = config.default_target
-        conn_mgr.connect(target.name)
-        conn_mgr.disconnect_all()
-        return True, f"Authentication OK for target '{target.name}'"
     except KeyError as e:
         return False, f"Missing password env var: {e}"
     except Exception as e:
-        return False, f"Auth failed: {e}"
+        return False, f"Config load failed: {e}"
 
+    if not config.targets:
+        return False, "No targets configured"
+
+    conn_mgr = ConnectionManager(config)
+    parts: list[str] = []
+    all_ok = True
+    try:
+        for target in config.targets:
+            try:
+                conn_mgr.connect(target.name)
+                parts.append(f"{target.name} ✓")
+            except KeyError as e:
+                all_ok = False
+                parts.append(f"{target.name} ✗ (missing password env var: {e})")
+            except Exception as e:
+                all_ok = False
+                parts.append(f"{target.name} ✗ ({e})")
+    finally:
+        # Best effort: a doctor that raises while tidying up reports nothing at
+        # all, which is worse than a leaked session in a one-shot command.
+        try:
+            conn_mgr.disconnect_all()
+        except Exception:  # noqa: BLE001 - see above
+            pass
+    return all_ok, "  ".join(parts)
 
 def _check_daemon() -> tuple[bool, str]:
     pid_file = CONFIG_DIR / "daemon.pid"
