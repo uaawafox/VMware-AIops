@@ -11,7 +11,7 @@ This is a community-maintained open-source project and is **not affiliated with,
 If you discover a security vulnerability, please report it privately:
 
 - **Email**: wei-wz.zhou@broadcom.com
-- **GitHub**: Open a [private security advisory](https://github.com/zw008/VMware-AIops/security/advisories/new)
+- **GitHub**: Open a [private security advisory](https://github.com/vmware-skills/VMware-AIops/security/advisories/new)
 
 Do **not** open a public GitHub issue for security vulnerabilities.
 
@@ -26,34 +26,71 @@ Do **not** open a public GitHub issue for security vulnerabilities.
 
 ### Destructive Operation Safeguards
 
-All write operations pass through multiple safety layers:
+Layers 1, 4 and 5 apply to every write on every surface. **Layers 2 and 3 are
+CLI-only.** Over MCP, the 22 write tools annotated destructive (power-off, delete,
+migrate, snapshot revert/delete, Clean Slate, TTL, guest exec/upload/provision,
+cluster delete/remove-host, plan apply/rollback, host-network and DRS) take
+`confirm` (default false), which returns a no-write blast-radius preview;
+`confirm=True` is refused, and audited as a failure, on a blocker or an
+unreadable measurement. The other 21 write tools (create, clone, deploy,
+power-on, reconfigure) act on the first call. `vm_delete` also refuses unless the preview's `acknowledge_with` is echoed
+back and still matches, and refuses powered-on or suspended VMs:
 
 1. **`@vmware_tool` decorator** — mandatory on every MCP tool; provides pre-checks, audit logging, data sanitization, and timeout control
-2. **Double confirmation** — CLI destructive commands (delete, force power-off, snapshot revert) require two separate "Are you sure?" prompts
-3. **`--dry-run` mode** — all CLI write commands support preview without execution
+2. **Double confirmation (CLI only)** — CLI destructive commands (delete, force power-off, snapshot revert, guest exec/upload) require two separate "Are you sure?" prompts. An agent with a shell can satisfy both with `yes |`; this defends the mistyped command, not a determined caller
+3. **`--dry-run` mode (CLI only)** — all CLI write commands support preview without execution
 4. **Audit logging** — every operation (read and write) is logged to `~/.vmware/audit.db` (SQLite WAL) with timestamp, user, target, operation, parameters, and result
-5. **Policy engine** — `~/.vmware/rules.yaml` can deny operations by pattern, enforce maintenance windows, and set risk-level thresholds
+5. **Policy engine** — `~/.vmware/rules.yaml` can deny operations by pattern or risk level and enforce maintenance windows. It is opt-in: nothing is denied until you write a rule
+
+**The primary control is the vCenter/ESXi service account.** This skill ships
+full read+write and does not gate read-versus-write itself; a write the account
+may not perform is refused by vCenter, on every surface, with no way around it
+from inside the skill. To run an AI agent read-only, give it a read-only vCenter
+role rather than relying on any switch here — the earlier `VMWARE_READ_ONLY`
+switch was removed in v1.8.7 precisely because it was enforced on the MCP path
+only and any agent with a shell stepped around it. The gated-versus-ungated
+inventory is documented, and machine-checked against the tool registry, in
+[references/capabilities.md](skills/vmware-aiops/references/capabilities.md#what-gates-a-write).
 
 ### Guest Operations Security
 
 Guest command execution (`vm_guest_exec`) requires:
-- Explicit `vm_name`, `cmd` (full path to executable), `args`, and `user` parameters
+- Explicit `vm_name`, `command` (full path to executable), `arguments`, and `username` parameters
 - Valid VMware Tools running inside the guest VM
 - vCenter permissions for Guest Operations (separate from VM lifecycle permissions)
 
 No implicit or background command execution occurs.
 
+**This is the widest blast radius in the skill.** The command string is
+caller-supplied and unbounded, and it runs with the guest credentials passed to
+the call — which the documented example makes `root`. The CLI form
+double-confirms. Over MCP, `vm_guest_exec`, `vm_guest_exec_output`,
+`vm_guest_upload` and `vm_guest_provision` return a no-write preview (VM, guest
+account, command or files) unless called with `confirm=True`, and refuse a VM
+that is not powered on or has no running VMware Tools. The preview describes the
+command; it does not judge it — once confirmed, nothing in the skill bounds what
+the command may be.
+
+The **guest** account is a second authorization boundary, independent of the
+vCenter one: a read-only vCenter role does not constrain what these tools do
+*inside* a VM. Give them a guest account scoped to the work, and if you do not
+need guest operations, do not configure guest credentials at all. All four tools
+that push a command or a file into a guest declare `destructiveHint: true` so a
+client can ask its user before calling them.
+
 ### Webhook Data Scope
 
 - Webhooks are **disabled by default**
 - When enabled, they send only to **user-configured URLs** (Slack, Discord, or custom HTTP endpoints)
-- Payloads contain **aggregated alert metadata only** (alarm counts, event types, host status summaries)
-- Payloads **never** contain: credentials, IP addresses, personally identifiable information, or raw vSphere API responses
+- Each payload carries critical/warning counts plus every critical issue and every alarm/event warning from that scan — host-log warnings stay in the local scan log, and `info` rows are never sent
+- Each issue carries the entity name and one of: the alarm name, vCenter event message (sanitized, ≤500 chars), ESXi log line matching critical/panic/corrupt (sanitized, ≤200 chars), or the error text for a target the daemon could not connect to
+- That event, log, and error text **can contain host names, IP addresses, and user names** — treat the webhook destination as receiving operational data
+- Payloads never contain credentials from the skill's config or `.env`
 
 ### SSL/TLS Verification
 
 - TLS certificate verification is **enabled by default**
-- `disableSslCertValidation: true` exists solely for ESXi hosts using self-signed certificates in isolated lab/home environments
+- `verify_ssl: false` exists solely for ESXi hosts using self-signed certificates in isolated lab/home environments
 - In production, always use CA-signed certificates with full TLS verification
 
 ### Transitive Dependencies

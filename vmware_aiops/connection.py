@@ -8,10 +8,10 @@ from __future__ import annotations
 import atexit
 import socket
 import ssl
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
-from pyVmomi.VmomiSupport import VmomiJSONEncoder  # noqa: F401
 
 if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
@@ -42,6 +42,36 @@ except ImportError:
 # 踩坑 #32 (2026-05-19, 客户 vCenter 8.0U3 现场).
 _SI_VERIFY_SSL: dict[int, bool] = {}
 
+# atexit cleanups for live connections, keyed by id(si) so a connection dropped
+# before interpreter exit can take its handler with it.
+_SI_ATEXIT: dict[int, Callable[[], None]] = {}
+
+
+def _release_si(si: ServiceInstance) -> None:
+    """Unregister the atexit cleanup registered for ``si``.
+
+    Every connect() registers a cleanup that closes over si, and atexit holds
+    that closure -- and therefore si -- until the process exits. A long-running
+    MCP server that reconnects after each session expiry (踩坑 #40) accumulates
+    one dead ServiceInstance and one handler per reconnect, and at exit runs a
+    Disconnect against every session it ever opened.
+
+    Measured before this existed: 50 evict-and-reconnect cycles left 50 handlers
+    registered and all 50 evicted ServiceInstance objects still reachable, while
+    the id(si) side stores stayed correctly at one entry -- the side-store
+    discipline was never the leak, the registration was.
+
+    Boundary: this covers the paths that drop a *connection* -- the eviction
+    inside connect() and disconnect(). A caller that drops the whole
+    ConnectionManager while it still holds connections leaks them exactly as
+    before, since both atexit and this table still reach them. Unchanged rather
+    than fixed: the reconnect loop is the shape that grows without bound.
+    """
+    fn = _SI_ATEXIT.pop(id(si), None)
+    if fn is not None:
+        atexit.unregister(fn)
+
+
 
 def get_verify_ssl(si: ServiceInstance) -> bool:
     """Return verify_ssl flag stashed by the connect() that created ``si``.
@@ -52,10 +82,17 @@ def get_verify_ssl(si: ServiceInstance) -> bool:
 
 
 # config.yaml target name -> hub-routing backend name. Per-role cred items are
-# per-vCenter ("MCP - <role> - <backend>"); resolving the prod backend for a
-# non-prod target would apply prod creds to the wrong host. Approved by Allen
-# in-session 2026-07-15. Unmapped targets use the prod backend (the default).
-_ROUTING_BACKENDS = {"v9-vcenter": "vcenter-v9"}
+# per-vCenter ("MCP - <role> - <backend>"), so a routed request must resolve the
+# items for the vCenter it is about to log in to. Approved by Allen in-session
+# 2026-07-15. The target was renamed v9-vcenter -> uaa-vcenter on 2026-08-03 and
+# the 1P items kept their "vcenter-v9" title.
+#
+# A routed request for a target with no row here is DENIED (fail closed). It
+# used to fall back to the "vcenter-prod" items, which belonged to the apps
+# vCenter decommissioned 2026-08-24: a stale default that would put another
+# vCenter's credentials on this host. Unrouted calls (no hub signal) are
+# unaffected and keep the startup credential.
+_ROUTING_BACKENDS = {"uaa-vcenter": "vcenter-v9"}
 
 
 class ConnectionManager:
@@ -88,12 +125,16 @@ class ConnectionManager:
             else self._config.default_target
         )
 
-        backend = _ROUTING_BACKENDS.get(target.name, "vcenter-prod")
+        backend = _ROUTING_BACKENDS.get(target.name)
         routed = (
-            uaa_hub_routing.routing_item(backend, _VCENTER_SELECTOR)
+            uaa_hub_routing.routing_item(backend or "unmapped", _VCENTER_SELECTOR)
             if _HUB_ROUTING
             else None
         )
+        if routed is not None and backend is None:
+            raise uaa_hub_routing.RoutingError(
+                f"target {target.name!r} has no hub-routing backend; deny-by-default"
+            )
         cache_key = target.name if routed is None else f"{target.name}#{routed}"
 
         if cache_key in self._connections:
@@ -119,6 +160,10 @@ class ConnectionManager:
             # (id-reuse hazard) - upstream v1.7.7 probe fix, kept through the
             # routed cache_key probe.
             _SI_VERIFY_SSL.pop(id(si), None)
+            # Upstream's atexit-leak fix, keyed on the routed cache_key: a
+            # routed session lives under "<target>#<item>", so upstream's
+            # target.name key would KeyError on every routed eviction.
+            _release_si(si)
             del self._connections[cache_key]
 
         if routed is None:
@@ -139,6 +184,7 @@ class ConnectionManager:
         if target_name in self._connections:
             from pyVim.connect import Disconnect
 
+            _release_si(self._connections[target_name])
             Disconnect(self._connections[target_name])
             del self._connections[target_name]
 
@@ -248,6 +294,7 @@ class ConnectionManager:
             except Exception:
                 pass
 
+        _SI_ATEXIT[id(si)] = _cleanup
         atexit.register(_cleanup)
         return si
 

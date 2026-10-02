@@ -31,6 +31,7 @@ from pyVmomi import vim
 from vmware_policy import sanitize
 
 from vmware_aiops.connection import get_verify_ssl
+from vmware_aiops.ops._paging import paginated_window
 from vmware_aiops.ops.inventory import _collect, find_host_by_name
 
 if TYPE_CHECKING:
@@ -73,6 +74,43 @@ def _require_host(si: ServiceInstance, host_name: str) -> vim.HostSystem:
     return host
 
 
+def _connection_state(host: vim.HostSystem) -> str:
+    """``runtime.connectionState`` as a plain string, ``"unknown"`` if unreadable."""
+    return str(
+        getattr(getattr(host, "runtime", None), "connectionState", "") or "unknown"
+    )
+
+
+def _require_host_network(host: vim.HostSystem, host_name: str):
+    """The host's ``config.network``, or a teaching error saying why there is none.
+
+    vCenter answers ``HostSystem.config`` with ``None`` for a host it has lost
+    contact with - no fault, no marker - so ``host.config.network.vnic`` raised
+    a bare ``AttributeError: 'NoneType' object has no attribute 'network'`` on a
+    VCF 9.1 estate (2026-08-30).
+
+    Raising, where :func:`list_host_vmks` returns a row instead: the callers
+    here read the adapter list to decide whether to CHANGE it, and their empty
+    case already means something specific - "no such vmk on this host", "this
+    vmk has no services". Reusing it for "nobody looked" would answer a
+    reconfiguration request about an unreachable host with a confident false
+    statement, which is the harder failure of the two to notice. There is also
+    nothing safe to do next: the write would be aimed at a machine vCenter is
+    not talking to.
+    """
+    net = getattr(getattr(host, "config", None), "network", None)
+    if net is None:
+        raise HostNetworkError(
+            f"vCenter has no network configuration for host '{host_name}' "
+            f"(connectionState={sanitize(_connection_state(host), 40)}), so its "
+            f"VMkernel adapters could not be read - this is not a report that it "
+            f"has none, and nothing should be reconfigured on a host vCenter is "
+            f"not talking to. Reconnect the host in vCenter, or see which hosts "
+            f"are unread with list_host_vmks (the reachable field), then retry."
+        )
+    return net
+
+
 def _find_dv_portgroup(si: ServiceInstance, name: str) -> vim.dvs.DistributedVirtualPortgroup:
     for pg in _get_objects(si, [vim.dvs.DistributedVirtualPortgroup]):
         if pg.name == name:
@@ -83,12 +121,17 @@ def _find_dv_portgroup(si: ServiceInstance, name: str) -> vim.dvs.DistributedVir
 def _vmk_services(host: vim.HostSystem) -> dict[str, list[str]] | None:
     """Map vmk device -> host services it is selected for (management, vmotion, ...).
 
-    Returns ``None`` when the service map CANNOT be read (virtualNicManager or
-    its info unavailable - disconnected host, restricted role, API hiccup).
-    Callers MUST treat None as "unverifiable", never as "no services": an empty
-    dict here once let remove_host_vmk delete interfaces it claimed to protect.
+    Returns ``None`` when the service map CANNOT be read (configManager,
+    virtualNicManager or its info unavailable - disconnected host, restricted
+    role, API hiccup). Callers MUST treat None as "unverifiable", never as "no
+    services": an empty dict here once let remove_host_vmk delete interfaces it
+    claimed to protect.
     """
-    vnic_mgr = host.configManager.virtualNicManager
+    # configManager itself is None on a host vCenter has lost contact with, so
+    # reaching straight through it raised the same bare AttributeError the
+    # notResponding hosts produced one function down (VCF 9.1, 2026-08-30).
+    cfg_mgr = getattr(host, "configManager", None)
+    vnic_mgr = getattr(cfg_mgr, "virtualNicManager", None) if cfg_mgr else None
     if vnic_mgr is None or vnic_mgr.info is None:
         return None
     services: dict[str, list[str]] = {}
@@ -129,6 +172,66 @@ def _vmk_carries_default_route(host: vim.HostSystem, vmk: str) -> bool | None:
         return None
 
 
+#: ``runtime.connectionState`` for a host vCenter is actually talking to. Every
+#: other value - notResponding, disconnected, or a state that could not be read
+#: at all - means what follows is vCenter's own cache, not the host.
+_CONNECTED = "connected"
+
+_LIST_PROPS = ["name", "runtime.connectionState", "config.network.vnic"]
+
+
+def _unread_note(state: str) -> str:
+    """Why this host's adapters are not a measurement, in the row that says so."""
+    if state != _CONNECTED:
+        return (
+            f"vCenter cannot reach this host (connectionState={sanitize(state, 40)}), "
+            "so anything shown for it is vCenter's last cached view rather than "
+            "the host's current state. An absent or empty adapter list here is "
+            "NOT a report that the host has no VMkernel adapters - reconnect the "
+            "host in vCenter and re-run to find out."
+        )
+    return (
+        "vCenter reports this host as connected but returned no network "
+        "configuration for it, so its VMkernel adapters were not read. This is "
+        "not a report that the host has none."
+    )
+
+
+def _vmk_row(
+    host_display: str,
+    vnic,
+    services: list[str] | None,
+    *,
+    reachable: bool,
+    note: str | None,
+) -> dict:
+    """One list row. ``vnic=None`` builds the placeholder for an unread host.
+
+    Every unread fact is ``None`` rather than ``[]``/``False``/``0``: those are
+    claims about the host, and this row exists precisely because nobody managed
+    to make one.
+    """
+    spec = vnic.spec if vnic is not None else None
+    ip = spec.ip if spec is not None else None
+    dv_port = getattr(spec, "distributedVirtualPort", None) if spec is not None else None
+    netstack = getattr(spec, "netStackInstanceKey", None) if spec is not None else None
+    return {
+        "host": host_display,
+        "device": sanitize(vnic.device, 40) if vnic is not None else None,
+        "reachable": reachable,
+        "ip": ip.ipAddress if ip else None,
+        "netmask": ip.subnetMask if ip else None,
+        "dhcp": bool(ip.dhcp) if ip else None,
+        "mtu": spec.mtu if spec is not None else None,
+        "mac": spec.mac if spec is not None else None,
+        "portgroup": (sanitize(vnic.portgroup, 200) or None) if vnic is not None else None,
+        "dvs_port": dv_port.portgroupKey if dv_port else None,
+        "netstack": sanitize(netstack, 80) if netstack else None,
+        "services": services,
+        "note": note,
+    }
+
+
 def list_host_vmks(
     si: ServiceInstance,
     host_name: str | None = None,
@@ -140,48 +243,102 @@ def list_host_vmks(
     ``services`` is ``None`` (not ``[]``) for vmks on a host whose service
     map could not be read - unknown is reported as unknown.
 
-    The all-hosts path batches name + vnic list through PropertyCollector
-    (the inventory ``_collect`` path) so a large estate is one server-side
-    call, not a container-view walk with a per-host ``.config`` round-trip.
-    The service map still reads per host - it lives on a separate managed
-    object (virtualNicManager) the collector traversal doesn't cover.
+    **A host vCenter cannot reach gets a row, not silence.** vCenter answers
+    property reads for a ``notResponding`` host out of its own cache, with no
+    fault and no marker, so such a host used to contribute zero rows while the
+    envelope still said ``truncated: false`` - positively certifying a list
+    that four of eight hosts were missing from (VCF 9.1, 2026-08-30). Unread
+    hosts now appear with ``reachable: False``, ``None`` for every fact, and a
+    ``note`` naming the ``connectionState``; the envelope carries
+    ``hosts_unreachable`` and, only when there is one, ``unreachable_note``.
+
+    A row rather than a teaching error even when a single host is named,
+    because ``host_name`` is a filter over this same collection: a tool whose
+    answer shape flips between "envelope" and "exception" depending on a filter
+    argument is a trap for the agent paging through it. The write paths decide
+    the other way - see :func:`_require_host_network`, where refusing is right
+    because you cannot safely reconfigure a host nobody is talking to.
+
+    The all-hosts path batches name + connection state + vnic list through
+    PropertyCollector (the inventory ``_collect`` path) so a large estate is
+    one server-side call, not a container-view walk with a per-host ``.config``
+    round-trip. The service map still reads per host - it lives on a separate
+    managed object (virtualNicManager) the collector traversal doesn't cover.
     """
     if host_name:
         host = _require_host(si, host_name)
-        host_rows = [(host, sanitize(host.name, 200), host.config.network.vnic or [])]
+        state = _connection_state(host)
+        # `config` is None for a host vCenter has lost contact with - no fault,
+        # no marker - and dereferencing it put a bare AttributeError in front of
+        # the user. `vnics is None` means nobody read them; `[]` means the host
+        # answered and has none, which is a different and honest answer.
+        net = getattr(getattr(host, "config", None), "network", None)
+        vnics = list(getattr(net, "vnic", None) or []) if net is not None else None
+        host_rows = [(host, sanitize(host.name, 200), state, vnics)]
     else:
-        host_rows = [
-            (obj, sanitize(p.get("name", ""), 200), p.get("config.network.vnic") or [])
-            for obj, p in _collect(si, [vim.HostSystem], ["name", "config.network.vnic"])
-        ]
-    out = []
-    for host_obj, host_display, vnics in host_rows:
-        services = _vmk_services(host_obj)
+        host_rows = []
+        for obj, p in _collect(si, [vim.HostSystem], _LIST_PROPS):
+            # PropertyCollector omits a property it has no value for, so an
+            # absent key means "not read" and `[]` means "read, and empty".
+            # Collapsing both to `[]` is what made the four hosts disappear.
+            vnics = (
+                list(p["config.network.vnic"] or [])
+                if "config.network.vnic" in p
+                else None
+            )
+            host_rows.append((
+                obj,
+                sanitize(p.get("name", ""), 200),
+                str(p.get("runtime.connectionState") or "unknown"),
+                vnics,
+            ))
+
+    out: list[dict] = []
+    unreachable = 0
+    for host_obj, host_display, state, vnics in host_rows:
+        reachable = state == _CONNECTED and vnics is not None
+        note = None if reachable else _unread_note(state)
+        if not reachable:
+            unreachable += 1
+        # No round trip to a host nobody can reach: the service map is unknown
+        # either way, and the call is one that can hang.
+        services = _vmk_services(host_obj) if reachable else None
+        if not vnics:
+            if not reachable:
+                # The host is the thing that must not vanish, so it gets a row
+                # of its own even though it has no adapter to describe.
+                out.append(_vmk_row(host_display, None, None, reachable=False, note=note))
+            continue
         for vnic in vnics:
-            ip = vnic.spec.ip
-            dv_port = getattr(vnic.spec, "distributedVirtualPort", None)
-            netstack = getattr(vnic.spec, "netStackInstanceKey", None)
-            out.append({
-                "host": host_display,
-                "device": sanitize(vnic.device, 40),
-                "ip": ip.ipAddress if ip else None,
-                "netmask": ip.subnetMask if ip else None,
-                "dhcp": bool(ip.dhcp) if ip else None,
-                "mtu": vnic.spec.mtu,
-                "mac": vnic.spec.mac,
-                "portgroup": sanitize(vnic.portgroup, 200) or None,
-                "dvs_port": dv_port.portgroupKey if dv_port else None,
-                "netstack": sanitize(netstack, 80) if netstack else None,
-                "services": (
-                    services.get(vnic.device, []) if services is not None else None
-                ),
-            })
+            out.append(_vmk_row(
+                host_display,
+                vnic,
+                services.get(vnic.device, []) if services is not None else None,
+                reachable=reachable,
+                note=note,
+            ))
     total = len(out)
     window = out[offset : offset + limit] if limit > 0 else out[offset:]
-    result = {"total": total, "returned": len(window), "vmks": window}
-    if offset or len(window) < total:
-        result["offset"] = offset
-        result["hint"] = "Use limit/offset to page through the remainder."
+    # See list_dvs_portgroups: the family envelope, with `vmks` kept as a
+    # deprecated alias. `hosts_unreachable` keeps the family's key name (see
+    # vmware-monitor's get_ntp_status) and counts every host whose adapters
+    # went unread, whatever the reason each row states.
+    extra: dict = {"hosts_unreachable": unreachable}
+    if unreachable:
+        # Its own key, not the envelope's `hint`: that one has a fixed family
+        # meaning (this page was truncated, here is how to get the rest) and
+        # paginated() refuses the override outright. Only when there is
+        # something to say - a banner on every clean run is a banner nobody
+        # reads on the run that matters.
+        extra["unreachable_note"] = (
+            f"{unreachable} host(s) could not be read and are listed with "
+            f"reachable=false and null facts. This list is NOT a complete "
+            f"inventory of the estate's VMkernel adapters."
+        )
+    result = paginated_window(
+        window, total=total, limit=limit, offset=offset, **extra
+    )
+    result["vmks"] = result["items"]
     return result
 
 
@@ -215,7 +372,7 @@ def add_host_vmk(
     host = _require_host(si, host_name)
     pg = _find_dv_portgroup(si, portgroup)
 
-    for vnic in host.config.network.vnic or []:
+    for vnic in _require_host_network(host, host_name).vnic or []:
         if vnic.spec.ip and vnic.spec.ip.ipAddress == ip:
             raise HostNetworkError(
                 f"Host '{host_name}' already has {vnic.device} at {ip}"
@@ -234,7 +391,9 @@ def add_host_vmk(
         return {
             "action": "preview",
             "would_create": planned,
-            "hint": "Re-run with confirm=True to create.",
+            "blast_radius": {**planned, "blockers": [], "unmeasured": []},
+            "hint": "Nothing was changed. Show blast_radius to the user; re-run with "
+                    "confirm=True only after they agree.",
         }
 
     spec = vim.host.VirtualNic.Specification()
@@ -272,7 +431,7 @@ def remove_host_vmk(
     """
     host = _require_host(si, host_name)
 
-    existing = {v.device: v for v in host.config.network.vnic or []}
+    existing = {v.device: v for v in _require_host_network(host, host_name).vnic or []}
     if vmk not in existing:
         raise HostNetworkError(
             f"'{vmk}' not found on '{host_name}'. "
@@ -280,53 +439,65 @@ def remove_host_vmk(
         )
     vnic = existing[vmk]
 
-    protections: list[str] = []
+    # Each protection is (text, what could not be read or None). A preview
+    # reports them as blockers / unmeasured; a confirmed call refuses on them
+    # exactly as before.
+    protections: list[tuple[str, str | None]] = []
+    absolute: str | None = None
 
     services = _vmk_services(host)
     if services is None:
-        protections.append(
+        protections.append((
             "the host's service map cannot be read (virtualNicManager "
             "unavailable) - this vmk may carry management/vMotion/other "
-            "critical services and that cannot be ruled out right now"
-        )
+            "critical services and that cannot be ruled out right now",
+            "service_map",
+        ))
     else:
         in_use = services.get(vmk, [])
         if "management" in in_use:
             mgmt_vmks = [d for d, svcs in services.items() if "management" in svcs]
             if len(mgmt_vmks) <= 1:
-                raise HostNetworkError(
+                absolute = (
                     f"REFUSED (no override): {vmk} is the ONLY "
                     f"management-enabled vmk on '{host_name}'. Removing it "
                     "severs the API path this call rides on; after it "
                     "succeeded, nothing could reach the host to undo it."
                 )
         if in_use:
-            protections.append(f"selected for host services {in_use}")
+            protections.append((f"selected for host services {in_use}", None))
 
     netstack = getattr(vnic.spec, "netStackInstanceKey", None)
     if netstack and netstack != _DEFAULT_NETSTACK:
-        protections.append(
+        protections.append((
             f"lives on netstack '{sanitize(netstack, 80)}' - non-default "
             "netstacks (NSX TEPs on vxlan, dedicated vmotion/provisioning "
-            "stacks) are system-owned and never appear in the service map"
-        )
+            "stacks) are system-owned and never appear in the service map",
+            None,
+        ))
 
     carries_gw = _vmk_carries_default_route(host, vmk)
     if carries_gw is None:
-        protections.append(
+        protections.append((
             "the host routing table cannot be read - this vmk may carry "
-            "a default gateway route and that cannot be ruled out right now"
-        )
+            "a default gateway route and that cannot be ruled out right now",
+            "routing_table",
+        ))
     elif carries_gw:
-        protections.append("carries a default (prefix-0) gateway route")
+        protections.append(("carries a default (prefix-0) gateway route", None))
 
-    if protections and not force_unprotected:
+    texts = [text for text, _ in protections]
+    override = (
+        "If you are certain this interface is safe to remove, re-run "
+        "with force_unprotected=True AND confirm=True - the override and "
+        "every bypassed protection are recorded in the result."
+    )
+    if confirm and absolute:
+        raise HostNetworkError(absolute)
+    if confirm and protections and not force_unprotected:
         raise HostNetworkError(
             f"REFUSED: removing {vmk} on '{host_name}' is blocked: "
-            + "; ".join(protections)
-            + ". If you are certain this interface is safe to remove, re-run "
-            "with force_unprotected=True AND confirm=True - the override and "
-            "every bypassed protection are recorded in the result."
+            + "; ".join(texts) + ". " + override
         )
 
     target_ip = vnic.spec.ip
@@ -336,20 +507,30 @@ def remove_host_vmk(
         "ip": target_ip.ipAddress if target_ip else None,
     }
     if not confirm:
+        held = [] if force_unprotected else protections
         preview: dict = {
             "action": "preview",
             "would_remove": doomed,
-            "hint": "Re-run with confirm=True to remove.",
+            "blast_radius": {
+                **doomed,
+                "blockers": ([absolute] if absolute else []) + [
+                    f"REFUSED: removing {vmk} on '{host_name}' is blocked: {text}. {override}"
+                    for text, unread in held if unread is None
+                ],
+                "unmeasured": [unread for _, unread in held if unread is not None],
+            },
+            "hint": "Nothing was changed. Show blast_radius to the user; re-run with "
+                    "confirm=True only after they agree.",
         }
-        if protections:
-            preview["protections_bypassed_by_force"] = protections
+        if protections and force_unprotected:
+            preview["protections_bypassed_by_force"] = texts
         return preview
 
     host.configManager.networkSystem.RemoveVirtualNic(vmk)
     result: dict = {"action": "removed", "removed": doomed}
     if protections:
         result["forced"] = True
-        result["protections_bypassed"] = protections
+        result["protections_bypassed"] = texts
     return result
 
 
@@ -390,7 +571,7 @@ def set_vmk_service(
             f"Valid services: {', '.join(sorted(_NIC_TYPES))}"
         )
 
-    existing = {v.device for v in host.config.network.vnic or []}
+    existing = {v.device for v in _require_host_network(host, host_name).vnic or []}
     if vmk not in existing:
         raise HostNetworkError(
             f"'{vmk}' not found on '{host_name}'. "
@@ -398,32 +579,43 @@ def set_vmk_service(
         )
 
     services = _vmk_services(host)
+    change = {
+        "host": sanitize(host.name, 200),
+        "device": vmk,
+        "service": service,
+        "enabled": enabled,
+        "current_services": sorted(services.get(vmk, [])) if services is not None else None,
+    }
     if services is None:
+        if not confirm:
+            # Unverifiable is never safe: shown as unmeasured, refused on confirm.
+            return {
+                "action": "preview",
+                "would_set": change,
+                "blast_radius": {**change, "blockers": [], "unmeasured": ["service_map"]},
+                "hint": "The host's service map cannot be read, so this change would "
+                        "be refused. Retry when the host is reachable/healthy.",
+            }
         raise HostNetworkError(
             "REFUSED: the host's service map cannot be read (virtualNicManager "
             "unavailable), so the current selections cannot be verified and "
             "this change cannot be made safely. Retry when the host is "
             "reachable/healthy."
         )
-    current = sorted(services.get(vmk, []))
+    current = change["current_services"]
 
+    blockers: list[str] = []
     if not enabled and service == "management" and "management" in current:
         mgmt_vmks = [d for d, svcs in services.items() if "management" in svcs]
         if len(mgmt_vmks) <= 1:
-            raise HostNetworkError(
+            blockers.append(
                 f"REFUSED (no override): {vmk} is the ONLY management-enabled "
                 f"vmk on '{host_name}'. Untagging management severs the API "
                 "path this call rides on; after it succeeded, nothing could "
                 "reach the host to undo it."
             )
-
-    change = {
-        "host": sanitize(host.name, 200),
-        "device": vmk,
-        "service": service,
-        "enabled": enabled,
-        "current_services": current,
-    }
+    if confirm and blockers:
+        raise HostNetworkError(blockers[0])
 
     if (service in current) == enabled:
         return {
@@ -437,7 +629,9 @@ def set_vmk_service(
         return {
             "action": "preview",
             "would_set": change,
-            "hint": "Re-run with confirm=True to apply.",
+            "blast_radius": {**change, "blockers": blockers, "unmeasured": []},
+            "hint": "Nothing was changed. Show blast_radius to the user; re-run with "
+                    "confirm=True only after they agree.",
         }
 
     mgr = host.configManager.virtualNicManager
@@ -594,7 +788,7 @@ def vmk_ping(
         raise HostNetworkError(f"count must be 1-60, got {count}")
 
     host = _require_host(si, host_name)
-    devices = {v.device for v in host.config.network.vnic or []}
+    devices = {v.device for v in _require_host_network(host, host_name).vnic or []}
     if source_vmk not in devices:
         present = sanitize(str(sorted(devices)), 300)
         raise HostNetworkError(

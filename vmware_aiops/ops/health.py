@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
+from vmware_monitor.ops.health import query_events, short_event_type
 from vmware_policy import sanitize
 
 from vmware_aiops.ops.inventory import _collect, _collect_object
@@ -109,17 +110,22 @@ def get_recent_events(
         time=vim.event.EventFilterSpec.ByTime(beginTime=begin, endTime=now)
     )
 
-    events = event_mgr.QueryEvents(filter_spec)
+    # Not QueryEvents: on vCenter it returns only the OLDEST 1000 events in the
+    # window (measured 2026-09-14), so a busy day hid its latest hours. The shared
+    # read walks an event history collector newest first.
+    events = query_events(event_mgr, filter_spec)
     min_level = SEVERITY_ORDER.get(severity, 1)
 
     results = []
     for event in events:
         event_type = type(event).__name__
-        if event_type in CRITICAL_EVENTS:
+        # The sets spell bare names; a real pyVmomi class is vim.event.<Name>.
+        name = short_event_type(event_type)
+        if name in CRITICAL_EVENTS:
             sev = "critical"
-        elif event_type in WARNING_EVENTS:
+        elif name in WARNING_EVENTS:
             sev = "warning"
-        elif event_type in INFO_EVENTS:
+        elif name in INFO_EVENTS:
             sev = "info"
         else:
             sev = "info"
