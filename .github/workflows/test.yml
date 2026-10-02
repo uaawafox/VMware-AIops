@@ -43,4 +43,10 @@ jobs:
       # if ever wanted, is a separate pass. (Our own added files were linted
       # clean at authoring time.)
       - name: Run tests
+        # Under GITHUB_ACTIONS, Rich forces terminal rendering and bolds each dash
+        # of an option name separately, so a CLI error saying "--user" never
+        # contains that literal string and the guest-username tests fail in CI
+        # only. Typer's switch renders plain text, as on a developer machine.
+        env:
+          _TYPER_FORCE_DISABLE_TERMINAL: "1"
         run: python -m pytest tests/
