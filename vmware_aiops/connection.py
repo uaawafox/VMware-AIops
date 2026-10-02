@@ -82,10 +82,17 @@ def get_verify_ssl(si: ServiceInstance) -> bool:
 
 
 # config.yaml target name -> hub-routing backend name. Per-role cred items are
-# per-vCenter ("MCP - <role> - <backend>"); resolving the prod backend for a
-# non-prod target would apply prod creds to the wrong host. Approved by Allen
-# in-session 2026-07-15. Unmapped targets use the prod backend (the default).
-_ROUTING_BACKENDS = {"v9-vcenter": "vcenter-v9"}
+# per-vCenter ("MCP - <role> - <backend>"), so a routed request must resolve the
+# items for the vCenter it is about to log in to. Approved by Allen in-session
+# 2026-07-15. The target was renamed v9-vcenter -> uaa-vcenter on 2026-08-03 and
+# the 1P items kept their "vcenter-v9" title.
+#
+# A routed request for a target with no row here is DENIED (fail closed). It
+# used to fall back to the "vcenter-prod" items, which belonged to the apps
+# vCenter decommissioned 2026-08-24: a stale default that would put another
+# vCenter's credentials on this host. Unrouted calls (no hub signal) are
+# unaffected and keep the startup credential.
+_ROUTING_BACKENDS = {"uaa-vcenter": "vcenter-v9"}
 
 
 class ConnectionManager:
@@ -118,12 +125,16 @@ class ConnectionManager:
             else self._config.default_target
         )
 
-        backend = _ROUTING_BACKENDS.get(target.name, "vcenter-prod")
+        backend = _ROUTING_BACKENDS.get(target.name)
         routed = (
-            uaa_hub_routing.routing_item(backend, _VCENTER_SELECTOR)
+            uaa_hub_routing.routing_item(backend or "unmapped", _VCENTER_SELECTOR)
             if _HUB_ROUTING
             else None
         )
+        if routed is not None and backend is None:
+            raise uaa_hub_routing.RoutingError(
+                f"target {target.name!r} has no hub-routing backend; deny-by-default"
+            )
         cache_key = target.name if routed is None else f"{target.name}#{routed}"
 
         if cache_key in self._connections:
