@@ -46,12 +46,17 @@ def _manager(monkeypatch, backend_calls, created, routed=True):
     monkeypatch.setattr(conn_mod, "uaa_hub_routing", fake_lib, raising=False)
     monkeypatch.setattr(conn_mod, "_HUB_ROUTING", True)
     monkeypatch.setattr(conn_mod, "_VCENTER_SELECTOR", object(), raising=False)
-    monkeypatch.setattr(
-        conn_mod.ConnectionManager, "_create_connection",
-        staticmethod(lambda t, *, user=None, pwd=None: created.append(user or t.username) or FakeSI(user or t.username)),
+    def create(t, *, user=None, pwd=None):
+        created.append(user or t.username)
+        return FakeSI(user or t.username)
+
+    monkeypatch.setattr(conn_mod.ConnectionManager, "_create_connection", staticmethod(create))
+    live = TargetConfig(
+        name="uaa-vcenter", host="vc.example", config_username="startup", verify_ssl=True
     )
-    live = TargetConfig(name="uaa-vcenter", host="vc.example", config_username="startup", verify_ssl=True)
-    other = TargetConfig(name="new-vcenter", host="vc2.example", config_username="startup", verify_ssl=True)
+    other = TargetConfig(
+        name="new-vcenter", host="vc2.example", config_username="startup", verify_ssl=True
+    )
     return conn_mod.ConnectionManager(AppConfig(targets=(live, other)))
 
 
