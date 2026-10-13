@@ -181,26 +181,29 @@ def _matches_filter(state: Any, status: str, type_entity: str) -> bool:
     return True
 
 
-def _read_name(obj: Any) -> str:
+def _read_name(read: Any) -> str:
+    """``read()`` → a name; every lazy SOAP read happens inside the guard."""
     try:
-        return sanitize(obj.name)
+        return sanitize(read())
     except _READ_ERRORS:
         return "<unreadable>"
 
 
-def reset_alarm_radius(
+def measure_reset(
     si: ServiceInstance, entity_name: str, alarm_name: str
-) -> dict[str, Any]:
-    """What reset_alarm would clear: every triggered alarm its filter matches.
+) -> tuple[dict[str, Any], Any]:
+    """What reset_alarm would clear, and the exact filter that clears it.
 
     vSphere has no per-alarm clear, so this is usually more than the named
     alarm. The root folder's triggeredAlarmState aggregates every descendant
     alarm; it is read once, filtered the way ClearTriggeredAlarms filters, and
     de-duplicated by alarm-state key. If it cannot be read, the alarms are
-    reported unmeasured and a confirmed call refuses.
+    reported unmeasured and a confirmed call refuses. The returned filter is
+    the one the radius was measured with: a confirmed call must clear with it,
+    not rebuild one from a second lookup.
     """
     entity, alarm_state = _find_triggered_alarm(si, entity_name, alarm_name)
-    type_entity, _ = _clear_filter(entity, alarm_state)
+    type_entity, filter_spec = _clear_filter(entity, alarm_state)
     status = str(alarm_state.overallStatus)
     radius: dict[str, Any] = {
         "entity": sanitize(entity_name),
@@ -223,24 +226,35 @@ def reset_alarm_radius(
         states = None
     if states is None:
         radius["unmeasured"].append("alarms_that_would_be_cleared")
-        return radius
+        return radius, filter_spec
 
     seen: set[str] = set()
-    cleared: list[dict[str, str]] = []
+    matched: list[Any] = []
     for state in states:
         key = str(getattr(state, "key", "")) or str(id(state))
         if key in seen or not _matches_filter(state, status, str(type_entity)):
             continue
         seen.add(key)
-        cleared.append({
-            "entity_name": _read_name(state.entity),
-            "alarm_name": _read_name(state.alarm.info),
-            "entity_type": type(state.entity).__name__,
-        })
-    radius["will_clear_count"] = len(cleared)
-    radius["will_clear"] = cleared[:RESET_PREVIEW_LIMIT]
-    radius["will_clear_truncated"] = len(cleared) > RESET_PREVIEW_LIMIT
-    return radius
+        matched.append(state)
+    # Names cost a round-trip each, so only the ones the preview lists are read.
+    radius["will_clear"] = [
+        {
+            "entity_name": _read_name(lambda st=st: st.entity.name),
+            "alarm_name": _read_name(lambda st=st: st.alarm.info.name),
+            "entity_type": type(st.entity).__name__,
+        }
+        for st in matched[:RESET_PREVIEW_LIMIT]
+    ]
+    radius["will_clear_count"] = len(matched)
+    radius["will_clear_truncated"] = len(matched) > RESET_PREVIEW_LIMIT
+    return radius, filter_spec
+
+
+def reset_alarm_radius(
+    si: ServiceInstance, entity_name: str, alarm_name: str
+) -> dict[str, Any]:
+    """The blast radius alone (see :func:`measure_reset`)."""
+    return measure_reset(si, entity_name, alarm_name)[0]
 
 
 def reset_alarm(
@@ -249,6 +263,7 @@ def reset_alarm(
     alarm_name: str,
     audit_logger: AuditLogger | None = None,
     target_name: str = "default",
+    filter_spec: Any = None,
 ) -> dict:
     """Clear triggered vCenter alarms back to normal state.
 
@@ -265,14 +280,19 @@ def reset_alarm(
         alarm_name: Exact alarm definition name.
         audit_logger: Optional audit logger.
         target_name: Target name for audit log.
+        filter_spec: The filter :func:`measure_reset` measured with. Given, the
+            clear uses exactly it; omitted, the alarm is looked up here.
 
     Returns:
         Dict with entity_name, alarm_name, action, status, scope.
     """
-    entity, alarm_state = _find_triggered_alarm(si, entity_name, alarm_name)
+    if filter_spec is None:
+        entity, alarm_state = _find_triggered_alarm(si, entity_name, alarm_name)
+        _, filter_spec = _clear_filter(entity, alarm_state)
     content = si.RetrieveContent()
-    type_entity, filter_spec = _clear_filter(entity, alarm_state)
     content.alarmManager.ClearTriggeredAlarms(filter=filter_spec)
+    type_entity = filter_spec.typeEntity
+    cleared_status = str(filter_spec.status[0])
 
     result = {
         "entity_name": sanitize(entity_name),
@@ -280,7 +300,7 @@ def reset_alarm(
         "action": "reset",
         "status": "cleared",
         "scope": (
-            f"all triggered alarms with status={alarm_state.overallStatus} "
+            f"all triggered alarms with status={cleared_status} "
             f"on {type_entity} entities (vSphere has no per-alarm clear)"
         ),
     }

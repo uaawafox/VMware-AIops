@@ -154,3 +154,93 @@ def test_schema_and_annotations_put_it_inside_the_gate():
     assert "confirm" not in tool.inputSchema.get("required", [])
     assert tool.annotations.destructiveHint is True
     assert tool.annotations.idempotentHint is not True
+
+
+# ═══ review fixes ═════════════════════════════════════════════════════════════
+
+
+def test_the_clear_uses_exactly_the_filter_the_preview_measured(vcenter):
+    manager = vcenter([NAMED, SAME_FILTER])
+    out = alarm_tools.reset_vcenter_alarm("esx-01", "Host memory usage", confirm=True)
+    filt = manager.ClearTriggeredAlarms.call_args.kwargs["filter"]
+    br = out["blast_radius"]
+    assert [str(s) for s in filt.status] == [br["status"]]
+    assert str(filt.typeEntity) == br["entity_type_filter"]
+
+
+def test_confirmed_call_looks_the_alarm_up_once(vcenter, monkeypatch):
+    vcenter([NAMED, SAME_FILTER])
+    calls = []
+    real = alarm_mgmt._find_triggered_alarm
+    monkeypatch.setattr(
+        alarm_mgmt, "_find_triggered_alarm", lambda *a: calls.append(a) or real(*a)
+    )
+    alarm_tools.reset_vcenter_alarm("esx-01", "Host memory usage", confirm=True)
+    assert len(calls) == 1, "the clear must not re-derive its filter from a second lookup"
+
+
+def test_root_returning_nothing_is_unmeasured_not_empty(vcenter, monkeypatch):
+    manager = vcenter([NAMED])
+    monkeypatch.setattr(alarm_mgmt, "_collect_object", lambda *_a: {})
+    br = alarm_tools.reset_vcenter_alarm("esx-01", "Host memory usage")["blast_radius"]
+    assert br["unmeasured"] == ["alarms_that_would_be_cleared"]
+    assert "will_clear_count" not in br
+    out = alarm_tools.reset_vcenter_alarm("esx-01", "Host memory usage", confirm=True)
+    manager.ClearTriggeredAlarms.assert_not_called()
+    assert "error" in out
+
+
+def test_one_unreadable_alarm_definition_does_not_sink_the_preview(vcenter):
+    broken = _state(ESX2, "x", "red", "alarm-9.host-2")
+    type(broken.alarm).info = property(lambda _self: (_ for _ in ()).throw(TypeError("gone")))
+    vcenter([NAMED, broken])
+    br = alarm_tools.reset_vcenter_alarm("esx-01", "Host memory usage")["blast_radius"]
+    assert br["will_clear_count"] == 2
+    assert "<unreadable>" in {a["alarm_name"] for a in br["will_clear"]}
+
+
+@pytest.fixture
+def cli_vcenter(vcenter, monkeypatch):
+    import vmware_aiops.cli.alarm as cli_alarm
+
+    def install(states, **kw):
+        manager = vcenter(states, **kw)
+        si = alarm_tools._get_connection()
+        monkeypatch.setattr(cli_alarm, "_get_connection", lambda *_a, **_k: (si, None))
+        return manager
+
+    return install
+
+
+def _cli(argv, answers=""):
+    from typer.testing import CliRunner
+
+    from vmware_aiops.cli import app
+
+    return CliRunner().invoke(app, argv, input=answers)
+
+
+def test_cli_dry_run_lists_what_it_would_clear_and_clears_nothing(cli_vcenter):
+    manager = cli_vcenter([NAMED, SAME_FILTER, OTHER_STATUS])
+    out = _cli(["alarm", "reset", "esx-01", "Host memory usage", "--dry-run"])
+    assert out.exit_code == 0, out.output
+    assert "Would clear 2 triggered alarm(s)" in out.output
+    assert "Host CPU usage" in out.output
+    manager.ClearTriggeredAlarms.assert_not_called()
+
+
+def test_cli_refuses_when_it_cannot_read_what_it_would_clear(cli_vcenter):
+    manager = cli_vcenter([NAMED], root_readable=False)
+    out = _cli(["alarm", "reset", "esx-01", "Host memory usage"], "y\ny\n")
+    assert out.exit_code != 0
+    manager.ClearTriggeredAlarms.assert_not_called()
+
+
+def test_cli_confirmed_reset_clears_with_the_measured_filter(cli_vcenter):
+    manager = cli_vcenter([NAMED, SAME_FILTER])
+    out = _cli(["alarm", "reset", "esx-01", "Host memory usage"], "y\ny\n")
+    assert out.exit_code == 0, out.output
+    filt = manager.ClearTriggeredAlarms.call_args.kwargs["filter"]
+    assert [str(s) for s in filt.status] == ["red"]
+    assert str(filt.typeEntity) == "entityTypeHost"
+    assert "Cleared 2 triggered alarm(s)" in out.output

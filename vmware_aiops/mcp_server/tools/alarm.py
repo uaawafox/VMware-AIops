@@ -8,8 +8,8 @@ from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops.alarm_mgmt import (
     acknowledge_alarm,
     list_alarms,
+    measure_reset,
     reset_alarm,
-    reset_alarm_radius,
 )
 from vmware_aiops.ops.gate import preview, refuse_on
 
@@ -101,9 +101,11 @@ def reset_vcenter_alarm(
         Dict with action (preview, reset), blast_radius, and on reset the scope cleared.
     """
     si = _get_connection(target)
-    radius = reset_alarm_radius(si, entity_name, alarm_name)
+    radius, filter_spec = measure_reset(si, entity_name, alarm_name)
     if not confirm:
         return preview(radius)
     refuse_on(radius, "reset_vcenter_alarm")
-    result = reset_alarm(si, entity_name, alarm_name, target_name=target or "default")
+    result = reset_alarm(
+        si, entity_name, alarm_name, target_name=target or "default", filter_spec=filter_spec
+    )
     return {**result, "blast_radius": radius}
