@@ -98,11 +98,12 @@ your agent's instruction block.
 
 ## Writes in vmware-aiops
 
-- 22 of the 43 write tools — every destructive one: vm_power_off, vm_delete,
+- 23 of the 43 write tools — every destructive one: vm_power_off, vm_delete,
   vm_migrate, vm_revert_snapshot, vm_delete_snapshot, vm_clean_slate,
   vm_set_ttl, the four guest tools (vm_guest_exec, vm_guest_exec_output,
   vm_guest_upload, vm_guest_provision), cluster_delete, cluster_remove_host,
-  vm_apply_plan, vm_rollback_plan and the seven host-network and DRS tools —
+  vm_apply_plan, vm_rollback_plan, reset_vcenter_alarm and the seven host-network
+  and DRS tools —
   default to confirm=false, which returns {"action": "preview",
   "blast_radius": ...} and writes nothing. Show the blast radius; pass
   confirm=true only after the user has seen it and agreed — a request to
@@ -110,8 +111,8 @@ your agent's instruction block.
   refused when the preview listed blockers or could not read something: fix
   the cause and preview again, do not retry blindly. vm_delete also needs
   acknowledge_blast_radius set to the preview's acknowledge_with, and refuses if
-  the VM changed since. The other 21 write tools (create, clone, deploy,
-  power-on, reconfigure, snapshot create, alarms) act on the first call; for
+  the VM changed since. The other 20 write tools (create, clone, deploy,
+  power-on, reconfigure, snapshot create, alarm acknowledge) act on the first call; for
   them the "restate the object and wait" rule above is the only confirmation
   step, and it is yours to keep.
 - vm_guest_exec, vm_guest_exec_output and the exec steps of vm_guest_provision
@@ -123,7 +124,9 @@ your agent's instruction block.
   files the user named.
 - reset_vcenter_alarm has a blast radius: vSphere has no per-alarm clear API,
   so it clears every triggered alarm matching the named alarm's entity type and
-  status, not only the one named. Report the response's scope field verbatim.
+  status, not only the one named. A bare call previews them
+  (blast_radius.will_clear, will_clear_count): show that to the user and set
+  confirm=True only after they agree. Report the response's scope field verbatim.
 - vm_set_ttl schedules an unattended auto-delete. Treat it as destructive and
   say so when proposing it.
 - Long writes return a task id instead of blocking. Poll vm_task_status. A

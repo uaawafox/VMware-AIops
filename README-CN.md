@@ -283,7 +283,7 @@ Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小�
 | 预演模式（Dry-Run，**仅 CLI**） | 加 `--dry-run` 只打印将要发出的 API 调用而不执行；除 `deploy iso`、`deploy mark-template`、`vm cancel-ttl`、`vm guest-download` 外，每个 CLI 写操作都支持 |
 | Plan → Confirm → Execute → Log | CLI 工作流：展示当前状态、确认变更、执行、审计日志 |
 | 双重确认（**仅 CLI**） | 破坏性与部署类 CLI 命令（`vm` power-off, delete, reconfigure, snapshot-revert/delete, clone, migrate, set-ttl, clean-slate, guest-exec, guest-upload; `deploy` ova, template, linked-clone, batch, batch-clone, mark-template; `cluster` delete, add-host, remove-host, configure, drs-rule-set/create/delete; `alarm reset`）需连续两次确认，无绕过参数 |
-| MCP 上只有破坏性工具需要确认 | agent 通过 MCP 看到的 43 个写工具里，22 个（所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具）先预览、需 `confirm=True` 才执行；其余 21 个（创建、克隆、部署、开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、告警）**第一次调用就直接执行**。没有审批分级、没有只读开关。决定一次写入能否落地的是 vCenter 账号的权限，记录它的是审计日志。见[真正保护你的是什么](#真正保护你的是什么) |
+| MCP 上只有破坏性工具需要确认 | agent 通过 MCP 看到的 43 个写工具里，23 个（所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具）先预览、需 `confirm=True` 才执行；其余 20 个（创建、克隆、部署、开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、确认告警）**第一次调用就直接执行**。没有审批分级、没有只读开关。决定一次写入能否落地的是 vCenter 账号的权限，记录它的是审计日志。见[真正保护你的是什么](#真正保护你的是什么) |
 | 拒绝记录 | 用户在 CLI 拒绝的操作也会记录到审计日志，便于安全审计 |
 | 审计日志 | 所有操作记录到 `~/.vmware-aiops/audit.log`（JSONL），包含操作前后状态 |
 | 输入校验 | VM 名称长度/格式、CPU（1-128）、内存（128-1048576 MB）、磁盘（1-65536 GB）参数校验 |
@@ -319,14 +319,14 @@ Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小�
 `vm cancel-ttl`、`vm guest-download` 外，每个写操作都可用 `--dry-run` 预览。
 这防的是人手误敲的命令，**防不住 agent**——一个 `yes |` 就能同时满足两次确认。
 
-**MCP 上**，所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具——43 个写工具中的 22 个，包括 `vm_power_off`、`vm_migrate`、
+**MCP 上**，所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具——43 个写工具中的 23 个，包括 `reset_vcenter_alarm`、`vm_power_off`、`vm_migrate`、
 `cluster_delete`，以及快照、guest、TTL、Clean Slate 和计划类工具——都接受同一个参数
 `confirm`，默认是不写入的预览：不带参数调用只返回影响范围（blast radius），什么都不改。
 `confirm=True` 会重新测量；如果预览发现阻断项（VM 里 VMware Tools 没在运行、目标主机处于
 维护模式、集群里还有主机、快照不存在或重名）或有读不到的字段，调用会被拒绝，返回教学性
 错误并在审计中记为失败。`vm_delete` 还要求把预览里的 `acknowledge_with` 原样传回，
-VM 在预览之后变了、处于开机或挂起状态都会被拒绝。其余 21 个写工具——创建、克隆、部署、
-开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、告警——第一次调用就执行。确认不是授权，所以 `VMWARE_READ_ONLY` 开关依然不恢复
+VM 在预览之后变了、处于开机或挂起状态都会被拒绝。其余 20 个写工具——创建、克隆、部署、
+开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、确认告警——第一次调用就执行。确认不是授权，所以 `VMWARE_READ_ONLY` 开关依然不恢复
 （它只在 MCP 路径上生效，有 shell 的 agent 走 CLI 就绕过去了）。预览换来的东西更窄：
 agent 不会销毁一个它没看过的东西。
 

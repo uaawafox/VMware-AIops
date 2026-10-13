@@ -2,8 +2,8 @@
 
 Destructive and deploy commands ask for two confirmations and most write
 commands take `--dry-run` (not `deploy iso`, `deploy mark-template`,
-`vm cancel-ttl`, `vm guest-download`). These are CLI-only: over MCP the 22 destructive write tools take `confirm` and preview by
-default, the other 21 write tools act immediately, and the enforcement boundary there is the RBAC of the vCenter/ESXi account — see
+`vm cancel-ttl`, `vm guest-download`). These are CLI-only: over MCP the 23 destructive write tools take `confirm` and preview by
+default, the other 20 write tools act immediately, and the enforcement boundary there is the RBAC of the vCenter/ESXi account — see
 `capabilities.md` → "What gates a write".
 
 ```bash
@@ -67,8 +67,8 @@ vmware-aiops alarm reset <entity_name> <alarm_name> [--target <name>]
 # NOTE: 'alarm reset' clears ALL triggered alarms matching the named alarm's
 # entity type (host/VM/all) and current status (red/yellow) — vSphere has no
 # per-alarm clear API. The CLI double confirmation applies; output reports the
-# scope. The reset_vcenter_alarm MCP tool has no confirmation — it clears on the
-# first call.
+# scope. Over MCP, reset_vcenter_alarm previews by default (blast_radius lists
+# every alarm it would clear) and clears only with confirm=True.
 
 # Datastore
 vmware-aiops datastore browse <ds-name> [--path <subdir>]
