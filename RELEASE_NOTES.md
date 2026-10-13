@@ -1,3 +1,21 @@
+## v1.12.1 — `reset_vcenter_alarm` previews before it clears
+
+* **`reset_vcenter_alarm` cleared alarms on the first MCP call.** vSphere has no per-alarm clear:
+  `ClearTriggeredAlarms` clears every triggered alarm with the named alarm's status on its entity type (host / VM /
+  all), usually far more than the one named. The tool was published `destructiveHint: False`, so it sat outside the
+  HLD §7 confirmation gate. It is now `destructiveHint: True` and takes `confirm: bool = False`. A bare call returns
+  `blast_radius` with `will_clear_count` and up to 50 of the alarms it would clear, measured the way the filter
+  matches (same status, same entity type, de-duplicated), and changes nothing. `confirm=True` re-measures and clears;
+  it is refused when the alarm list cannot be read. The CLI's `alarm reset` is unchanged (it already confirms
+  twice). Raised by ClawHub's review of 1.12.0.
+* **The clear uses exactly the filter the preview measured.** A confirmed call no longer looks the alarm up a second
+  time and rebuilds the filter. Alarm names are read only for the 50 listed, so one unreadable alarm definition
+  shows as `<unreadable>` instead of failing the call.
+* **CLI `alarm reset`** now prints the same list (in `--dry-run` and before its double confirmation), refuses when
+  it cannot read which alarms it would clear, clears with the measured filter, and reports how many it cleared.
+* Gate inventory: 23 of the 43 write tools now preview by default (was 22); 20 act on the first call.
+* vmware-pilot 1.12.1 labels the tool `high`, matching the new annotation.
+
 ## v1.12.0 — the MCP instructions name the configured targets
 
 `initialize` hands the client this server's `instructions`, and for a skill whose every tool takes a target that
