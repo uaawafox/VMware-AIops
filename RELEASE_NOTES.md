@@ -55,6 +55,9 @@ carry the same names and parameters as Monitor's.
 * Plan files are unaffected: plan step actions (`cluster_add_host`, `storage_rescan`, …) are action names, not
   tool names, and keep their spelling.
 
+* **Daemon audit rows say `daemon`.** The TTL / scan daemon's audit rows carried no surface and read as MCP
+  stdio calls; they now record `surface=daemon` (vmware-policy 1.18.0 audit column, HLD §16 D-14).
+
 ## v1.12.1 — `reset_vcenter_alarm` previews before it clears
 
 * **`reset_vcenter_alarm` cleared alarms on the first MCP call.** vSphere has no per-alarm clear:
