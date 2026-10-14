@@ -129,8 +129,9 @@ def _audit(
 
     The daemon is neither an MCP tool nor a CLI command, so no decorator writes
     its rows. Until 2026-09-15 nothing did: a TTL delete, a scan cycle against
-    vCenter and a webhook send left no row in either audit trail. The status is
-    passed explicitly, so this needs nothing newer than vmware-policy 1.15.0.
+    vCenter and a webhook send left no row in either audit trail. The surface is
+    passed explicitly (HLD §16 D-14, vmware-policy >= 1.18.0): without it the
+    row inherited the process default and read as an MCP stdio call.
     """
     audit_call(
         _SKILL,
@@ -140,6 +141,7 @@ def _audit(
         status=status,
         duration_ms=int((time.time() - started) * 1000),
         risk_level=risk_level,
+        surface="daemon",
     )
 
 

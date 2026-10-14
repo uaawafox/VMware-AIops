@@ -326,3 +326,17 @@ def test_a_ttl_vm_whose_name_is_ambiguous_is_not_deleted_and_the_entry_dropped(t
     assert len(found) == 1 and found[0]["status"] == "error", rows()
     assert "more than one VM" in found[0]["result"]
     assert removed == ["ttl-vm"]
+
+
+def test_daemon_rows_say_daemon_not_mcp(ttl, monkeypatch):
+    """HLD §16 D-14: a TTL delete made by the daemon is not an MCP call. Without
+    an explicit surface the row read `mcp-stdio` — non-empty, and wrong."""
+    scheduler, _removed = ttl
+    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name: f"VM '{name}' deleted")
+
+    scheduler._run_ttl_check(MagicMock())
+
+    db = Path(get_engine()._path)
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+        surfaces = {r[0] for r in con.execute("SELECT surface FROM audit_log")}
+    assert surfaces == {"daemon"}
