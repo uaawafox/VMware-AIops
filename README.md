@@ -24,6 +24,14 @@ AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 60 tools.
 [![Claude Code Marketplace](https://img.shields.io/badge/Claude_Code-Marketplace-blueviolet)](https://github.com/vmware-skills/VMware-AIops)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+## Upgrading to 2.0
+
+2.0 renames 38 MCP tools so every name starts with a verb (e.g. `cluster_add_host` → `add_cluster_host`, `cluster_configure` → `configure_cluster`, `cluster_create` → `create_cluster`). The full old → new table is in
+[RELEASE_NOTES.md](RELEASE_NOTES.md#v200--mcp-tools-renamed-verb-first). Nothing else changes: same tools, parameters,
+safety gates and CLI commands. If an agent prompt, script or `~/.vmware/rules.yaml` names a tool, update it — though deny
+rules written with the old names keep working with vmware-policy ≥ 1.18 (`vmware-audit policy` lists any rule the
+renames widened), and vmware-pilot ≥ 1.13 translates old names in saved workflows.
+
 ## ⚡ Quick Investigation Reports (read-only)
 
 Triage → investigate → act, all in one conversation. Five opinionated read-only reports **aggregate and correlate server-side** and hand back a high-signal result (never raw inventory), so you can decide *where to look* before changing anything. Each renders a **self-contained offline HTML snapshot** with `--html` (no external assets; drill-down detail collapses in native `<details>`, zero JavaScript). All delegate to the [vmware-monitor](https://github.com/vmware-skills/VMware-Monitor) library using AIops's own vCenter connection.
