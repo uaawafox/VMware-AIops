@@ -31,7 +31,7 @@ vm_app = typer.Typer(help="VM lifecycle: power, snapshot, clone, migrate.")
 
 @vm_app.command("power-on")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('power_on_vm', risk_level='medium')
 def power_on_vm(
     name: str,
     target: TargetOption = None,
@@ -65,7 +65,7 @@ def power_on_vm(
 
 @vm_app.command("power-off")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('power_off_vm', risk_level='medium')
 def power_off_vm(
     name: str,
     force: Annotated[bool, typer.Option(help="Force power off")] = False,
@@ -105,7 +105,7 @@ def power_off_vm(
 
 @vm_app.command("create")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('create_vm', risk_level='medium')
 def create_vm(
     name: str,
     cpu: Annotated[int, typer.Option(help="Number of CPUs")] = 2,
@@ -153,7 +153,7 @@ def create_vm(
 
 @vm_app.command("delete")
 @cli_errors
-@guarded(risk_level='critical')
+@guarded('delete_vm', risk_level='critical')
 def delete_vm(
     name: str,
     target: TargetOption = None,
@@ -211,7 +211,7 @@ def delete_vm(
 
 @vm_app.command("reconfigure")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('reconfigure_vm', risk_level='medium')
 def reconfigure_vm(
     name: str,
     cpu: Annotated[int | None, typer.Option(help="New CPU count")] = None,
@@ -458,7 +458,7 @@ def get_vm_task_status(
 
 @vm_app.command("clone")
 @cli_errors
-@guarded(risk_level='high')
+@guarded('clone_vm', risk_level='high')
 def clone_vm(
     name: str,
     new_name: Annotated[str, typer.Option("--new-name", help="Name for the clone")],
@@ -521,7 +521,7 @@ def clone_vm(
 
 @vm_app.command("migrate")
 @cli_errors
-@guarded(risk_level='high')
+@guarded('migrate_vm', risk_level='high')
 def migrate_vm(
     name: str,
     to_host: Annotated[str, typer.Option("--to-host", help="Target ESXi host name")],
@@ -575,7 +575,7 @@ def migrate_vm(
 
 @vm_app.command("set-ttl")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('set_vm_ttl', risk_level='medium')
 def set_vm_ttl(
     vm_name: str,
     minutes: Annotated[int, typer.Option("--minutes", "-m", help="Minutes until auto-deletion")],
@@ -610,7 +610,7 @@ def set_vm_ttl(
 
 @vm_app.command("cancel-ttl")
 @cli_errors
-@guarded(risk_level='medium')
+@guarded('cancel_vm_ttl', risk_level='medium')
 def cancel_vm_ttl(vm_name: str) -> None:
     """Cancel an existing TTL for a VM."""
     from vmware_aiops.ops.ttl import cancel_ttl
@@ -650,7 +650,7 @@ def list_vm_ttls() -> None:
 
 @vm_app.command("clean-slate")
 @cli_errors
-@guarded(risk_level='high')
+@guarded('restore_vm_clean_slate', risk_level='high')
 def restore_vm_clean_slate(
     vm_name: str,
     snapshot: Annotated[str, typer.Option("--snapshot", "-s", help="Snapshot name")] = "baseline",
