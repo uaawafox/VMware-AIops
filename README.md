@@ -32,6 +32,8 @@ safety gates and CLI commands. If an agent prompt, script or `~/.vmware/rules.ya
 files — `cluster_add_host`, `storage_rescan` and the like are plan actions, not tool names, and keep their spelling) — though deny
 rules written with the old names keep working with vmware-policy ≥ 1.18 (`vmware-audit policy` lists any rule the
 renames widened), and vmware-pilot ≥ 1.13 translates old names in saved workflows.
+If an install older than 2.0 shares that `rules.yaml`, give it vmware-policy ≥ 1.18.2 too: it matches each rule
+against both the old and the new name, so one file serves both.
 
 ## ⚡ Quick Investigation Reports (read-only)
 
