@@ -26,7 +26,7 @@ AI 驱动的 VMware vCenter/ESXi VM 生命周期管理与部署工具 — 60 个
 
 ## 升级到 2.0
 
-2.0 把 38 个 MCP 工具改成动词在前（例如 `cluster_add_host` → `add_cluster_host`, `cluster_configure` → `configure_cluster`, `cluster_create` → `create_cluster`），完整的新旧名对照表见
+2.0 把 60 个 MCP 工具中的 38 个改成动词在前（例如 `cluster_add_host` → `add_cluster_host`, `cluster_configure` → `configure_cluster`, `cluster_create` → `create_cluster`），完整的新旧名对照表见
 [RELEASE_NOTES.md](RELEASE_NOTES.md#v200--mcp-tools-renamed-verb-first)。其他都不变：工具、参数、安全确认门和 CLI 命令都一样。
 如果 agent 提示词、脚本或 `~/.vmware/rules.yaml` 里写了工具名，请改成新名（但已保存计划文件里的 `action` 动作词不要改——`cluster_add_host`、`storage_rescan` 这类是计划动作，不是工具名，保持原样）——不过用旧名写的 deny 规则在
 vmware-policy ≥ 1.18 下仍然生效（`vmware-audit policy` 会列出因改名而多匹配的规则），vmware-pilot ≥ 1.13 也会自动转换已保存工作流里的旧名。
