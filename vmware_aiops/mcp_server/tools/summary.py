@@ -8,8 +8,12 @@ forcing the user to switch skills. Read-only; no state is changed.
 
 from typing import Optional
 
-from vmware_monitor.ops.attention import get_cross_vcenter_attention
-from vmware_monitor.ops.cluster_summary import get_cluster_health_summary
+from vmware_monitor.ops.attention import (
+    get_cross_vcenter_attention as _ops_get_cross_vcenter_attention,
+)
+from vmware_monitor.ops.cluster_summary import (
+    get_cluster_health_summary as _ops_get_cluster_health_summary,
+)
 from vmware_monitor.ops.investigate_datastore import get_datastore_investigation_bundle
 from vmware_monitor.ops.investigate_host import get_host_investigation_bundle
 from vmware_monitor.ops.investigate_vm import get_vm_investigation_bundle
@@ -28,7 +32,7 @@ from vmware_aiops.mcp_server._shared import _ensure_conn_mgr, _get_connection, m
 )
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def cluster_health_summary(
+def get_cluster_health_summary(
     target: Optional[str] = None,
     cluster_filter: Optional[str] = None,
     include_vms: bool = True,
@@ -42,7 +46,7 @@ def cluster_health_summary(
     ``top_issues`` focus list — the fast triage view for "what's wrong right now?".
     Read-only (delegates to the vmware-monitor library).
     Use it FIRST for a cross-cluster glance, then drill in with
-    vm_investigation_bundle or host_investigation_bundle.
+    investigate_vm or investigate_host.
 
     Returns {totals, top_issues, issues_total, clusters, snapshot,
     customization_hint}. Lead with ``top_issues`` (worst first, each with a
@@ -57,7 +61,7 @@ def cluster_health_summary(
         top_n: Cap the top_issues focus list (default 10; 0 hides it).
     """
     si = _get_connection(target)
-    return get_cluster_health_summary(
+    return _ops_get_cluster_health_summary(
         si, cluster_filter=cluster_filter, include_vms=include_vms, top_n=top_n
     )
 
@@ -72,7 +76,7 @@ def cluster_health_summary(
 )
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def vm_investigation_bundle(
+def investigate_vm(
     vm_name: str,
     target: Optional[str] = None,
     hours: int = 24,
@@ -86,7 +90,7 @@ def vm_investigation_bundle(
     fleets. Delegates to the vmware-monitor library (read-only). Explain the result
     in operational language; do not dump it raw.
 
-    Use this AFTER cluster_health_summary points at a problem VM. Point-in-time.
+    Use this AFTER get_cluster_health_summary points at a problem VM. Point-in-time.
 
     Args:
         vm_name: Exact VM name. Unknown names return a teaching error (list VMs first).
@@ -107,7 +111,7 @@ def vm_investigation_bundle(
 )
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def host_investigation_bundle(
+def investigate_host(
     host_name: str,
     target: Optional[str] = None,
     hours: int = 24,
@@ -119,7 +123,7 @@ def host_investigation_bundle(
     across host/cluster/datastore, live performance, and a merged **event timeline**.
     Delegates to the vmware-monitor library (read-only); do not dump the result raw.
 
-    Use this AFTER cluster_health_summary flags a host. Point-in-time.
+    Use this AFTER get_cluster_health_summary flags a host. Point-in-time.
 
     Args:
         host_name: Exact host name. Unknown names return a teaching error.
@@ -140,7 +144,7 @@ def host_investigation_bundle(
 )
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def datastore_investigation_bundle(
+def investigate_datastore(
     datastore_name: str,
     target: Optional[str] = None,
     hours: int = 24,
@@ -152,7 +156,7 @@ def datastore_investigation_bundle(
     **event timeline**. Delegates to the vmware-monitor library (read-only); do not
     dump the result raw. (Per-datastore latency is a separate perf report.)
 
-    Use this AFTER cluster_health_summary flags storage pressure. Point-in-time.
+    Use this AFTER get_cluster_health_summary flags storage pressure. Point-in-time.
 
     Args:
         datastore_name: Exact datastore name. Unknown names return a teaching error.
@@ -173,25 +177,25 @@ def datastore_investigation_bundle(
 )
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def cross_vcenter_attention(
+def get_cross_vcenter_attention(
     cluster_filter: Optional[str] = None,
     top_n: int = 10,
 ) -> dict:
     """[READ] "What needs attention now?" across EVERY configured vCenter — one list.
 
-    Runs cluster_health_summary against every configured target and returns one
+    Runs get_cluster_health_summary against every configured target and returns one
     globally ranked ``top_issues`` list (worst first, each tagged with its
     ``vcenter``) plus a per-target rollup — "where do I look first, anywhere in the
     estate?". Degrades gracefully: an unreachable target is listed under
     ``unreachable`` and the rest still aggregate. Delegates to the vmware-monitor
     library (read-only). Lead with ``top_issues``, then drill in with
-    vm_investigation_bundle. Point-in-time.
+    investigate_vm. Point-in-time.
 
     Args:
         cluster_filter: Case-insensitive cluster substring applied to every target.
         top_n: Cap the merged top_issues focus list (default 10).
     """
     sessions, unreachable = _ensure_conn_mgr().connect_all()
-    return get_cross_vcenter_attention(
+    return _ops_get_cross_vcenter_attention(
         sessions, unreachable=unreachable, cluster_filter=cluster_filter, top_n=top_n
     )

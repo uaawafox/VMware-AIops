@@ -61,7 +61,7 @@ def _delete_created_vm(si: ServiceInstance, params: dict[str, Any]) -> str:
         raise GateRefusedError(
             f"Not deleted: this plan did not record the instance UUID of the VM it "
             f"created as '{name}', so the VM now named that cannot be shown to be it. "
-            "Check it in vCenter and delete it with vm_delete if it is."
+            "Check it in vCenter and delete it with delete_vm if it is."
         )
     vm = _require_vm(si, name)
     actual = vm.config.instanceUuid
@@ -102,7 +102,7 @@ def _dispatch(si: ServiceInstance, action: str, params: dict[str, Any]) -> str:
         raise ValueError(
             f"Unknown plan action: '{action}'. Supported: {sorted(dispatch_table)}. "
             f"Edit the plan to use one of those exact action names, then re-run "
-            f"vm_apply_plan (CLI: vmware-aiops plan list shows pending plans)."
+            f"apply_vm_plan (CLI: vmware-aiops plan list shows pending plans)."
         )
     result = handler()
     return str(result) if result is not None else "OK"
@@ -150,8 +150,8 @@ def _dispatch_table(si: Any, params: dict[str, Any]) -> dict[str, Callable[[], A
                 if params.get(key) is not None
             },
         ),
-        # A plan must not be the way around vm_delete's gate: the step needs
-        # the acknowledgement from a vm_delete preview, and is refused without.
+        # A plan must not be the way around delete_vm's gate: the step needs
+        # the acknowledgement from a delete_vm preview, and is refused without.
         "delete_vm": lambda: _delete_acknowledged(
             si, params["vm_name"], params.get("acknowledge_blast_radius"),
         ),

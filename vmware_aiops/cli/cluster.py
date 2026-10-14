@@ -25,7 +25,7 @@ cluster_app = typer.Typer(help="Cluster management: create, delete, configure HA
 
 @cluster_app.command("info")
 @cli_errors
-@audited("cluster_info")
+@audited("get_cluster_info")
 def cluster_info_cmd(
     name: str,
     target: TargetOption = None,
@@ -52,7 +52,7 @@ def cluster_info_cmd(
 
 @cluster_app.command("create")
 @cli_errors
-@guarded('cluster_create', risk_level='medium')
+@guarded('create_cluster', risk_level='medium')
 def cluster_create_cmd(
     name: str,
     ha: Annotated[bool, typer.Option("--ha", help="Enable HA")] = False,
@@ -91,7 +91,7 @@ def cluster_create_cmd(
 
 @cluster_app.command("delete")
 @cli_errors
-@guarded('cluster_delete', risk_level='high')
+@guarded('delete_cluster', risk_level='high')
 def cluster_delete_cmd(
     name: str,
     target: TargetOption = None,
@@ -122,7 +122,7 @@ def cluster_delete_cmd(
 
 @cluster_app.command("add-host")
 @cli_errors
-@guarded('cluster_add_host', risk_level='medium')
+@guarded('add_cluster_host', risk_level='medium')
 def cluster_add_host_cmd(
     name: str,
     host: Annotated[str, typer.Option("--host", help="Host name to add")],
@@ -153,7 +153,7 @@ def cluster_add_host_cmd(
 
 @cluster_app.command("remove-host")
 @cli_errors
-@guarded('cluster_remove_host', risk_level='medium')
+@guarded('remove_cluster_host', risk_level='medium')
 def cluster_remove_host_cmd(
     name: str,
     host: Annotated[str, typer.Option("--host", help="Host name to remove")],
@@ -184,7 +184,7 @@ def cluster_remove_host_cmd(
 
 @cluster_app.command("configure")
 @cli_errors
-@guarded('cluster_configure', risk_level='medium')
+@guarded('configure_cluster', risk_level='medium')
 def cluster_configure_cmd(
     name: str,
     ha: Annotated[bool | None, typer.Option("--ha/--no-ha", help="Enable/disable HA")] = None,

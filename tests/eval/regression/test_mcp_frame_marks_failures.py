@@ -113,7 +113,7 @@ def test_str_shaped_failure_is_flagged_and_keeps_its_teaching_text(monkeypatch) 
     """``@tool_errors("str")`` covers every undo-bearing write in this skill."""
     monkeypatch.setattr(vm_tools, "_get_connection", _connection_fails)
 
-    result = call("vm_power_on", vm_name="web-01", target="vcenter-prod")
+    result = call("power_on_vm", vm_name="web-01", target="vcenter-prod")
 
     assert result.isError is True, "a failed power-on arrived as a successful call"
     body = text_of(result)
@@ -124,9 +124,9 @@ def test_str_shaped_failure_is_flagged_and_keeps_its_teaching_text(monkeypatch) 
 def test_str_shaped_success_is_not_flagged(monkeypatch) -> None:
     """Control: marking everything an error would pass every test above."""
     monkeypatch.setattr(vm_tools, "_get_connection", _connection_works)
-    monkeypatch.setattr(vm_tools, "power_on_vm", lambda si, name: f"VM '{name}' powered on.")
+    monkeypatch.setattr(vm_tools, "_ops_power_on_vm", lambda si, name: f"VM '{name}' powered on.")
 
-    result = call("vm_power_on", vm_name="web-01", target="vcenter-prod")
+    result = call("power_on_vm", vm_name="web-01", target="vcenter-prod")
 
     assert result.isError is False
     assert "powered on" in text_of(result)
@@ -135,7 +135,7 @@ def test_str_shaped_success_is_not_flagged(monkeypatch) -> None:
 def test_dict_shaped_failure_is_flagged_and_keeps_its_payload(monkeypatch) -> None:
     monkeypatch.setattr(cluster_tools, "_get_connection", _connection_fails)
 
-    result = call("cluster_info", name="prod-cluster", target="vcenter-prod")
+    result = call("get_cluster_info", name="prod-cluster", target="vcenter-prod")
 
     assert result.isError is True
     assert DROPPED in text_of(result)
@@ -150,7 +150,7 @@ def test_dict_shaped_success_is_not_flagged(monkeypatch) -> None:
         lambda si, name: {"name": name, "host_count": 3},
     )
 
-    result = call("cluster_info", name="prod-cluster", target="vcenter-prod")
+    result = call("get_cluster_info", name="prod-cluster", target="vcenter-prod")
 
     assert result.isError is False
     assert "host_count" in text_of(result)
@@ -203,7 +203,7 @@ def test_returned_error_envelope_is_flagged(monkeypatch) -> None:
     """
     monkeypatch.setattr(plan_tools, "_get_connection", _connection_works)
 
-    result = call("vm_apply_plan", plan_id="no-such-plan", target="vcenter-prod")
+    result = call("apply_vm_plan", plan_id="no-such-plan", target="vcenter-prod")
 
     assert result.isError is True, "a returned failure envelope still read as success"
     assert "no-such-plan" in text_of(result)
@@ -230,7 +230,7 @@ def test_falsy_error_key_is_not_a_failure(monkeypatch) -> None:
     )
 
     result = call(
-        "vm_guest_provision",
+        "provision_vm_guest",
         vm_name="web-01",
         username="root",
         password="pw",
@@ -268,7 +268,7 @@ def test_the_missing_password_remedy_reaches_the_frame_unchanged(monkeypatch) ->
 
     monkeypatch.setattr(vm_tools, "_get_connection", _raise_authored)
 
-    result = call("vm_power_on", vm_name="web-01", target="vcenter-prod")
+    result = call("power_on_vm", vm_name="web-01", target="vcenter-prod")
 
     assert result.isError is True
     assert authored in text_of(result), "the authored remedy did not survive the frame"

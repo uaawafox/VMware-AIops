@@ -359,7 +359,7 @@ def find_vm_by_name(si: ServiceInstance, vm_name: str) -> vim.VirtualMachine | N
         raise AmbiguousVMError(
             f"{len(matches)} VMs are named '{sanitize(vm_name, 200)}'. This skill "
             "refuses to guess which one you meant, because every operation that "
-            "looks a VM up by name goes on to change it. Run vm_investigation_bundle "
+            "looks a VM up by name goes on to change it. Run investigate_vm "
             "or list_virtual_machines (vmware-monitor) to tell them apart, then "
             "retry once the duplicate is renamed or removed."
         )
@@ -449,7 +449,7 @@ def find_compute_resource(
         if cluster_name:
             raise InventoryError(
                 f"Compute resource '{cluster_name}' not found in datacenter "
-                f"'{dc.name}'. Run cluster_health_summary (CLI: vmware-aiops summary) "
+                f"'{dc.name}'. Run get_cluster_health_summary (CLI: vmware-aiops summary) "
                 f"to see every cluster on this target, then retry with an exact name."
             )
         raise InventoryError(

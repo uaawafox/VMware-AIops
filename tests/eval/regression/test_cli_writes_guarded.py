@@ -3,7 +3,7 @@
 A write CLI command must route through vmware_policy's guard() + audit_call() —
 the same enforcement @vmware_tool gives the MCP surface — so ``vmware-aiops vm
 delete`` run through Bash is authorized and audited to ~/.vmware/audit.db exactly
-like the ``vm_delete`` MCP tool. Without @guarded a CLI write bypassed policy and
+like the ``delete_vm`` MCP tool. Without @guarded a CLI write bypassed policy and
 landed only in the legacy per-skill log (the gap HLD §2.1 documents).
 
 The write set is DERIVED, never hand-listed (踩坑 #43): a tool annotated
@@ -180,7 +180,7 @@ def test_guarded_cli_writes_carry_their_mcp_tool_name():
 
     ``@guarded`` defaults the tool name to the function's ``__name__``, so ``vm
     snapshot-create`` was guarded as ``vm_snapshot_create`` while its MCP twin is
-    ``vm_create_snapshot`` (and ``vm guest-exec`` as ``vm_guest_exec_cmd``, ``deploy
+    ``create_vm_snapshot`` (and ``vm guest-exec`` as ``vm_guest_exec_cmd``, ``deploy
     ova`` as ``deploy_ova_cmd``) — a rule denying the MCP tool refused the agent
     and let the same write through the CLI, and the two surfaces wrote the one
     audit sink under two names. The twin is DERIVED: the MCP write tool that
@@ -260,7 +260,7 @@ def test_high_blast_radius_commands_are_derived_and_guarded():
     """
     writing, _ = _cli_write_commands()
     names = {w.split(":", 1)[1] for w in writing}
-    for must in ("vm_delete", "vm_clean_slate", "cluster_delete_cmd", "deploy_ova_cmd"):
+    for must in ("delete_vm", "restore_vm_clean_slate", "cluster_delete_cmd", "deploy_ova_cmd"):
         assert must in names, (
             f"{must} is no longer derived as a write command — the readOnlyHint→"
             f"ops→command derivation stopped resolving it"

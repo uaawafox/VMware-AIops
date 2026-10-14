@@ -25,7 +25,7 @@ def deploy_vm_from_ova(
     """[WRITE] Create a new VM by importing a local .ova file (OVF parse + VMDK upload).
 
     Use for local OVA files; for vSphere templates use deploy_vm_from_template, to
-    copy an existing VM vm_clone. Returns a status string naming the new VM. Upload
+    copy an existing VM clone_vm. Returns a status string naming the new VM. Upload
     time scales with OVA size; fails before creating anything if the datastore is
     not found.
 
@@ -64,7 +64,7 @@ def deploy_vm_from_template(
     """[WRITE] Deploy a new VM by cloning from a vSphere template.
 
     Returns a status string. Use for VMs marked as templates; for a running
-    source VM use vm_clone. Requires an existing template —
+    source VM use clone_vm. Requires an existing template —
     convert_vm_to_template makes one.
 
     Args:
@@ -102,12 +102,12 @@ def deploy_linked_clone(
 
     The clone writes to a copy-on-write delta over the source's base disk, so it
     depends on the source staying intact. Fastest provisioning for test/dev fleets;
-    use vm_clone for fully independent copies. Requires the named snapshot — run
-    vm_list_snapshots first. Returns a status string with the new clone name.
+    use clone_vm for fully independent copies. Requires the named snapshot — run
+    list_vm_snapshots first. Returns a status string with the new clone name.
 
     Args:
         source_vm_name: Source VM name (must have at least one snapshot).
-        snapshot_name: Clone base (from vm_list_snapshots).
+        snapshot_name: Clone base (from list_vm_snapshots).
         new_name: Name for the new linked clone; must not already exist.
         cpu: Override vCPU count; omit to keep the source's value.
         memory_mb: Override memory in MB; omit to keep the source's value.
@@ -226,7 +226,7 @@ def batch_linked_clone_vms(
 
     Args:
         source_vm_name: Source VM to clone from.
-        snapshot_name: Clone base (from vm_list_snapshots).
+        snapshot_name: Clone base (from list_vm_snapshots).
         vm_names: Names for the new linked clones.
         cpu: Override CPU count (optional).
         memory_mb: Override memory (optional).
@@ -252,7 +252,7 @@ def batch_deploy_from_spec(
     """[WRITE] Deploy multiple VMs in one call from a declarative YAML spec file.
 
     Use for fleet provisioning (several VMs, shared defaults); for a single VM prefer
-    deploy_vm_from_template, vm_clone, deploy_vm_from_ova, or deploy_linked_clone.
+    deploy_vm_from_template, clone_vm, deploy_vm_from_ova, or deploy_linked_clone.
     The channel is chosen by spec keys: "source" (full clone), "template",
     "linked_clone: {source, snapshot}", per-VM "ova", else empty-VM creation
     (optionally "iso"). A "defaults" block sets cpu/memory_mb/disk_gb/network/

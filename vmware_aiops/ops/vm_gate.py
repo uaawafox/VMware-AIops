@@ -1,13 +1,13 @@
 """Blast-radius measurement for the gated VM tools (HLD §7, revised 2026-09-16).
 
-``vm_power_off``, ``vm_migrate``, ``vm_revert_snapshot`` and
-``vm_delete_snapshot`` preview by default. This module measures what each would
+``power_off_vm``, ``migrate_vm``, ``revert_vm_snapshot`` and
+``delete_vm_snapshot`` preview by default. This module measures what each would
 change — with reads only — and names what stands in the way (``blockers``) or
 could not be read (``unmeasured``). The MCP tools refuse on either
 (``gate.refuse_on``) and only then call the same ``vm_lifecycle`` executors the
 CLI and the plan executor use, whose behaviour is unchanged.
 
-``vm_delete`` has its own module (``vm_delete_gate``) because it also requires an
+``delete_vm`` has its own module (``vm_delete_gate``) because it also requires an
 acknowledgement echo; these four do not, so Pilot can drive them with
 ``confirm=True`` after its own approval step.
 """
@@ -155,7 +155,7 @@ def _target_host_checks(
     """Readiness of the destination host; appends what blocks it."""
     if host is None:
         blockers.append(
-            f"Target host '{sanitize(to_host, 200)}' not found. Run cluster_info for "
+            f"Target host '{sanitize(to_host, 200)}' not found. Run get_cluster_info for "
             "the exact host names in the cluster, then preview again."
         )
         return None
@@ -167,7 +167,7 @@ def _target_host_checks(
     elif str(state) != "connected":
         blockers.append(
             f"Target host '{sanitize(to_host, 200)}' is {state}, not connected. "
-            "Pick a connected host from cluster_info."
+            "Pick a connected host from get_cluster_info."
         )
     if maintenance is None:
         unmeasured.append("target_in_maintenance_mode")
@@ -307,7 +307,7 @@ def _locate_snapshot(
         available = ", ".join(sanitize(n.name, 100) for n, _ in nodes[:MAX_LISTED])
         blockers.append(
             f"Snapshot '{shown}' not found on this VM (available: {available}). "
-            "Run vm_list_snapshots for exact names; they are case-sensitive."
+            "Run list_vm_snapshots for exact names; they are case-sensitive."
         )
     elif len(matches) > 1:
         created = ", ".join(str(n.createTime) for n, _ in matches[:MAX_LISTED])

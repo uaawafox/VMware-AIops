@@ -34,7 +34,7 @@ def test_safe_error_passes_domain_exception_messages() -> None:
     from vmware_aiops.ops.vm_lifecycle import TaskFailedError, VMNotFoundError
 
     msg = "VM 'web-99' not found. Run vm_list to see available VMs."
-    assert msg in _safe_error(VMNotFoundError(msg), "vm_power_on")
+    assert msg in _safe_error(VMNotFoundError(msg), "power_on_vm")
 
     for exc_type in (GuestOpsError, TaskFailedError, ClusterNotFoundError, ClusterError):
         teaching = f"{exc_type.__name__}: teaching message with fix hint"
@@ -50,7 +50,7 @@ def test_safe_error_passes_connection_error_through() -> None:
     from vmware_aiops.mcp_server.server import _safe_error
 
     hint = "Connection to vcenter-prod dropped. Run 'vmware-aiops doctor'."
-    out = _safe_error(ConnectionError(hint), "vm_power_on")
+    out = _safe_error(ConnectionError(hint), "power_on_vm")
     assert hint in out
     assert "operation failed" not in out
 
@@ -81,12 +81,12 @@ def test_tool_errors_decorator_labels_with_function_name() -> None:
 
     with patch("vmware_aiops.mcp_server._shared._safe_error", side_effect=_probe_safe_error):
         @tool_errors("str")
-        def vm_power_on(vm_name: str):  # name must reach _safe_error verbatim
+        def power_on_vm(vm_name: str):  # name must reach _safe_error verbatim
             raise RuntimeError("x")
 
-        out = vm_power_on("v")
+        out = power_on_vm("v")
 
-    assert captured["tool"] == "vm_power_on"
+    assert captured["tool"] == "power_on_vm"
     assert out == "Error: boom Run 'vmware-aiops doctor' to verify connectivity and credentials."
 
 

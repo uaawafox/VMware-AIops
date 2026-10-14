@@ -56,7 +56,7 @@ _ACTION_SCHEMA: dict[str, dict[str, Any]] = {
     },
     "delete_vm": {
         "required": ["vm_name"],
-        # The same gate as the vm_delete tool: without the preview's
+        # The same gate as the delete_vm tool: without the preview's
         # acknowledge_with the step is refused at apply time.
         "optional": ["acknowledge_blast_radius"],
         "rollback": None,

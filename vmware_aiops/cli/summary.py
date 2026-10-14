@@ -25,7 +25,7 @@ from vmware_policy import audited
 
 
 @cli_errors
-@audited("cluster_health_summary")
+@audited("get_cluster_health_summary")
 def cluster_summary_cmd(
     cluster: Annotated[
         str | None,

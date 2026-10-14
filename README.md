@@ -42,7 +42,7 @@ vmware-aiops investigate vm web-01 --hours 72     # everything around a VM, then
 vmware-aiops investigate vm web-01 --html         # → offline snapshot in ~/vmware-health/
 ```
 
-Via MCP these are the tools `cluster_health_summary`, `cross_vcenter_attention`, `vm_investigation_bundle`, `host_investigation_bundle`, `datastore_investigation_bundle`. (Requires `vmware-monitor` installed.)
+Via MCP these are the tools `get_cluster_health_summary`, `get_cross_vcenter_attention`, `investigate_vm`, `investigate_host`, `investigate_datastore`. (Requires `vmware-monitor` installed.)
 
 ### Quick Install (Recommended)
 
@@ -202,10 +202,10 @@ ESXi Standalone Host ──→ VM
 
 ### Batch Clone for Testing
 
-1. Create plan: `vm_create_plan` with multiple clone + reconfigure steps
+1. Create plan: `create_vm_plan` with multiple clone + reconfigure steps
 2. Review plan with user (shows affected VMs, irreversible warnings)
-3. Apply: `vm_apply_plan` executes sequentially, stops on failure
-4. If failed: `vm_rollback_plan` reverses executed steps
+3. Apply: `apply_vm_plan` executes sequentially, stops on failure
+4. If failed: `rollback_vm_plan` reverses executed steps
 5. Set TTL on all clones for auto-cleanup
 
 ### Migrate VM to Another Host
@@ -223,8 +223,8 @@ ESXi Standalone Host ──→ VM
 | Power On | `vm power-on <name>` | — | ✅ | ✅ |
 | Graceful Shutdown | `vm power-off <name>` | Double | ✅ | ✅ |
 | Force Power Off | `vm power-off <name> --force` | Double | ✅ | ✅ |
-| Reset | plan action `reset` via `vm_create_plan` (MCP; no CLI command) | — | ✅ | ✅ |
-| Suspend | plan action `suspend` via `vm_create_plan` (MCP; no CLI command) | — | ✅ | ✅ |
+| Reset | plan action `reset` via `create_vm_plan` (MCP; no CLI command) | — | ✅ | ✅ |
+| Suspend | plan action `suspend` via `create_vm_plan` (MCP; no CLI command) | — | ✅ | ✅ |
 | Create VM | `vm create <name> --cpu --memory --disk` | — | ✅ | ✅ |
 | Delete VM | `vm delete <name>` | Double | ✅ | ✅ |
 | Reconfigure | `vm reconfigure <name> --cpu --memory` | Double | ✅ | ✅ |
@@ -240,11 +240,11 @@ ESXi Standalone Host ──→ VM
 | **List TTLs** | `vm list-ttl` | — | ✅ | ✅ |
 | **Clean Slate** | `vm clean-slate <name> [--snapshot baseline]` | Double | ✅ | ✅ |
 | **Guest Exec** | `vm guest-exec <name> --cmd /bin/bash --args "..." --user <account>` | Double | ✅ | ✅ |
-| **Guest Exec (with output)** | MCP only: `vm_guest_exec_output` (`username` required) — no CLI command | — | ✅ | ✅ |
+| **Guest Exec (with output)** | MCP only: `run_vm_guest_command_with_output` (`username` required) — no CLI command | — | ✅ | ✅ |
 | **Guest Upload** | `vm guest-upload <name> --local f.sh --guest /tmp/f.sh --user <account>` | Double | ✅ | ✅ |
 | **Guest Download** | `vm guest-download <name> --guest /var/log/syslog --local ./syslog --user <account>` | — | ✅ | ✅ |
 
-> Guest Operations require VMware Tools running inside the guest OS, and the guest account is always named explicitly — `--user` on the CLI, `username` over MCP. There is no default, so no call runs as root without choosing root. `vm_guest_exec_output` (MCP only; the CLI has no equivalent) auto-detects Linux/Windows shell and captures stdout/stderr.
+> Guest Operations require VMware Tools running inside the guest OS, and the guest account is always named explicitly — `--user` on the CLI, `username` over MCP. There is no default, so no call runs as root without choosing root. `run_vm_guest_command_with_output` (MCP only; the CLI has no equivalent) auto-detects Linux/Windows shell and captures stdout/stderr.
 
 ### Plan → Apply (Multi-step Operations)
 
@@ -252,10 +252,10 @@ For complex operations involving 2+ steps or 2+ VMs, use the plan/apply workflow
 
 | Step | What Happens |
 |------|-------------|
-| 1. **Create Plan** | AI calls `vm_create_plan` — validates actions, checks targets in vSphere, generates plan with rollback info |
+| 1. **Create Plan** | AI calls `create_vm_plan` — validates actions, checks targets in vSphere, generates plan with rollback info |
 | 2. **Review** | AI shows plan to user: steps, affected VMs, irreversible warnings |
-| 3. **Apply** | `vm_apply_plan` previews first; with `confirm=True` executes sequentially and stops on failure. Each gated step is checked as its own tool checks it; iSCSI/rescan steps are refused (use vmware-storage) |
-| 4. **Rollback** (if failed) | Asks user whether to rollback, then `vm_rollback_plan` reverses executed steps (irreversible steps skipped); each destructive rollback step is checked first, and a refused check stops the rollback |
+| 3. **Apply** | `apply_vm_plan` previews first; with `confirm=True` executes sequentially and stops on failure. Each gated step is checked as its own tool checks it; iSCSI/rescan steps are refused (use vmware-storage) |
+| 4. **Rollback** (if failed) | Asks user whether to rollback, then `rollback_vm_plan` reverses executed steps (irreversible steps skipped); each destructive rollback step is checked first, and a refused check stops the rollback |
 
 Plans stored in `~/.vmware-aiops/plans/`, auto-deleted on success, auto-cleaned after 24h.
 
@@ -322,7 +322,7 @@ Plans stored in `~/.vmware-aiops/plans/`, auto-deleted on success, auto-cleaned 
 | **Dry-Run Mode** (**CLI only**) | `--dry-run` prints the exact API call without executing, on every CLI write except `deploy iso`, `deploy mark-template`, `vm cancel-ttl` and `vm guest-download` |
 | **Plan → Confirm → Execute → Log** | CLI workflow: show current state, confirm changes, execute, audit log |
 | **Double Confirmation** (**CLI only**) | Destructive and deploy CLI commands (`vm` power-off, delete, reconfigure, snapshot-revert/delete, clone, migrate, set-ttl, clean-slate, guest-exec, guest-upload; `deploy` ova, template, linked-clone, batch, batch-clone, mark-template; `cluster` delete, add-host, remove-host, configure, drs-rule-set/create/delete; `alarm reset`) require 2 sequential prompts and take no bypass flag |
-| **Only destructive MCP tools confirm** | 23 of the 43 write tools an agent sees over MCP — every tool annotated destructive, plus `vm_migrate` and the network/DRS authoring tools — preview first and need `confirm=True`; the other 20 (creates, clones, deploys, power-on, reconfigure, snapshot create, host add, template and ISO operations, guest download, plan creation, alarm acknowledge) act on the first call. There is no approval tier and no read-only switch. What decides whether a write lands is the privilege of the vCenter account, and what records it is the audit trail. See [What protects you](#what-protects-you) |
+| **Only destructive MCP tools confirm** | 23 of the 43 write tools an agent sees over MCP — every tool annotated destructive, plus `migrate_vm` and the network/DRS authoring tools — preview first and need `confirm=True`; the other 20 (creates, clones, deploys, power-on, reconfigure, snapshot create, host add, template and ISO operations, guest download, plan creation, alarm acknowledge) act on the first call. There is no approval tier and no read-only switch. What decides whether a write lands is the privilege of the vCenter account, and what records it is the audit trail. See [What protects you](#what-protects-you) |
 | **Rejection Logging** | Declined CLI confirmations are recorded in the audit trail |
 | **Audit Trail** | All operations logged to `~/.vmware-aiops/audit.log` (JSONL) with before/after state |
 | **Input Validation** | VM name, CPU (1-128), memory (128-1048576 MB), disk (1-65536 GB) validated |
@@ -361,15 +361,15 @@ compensating for.
 human. It does not defend against an agent, which satisfies both prompts with
 `yes |`.
 
-**Over MCP**, every tool annotated destructive, plus `vm_migrate` and the network/DRS
+**Over MCP**, every tool annotated destructive, plus `migrate_vm` and the network/DRS
 authoring tools — 23 of the 43 write tools, including
-`vm_power_off`, `vm_migrate`, `cluster_delete`, the snapshot, guest, TTL, Clean
+`power_off_vm`, `migrate_vm`, `delete_cluster`, the snapshot, guest, TTL, Clean
 Slate and plan tools, and `reset_vcenter_alarm` — takes one argument, `confirm`, whose default is a
 no-write preview: a bare call returns its blast radius and changes nothing.
 `confirm=True` re-measures and is refused, with a teaching error audited as a
 failure, if the preview found a blocker (a VM without running VMware Tools, a
 target host in maintenance mode, a cluster that still has hosts, a missing or
-duplicated snapshot) or could not read something. `vm_delete` also takes the
+duplicated snapshot) or could not read something. `delete_vm` also takes the
 preview's `acknowledge_with` echoed back, and is refused if the VM changed
 since, is powered on or suspended. The other 20 write tools — creates, clones,
 deploys, power-on, reconfigure, snapshot create, host add, template and ISO operations,
@@ -389,14 +389,14 @@ every MCP call, can refuse operations — for example, writes to targets labelle
 `environment: production`. The shipped baseline denies nothing, and the rules
 run inside the same process: a guardrail on top of RBAC, not a replacement.
 
-**`vm_guest_exec` is the one to think hardest about.** It runs a caller-supplied
+**`run_vm_guest_command` is the one to think hardest about.** It runs a caller-supplied
 command inside the guest OS with the credentials handed to it — its `username`
 is required (no default account); nothing bounds what the command may be. The guest account is
 a *separate* authorization boundary from the vCenter one — a read-only vCenter
 role does not constrain what this tool does inside a VM. The skill stores no
 guest credentials: over MCP they are tool arguments the agent sees (the audit row
 redacts the password). Pass a least-privilege guest account, and do not hand the
-agent guest credentials it does not need. `vm_guest_upload` reads any local file
+agent guest credentials it does not need. `upload_vm_guest_file` reads any local file
 the server process can read.
 
 The full inventory of which tools are gated and which are not is in
@@ -412,13 +412,13 @@ rather than maintained by hand.
 VM names are case-sensitive in vSphere. Use exact name from `vmware-monitor inventory vms`.
 
 ### Guest exec returns empty output
-Use `vm_guest_exec_output` instead of `vm_guest_exec` — it auto-captures stdout/stderr. Basic `vm_guest_exec` only returns exit code.
+Use `run_vm_guest_command_with_output` instead of `run_vm_guest_command` — it auto-captures stdout/stderr. Basic `run_vm_guest_command` only returns exit code.
 
 ### Deploy OVA times out
 Large OVA files (>10GB) may exceed the default 120s timeout. The upload happens via HTTP NFC lease — ensure network between the machine running vmware-aiops and ESXi is stable.
 
 ### Plan apply fails mid-way
-Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to rollback with `vm_rollback_plan`. Irreversible steps (delete_vm) are skipped during rollback.
+Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to rollback with `rollback_vm_plan`. Irreversible steps (delete_vm) are skipped during rollback.
 
 ### Connection refused / SSL error
 1. Verify target is reachable: `vmware-aiops doctor`

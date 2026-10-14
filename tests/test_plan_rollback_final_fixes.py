@@ -4,7 +4,7 @@
   the power_on rollback was a graceful power_off, which the gate refuses when
   VMware Tools is not running (always, for a VM with no OS), so rollback
   stopped before the delete_vm that removes the created VM. A power_off whose
-  VM is already off was refused the same way, although vm_power_off returns
+  VM is already off was refused the same way, although power_off_vm returns
   ``noop`` for it.
 * 2 — a created VM whose instance UUID was not recorded was reported "failed,
   continue" at rollback (plan ends ``rolled_back``, cannot be retried) while
@@ -131,13 +131,13 @@ def test_create_then_power_on_rolls_back_to_the_vm_deleted_without_tools(executo
         _step(1, "power_on", {"vm_name": "new-vm"}),
         _step(2, "reconfigure", {"vm_name": "new-vm", "cpu": 4}),
     ])
-    applied = plan_tools.vm_apply_plan(pid, confirm=True, target="vc01")
+    applied = plan_tools.apply_vm_plan(pid, confirm=True, target="vc01")
     assert applied["status"] == "failed"
 
-    preview = plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]
+    preview = plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]
     assert preview["blockers"] == [] and preview["unmeasured"] == []
 
-    out = plan_tools.vm_rollback_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.rollback_vm_plan(pid, confirm=True, target="vc01")
     assert out["status"] == "rolled_back", out
     assert [r["rollback_status"] for r in out["rollback_results"]] == ["success", "success"]
     assert executor["powered_off"] == [("new-vm", True)]
@@ -166,11 +166,11 @@ def test_graceful_power_off_without_tools_on_a_running_vm_is_still_refused(world
 def test_a_forward_power_off_of_an_off_vm_is_not_a_blocker_in_the_preview(executor):
     executor["vms"] = [_vm("new-vm", power=OFF, tools=NO_TOOLS)]
     pid = _write_plan([_step(0, "power_off", {"vm_name": "new-vm"})])
-    br = plan_tools.vm_apply_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.apply_vm_plan(pid, target="vc01")["blast_radius"]
     assert br["blockers"] == []
     (entry,) = br["steps"]
     assert entry["check"] == "measured" and entry["measured"]["noop"] is True
-    out = plan_tools.vm_apply_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, confirm=True, target="vc01")
     assert out["status"] == "completed", out
 
 
@@ -188,16 +188,16 @@ def test_created_vm_without_recorded_uuid_stops_rollback_as_refused(executor):
     ], status="failed")
     executor["vms"].append(_vm("other", power=ON))
 
-    preview = plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]
+    preview = plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]
     assert "refused" in next(s for s in preview["would_run"]
                              if s["step_index"] == 0)["identity_note"]
 
-    out = plan_tools.vm_rollback_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.rollback_vm_plan(pid, confirm=True, target="vc01")
     assert out["status"] == "failed", out
     assert out["stopped_at_step"] == 0
     refused = out["rollback_results"][-1]
     assert refused["step_index"] == 0 and refused["rollback_status"] == "refused"
-    assert "instance UUID" in refused["error"] and "vm_delete" in refused["error"]
+    assert "instance UUID" in refused["error"] and "delete_vm" in refused["error"]
     assert "Step 0" in out["hint"]
     assert executor["destroyed"] == [] and executor["powered_off"] == [("other", True)]
     saved = planner.load_plan(pid)

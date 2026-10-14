@@ -32,14 +32,14 @@ vm_app = typer.Typer(help="VM lifecycle: power, snapshot, clone, migrate.")
 @vm_app.command("power-on")
 @cli_errors
 @guarded(risk_level='medium')
-def vm_power_on(
+def power_on_vm(
     name: str,
     target: TargetOption = None,
     config: ConfigOption = None,
     dry_run: DryRunOption = False,
 ) -> None:
     """Power on a VM."""
-    from vmware_aiops.ops.vm_lifecycle import power_on_vm
+    from vmware_aiops.ops.vm_lifecycle import power_on_vm as _ops_power_on_vm
 
     si, _ = _get_connection(target, config)
     if dry_run:
@@ -52,7 +52,7 @@ def vm_power_on(
             expected_after={"power_state": "poweredOn"},
         )
         return
-    result = power_on_vm(si, name)
+    result = _ops_power_on_vm(si, name)
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -66,7 +66,7 @@ def vm_power_on(
 @vm_app.command("power-off")
 @cli_errors
 @guarded(risk_level='medium')
-def vm_power_off(
+def power_off_vm(
     name: str,
     force: Annotated[bool, typer.Option(help="Force power off")] = False,
     target: TargetOption = None,
@@ -74,7 +74,8 @@ def vm_power_off(
     dry_run: DryRunOption = False,
 ) -> None:
     """Power off a VM (graceful shutdown or force)."""
-    from vmware_aiops.ops.vm_lifecycle import get_vm_info, power_off_vm
+    from vmware_aiops.ops.vm_lifecycle import get_vm_info
+    from vmware_aiops.ops.vm_lifecycle import power_off_vm as _ops_power_off_vm
 
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, name)
@@ -89,7 +90,7 @@ def vm_power_off(
         return
     _show_state_preview(before, "关机", name)
     _double_confirm("关机", name, _resolve_target(target))
-    result = power_off_vm(si, name, force=force)
+    result = _ops_power_off_vm(si, name, force=force)
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -105,7 +106,7 @@ def vm_power_off(
 @vm_app.command("create")
 @cli_errors
 @guarded(risk_level='medium')
-def vm_create(
+def create_vm(
     name: str,
     cpu: Annotated[int, typer.Option(help="Number of CPUs")] = 2,
     memory: Annotated[int, typer.Option(help="Memory in MB")] = 4096,
@@ -118,7 +119,7 @@ def vm_create(
     dry_run: DryRunOption = False,
 ) -> None:
     """Create a new VM."""
-    from vmware_aiops.ops.vm_lifecycle import create_vm
+    from vmware_aiops.ops.vm_lifecycle import create_vm as _ops_create_vm
 
     _validate_vm_params(name=name, cpu=cpu, memory_mb=memory, disk_gb=disk)
     if dry_run:
@@ -130,7 +131,7 @@ def vm_create(
         )
         return
     si, _ = _get_connection(target, config)
-    result = create_vm(
+    result = _ops_create_vm(
         si,
         vm_name=name,
         cpu=cpu,
@@ -153,7 +154,7 @@ def vm_create(
 @vm_app.command("delete")
 @cli_errors
 @guarded(risk_level='critical')
-def vm_delete(
+def delete_vm(
     name: str,
     target: TargetOption = None,
     config: ConfigOption = None,
@@ -161,7 +162,8 @@ def vm_delete(
 ) -> None:
     """Delete a VM (destructive!)."""
     from vmware_aiops.ops.vm_delete_gate import vm_delete_blast_radius
-    from vmware_aiops.ops.vm_lifecycle import delete_vm, get_vm_info
+    from vmware_aiops.ops.vm_lifecycle import delete_vm as _ops_delete_vm
+    from vmware_aiops.ops.vm_lifecycle import get_vm_info
 
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, name)
@@ -191,7 +193,7 @@ def vm_delete(
         return
     _show_state_preview(before, "删除", name)
     _double_confirm("删除", name, _resolve_target(target))
-    result = delete_vm(si, name)
+    result = _ops_delete_vm(si, name)
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -210,7 +212,7 @@ def vm_delete(
 @vm_app.command("reconfigure")
 @cli_errors
 @guarded(risk_level='medium')
-def vm_reconfigure(
+def reconfigure_vm(
     name: str,
     cpu: Annotated[int | None, typer.Option(help="New CPU count")] = None,
     memory: Annotated[int | None, typer.Option(help="New memory in MB")] = None,
@@ -219,7 +221,8 @@ def vm_reconfigure(
     dry_run: DryRunOption = False,
 ) -> None:
     """Reconfigure VM CPU/memory."""
-    from vmware_aiops.ops.vm_lifecycle import get_vm_info, reconfigure_vm
+    from vmware_aiops.ops.vm_lifecycle import get_vm_info
+    from vmware_aiops.ops.vm_lifecycle import reconfigure_vm as _ops_reconfigure_vm
 
     _validate_vm_params(cpu=cpu, memory_mb=memory)
     si, _ = _get_connection(target, config)
@@ -251,7 +254,7 @@ def vm_reconfigure(
         f"Memory={proposed_mem}MB[/]"
     )
     _double_confirm(f"调整配置({', '.join(changes)})", name, _resolve_target(target))
-    result = reconfigure_vm(si, name, cpu=cpu, memory_mb=memory)
+    result = _ops_reconfigure_vm(si, name, cpu=cpu, memory_mb=memory)
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -272,7 +275,7 @@ def vm_reconfigure(
 
 @vm_app.command("snapshot-create")
 @cli_errors
-@guarded('vm_create_snapshot', risk_level='medium')
+@guarded('create_vm_snapshot', risk_level='medium')
 def vm_snapshot_create(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name")] = "snapshot",
@@ -315,7 +318,7 @@ def vm_snapshot_create(
 
 @vm_app.command("snapshot-list")
 @cli_errors
-@audited("vm_list_snapshots")
+@audited("list_vm_snapshots")
 def vm_snapshot_list(
     vm_name: str,
     target: TargetOption = None,
@@ -336,7 +339,7 @@ def vm_snapshot_list(
 
 @vm_app.command("snapshot-revert")
 @cli_errors
-@guarded('vm_revert_snapshot', risk_level='high')
+@guarded('revert_vm_snapshot', risk_level='high')
 def vm_snapshot_revert(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name to revert to")],
@@ -374,7 +377,7 @@ def vm_snapshot_revert(
 
 @vm_app.command("snapshot-delete")
 @cli_errors
-@guarded('vm_delete_snapshot', risk_level='high')
+@guarded('delete_vm_snapshot', risk_level='high')
 def vm_snapshot_delete(
     vm_name: str,
     snap_name: Annotated[str, typer.Option("--name", help="Snapshot name to delete")],
@@ -431,8 +434,8 @@ def vm_snapshot_delete(
 
 @vm_app.command("task-status")
 @cli_errors
-@audited("vm_task_status")
-def vm_task_status(
+@audited("get_vm_task_status")
+def get_vm_task_status(
     task_id: Annotated[str, typer.Argument(help="Task id from a --no-wait operation")],
     target: TargetOption = None,
     config: ConfigOption = None,
@@ -456,7 +459,7 @@ def vm_task_status(
 @vm_app.command("clone")
 @cli_errors
 @guarded(risk_level='high')
-def vm_clone(
+def clone_vm(
     name: str,
     new_name: Annotated[str, typer.Option("--new-name", help="Name for the clone")],
     to_host: Annotated[
@@ -475,7 +478,8 @@ def vm_clone(
     dry_run: DryRunOption = False,
 ) -> None:
     """Clone a VM. Use --to-host and --to-datastore to land it on a specific host/storage."""
-    from vmware_aiops.ops.vm_lifecycle import clone_vm, get_vm_info
+    from vmware_aiops.ops.vm_lifecycle import clone_vm as _ops_clone_vm
+    from vmware_aiops.ops.vm_lifecycle import get_vm_info
 
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, name)
@@ -498,7 +502,7 @@ def vm_clone(
     if to_datastore:
         console.print(f"[bold yellow]  Target datastore: {to_datastore}[/]")
     _double_confirm(f"克隆为 '{new_name}'", name, _resolve_target(target))
-    result = clone_vm(
+    result = _ops_clone_vm(
         si, name, new_name,
         target_host=to_host,
         target_datastore=to_datastore,
@@ -518,7 +522,7 @@ def vm_clone(
 @vm_app.command("migrate")
 @cli_errors
 @guarded(risk_level='high')
-def vm_migrate(
+def migrate_vm(
     name: str,
     to_host: Annotated[str, typer.Option("--to-host", help="Target ESXi host name")],
     to_datastore: Annotated[
@@ -533,7 +537,8 @@ def vm_migrate(
     dry_run: DryRunOption = False,
 ) -> None:
     """Migrate (vMotion) a VM to another host, optionally with storage vMotion."""
-    from vmware_aiops.ops.vm_lifecycle import get_vm_info, migrate_vm
+    from vmware_aiops.ops.vm_lifecycle import get_vm_info
+    from vmware_aiops.ops.vm_lifecycle import migrate_vm as _ops_migrate_vm
 
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, name)
@@ -552,7 +557,7 @@ def vm_migrate(
     if to_datastore:
         console.print(f"[bold yellow]  Target datastore: {to_datastore}[/]")
     _double_confirm(f"迁移到 '{to_host}'", name, _resolve_target(target))
-    result = migrate_vm(si, name, to_host, target_datastore=to_datastore)
+    result = _ops_migrate_vm(si, name, to_host, target_datastore=to_datastore)
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -571,7 +576,7 @@ def vm_migrate(
 @vm_app.command("set-ttl")
 @cli_errors
 @guarded(risk_level='medium')
-def vm_set_ttl(
+def set_vm_ttl(
     vm_name: str,
     minutes: Annotated[int, typer.Option("--minutes", "-m", help="Minutes until auto-deletion")],
     target: TargetOption = None,
@@ -606,7 +611,7 @@ def vm_set_ttl(
 @vm_app.command("cancel-ttl")
 @cli_errors
 @guarded(risk_level='medium')
-def vm_cancel_ttl(vm_name: str) -> None:
+def cancel_vm_ttl(vm_name: str) -> None:
     """Cancel an existing TTL for a VM."""
     from vmware_aiops.ops.ttl import cancel_ttl
 
@@ -616,8 +621,8 @@ def vm_cancel_ttl(vm_name: str) -> None:
 
 @vm_app.command("list-ttl")
 @cli_errors
-@audited("vm_list_ttl")
-def vm_list_ttl() -> None:
+@audited("list_vm_ttls")
+def list_vm_ttls() -> None:
     """List all VMs with TTLs registered."""
     from vmware_aiops.ops.ttl import list_ttl
 
@@ -646,7 +651,7 @@ def vm_list_ttl() -> None:
 @vm_app.command("clean-slate")
 @cli_errors
 @guarded(risk_level='high')
-def vm_clean_slate(
+def restore_vm_clean_slate(
     vm_name: str,
     snapshot: Annotated[str, typer.Option("--snapshot", "-s", help="Snapshot name")] = "baseline",
     target: TargetOption = None,
@@ -685,7 +690,7 @@ def vm_clean_slate(
 
 @vm_app.command("guest-exec")
 @cli_errors
-@guarded('vm_guest_exec', risk_level='critical', sensitive_params=['password'])
+@guarded('run_vm_guest_command', risk_level='critical', sensitive_params=['password'])
 def vm_guest_exec_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     command: Annotated[str, typer.Option("--cmd", help="Full path to program (e.g. /bin/bash)")],
@@ -738,7 +743,7 @@ def vm_guest_exec_cmd(
 
 @vm_app.command("guest-upload")
 @cli_errors
-@guarded('vm_guest_upload', risk_level='high', sensitive_params=['password'])
+@guarded('upload_vm_guest_file', risk_level='high', sensitive_params=['password'])
 def vm_guest_upload_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     local_path: Annotated[str, typer.Option("--local", help="Local file path")],
@@ -780,7 +785,7 @@ def vm_guest_upload_cmd(
 
 @vm_app.command("guest-download")
 @cli_errors
-@guarded('vm_guest_download', risk_level='high', sensitive_params=['password'])
+@guarded('download_vm_guest_file', risk_level='high', sensitive_params=['password'])
 def vm_guest_download_cmd(
     vm_name: Annotated[str, typer.Argument(help="VM name")],
     guest_path: Annotated[str, typer.Option("--guest", help="File path inside VM")],

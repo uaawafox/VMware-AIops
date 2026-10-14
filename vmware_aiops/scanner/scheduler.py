@@ -170,7 +170,7 @@ def _audit_ttl(
         _last_ttl_outcome = {k: v for k, v in _last_ttl_outcome.items() if k != vm_name}
     else:
         _last_ttl_outcome = {**_last_ttl_outcome, vm_name: signature}
-    _audit("vm_delete", params, status, result, started, risk_level)
+    _audit("delete_vm", params, status, result, started, risk_level)
 
 
 def _send_webhook(webhook: WebhookNotifier, paged: list[dict]) -> None:
@@ -281,10 +281,10 @@ def _run_ttl_check(conn_mgr: ConnectionManager) -> None:
         params = {"vm_name": vm_name, "target": target, "trigger": "ttl_expiry",
                   "instance_uuid": entry.instance_uuid}
         started = time.time()
-        # The same authorization as the vm_delete MCP tool and CLI command
-        # (HLD I-3): a deny rule on vm_delete must stop an expiry too.
+        # The same authorization as the delete_vm MCP tool and CLI command
+        # (HLD I-3): a deny rule on delete_vm must stop an expiry too.
         try:
-            guard(_SKILL, "vm_delete", params, risk_level="critical", target=target or "")
+            guard(_SKILL, "delete_vm", params, risk_level="critical", target=target or "")
         except PolicyDenied as exc:
             _audit_ttl(vm_name, params, "denied",
                    {"error": exc.result.reason, "rule": exc.result.rule}, started, "critical")

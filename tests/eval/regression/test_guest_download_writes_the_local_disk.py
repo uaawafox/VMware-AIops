@@ -1,4 +1,4 @@
-"""``vm_guest_download`` writes the caller's filesystem, and said it did not.
+"""``download_vm_guest_file`` writes the caller's filesystem, and said it did not.
 
 Real-hardware MCP round, 2026-08-30. The tool was annotated
 ``readOnlyHint: true`` and would replace any file the process could write, at
@@ -83,12 +83,12 @@ def _tool(name: str):
 
 def test_guest_download_is_not_advertised_read_only() -> None:
     """The claim a client reads before deciding whether to ask the user."""
-    assert _tool("vm_guest_download").annotations.readOnlyHint is False
+    assert _tool("download_vm_guest_file").annotations.readOnlyHint is False
 
 
 def test_guest_download_carries_the_write_marker() -> None:
     """The family's ``[READ]``/``[WRITE]`` prefix is what a model reads."""
-    assert _tool("vm_guest_download").description.lstrip().startswith("[WRITE]")
+    assert _tool("download_vm_guest_file").description.lstrip().startswith("[WRITE]")
 
 
 def test_guest_upload_and_download_are_annotated_alike_except_where_direction_matters() -> None:
@@ -107,7 +107,7 @@ def test_guest_upload_and_download_are_annotated_alike_except_where_direction_ma
     labelled honestly — which is the assertion failing, not the label. Both
     halves are pinned below so neither can quietly follow the other.
     """
-    up, down = _tool("vm_guest_upload").annotations, _tool("vm_guest_download").annotations
+    up, down = _tool("upload_vm_guest_file").annotations, _tool("download_vm_guest_file").annotations
     assert (down.readOnlyHint, down.idempotentHint) == (up.readOnlyHint, up.idempotentHint)
     assert up.destructiveHint is True, "upload replaces content inside the guest"
     assert down.destructiveHint is False, "download changes nothing inside the guest"
@@ -238,6 +238,6 @@ def test_the_refusal_keeps_its_remedy_through_sanitize(
             _download(downloadable, dest, **kwargs)
 
     assert len(str(dest)) > 300, "the path must be long enough to crowd the message"
-    out = _safe_error(caught.value, "vm_guest_download")
+    out = _safe_error(caught.value, "download_vm_guest_file")
     assert len(out) <= AUTHORED_MESSAGE_CAP, "sanitize truncates authored text"
     assert remedy in out, "the remedy was truncated away"

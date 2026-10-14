@@ -16,8 +16,8 @@ metadata: {"openclaw":{"requires":{"anyBins":["vmware-aiops","uvx"]},"optional":
 compatibility: >
   vmware-policy auto-installed as Python dependency (provides @vmware_tool decorator and audit logging). All write operations audited to ~/.vmware/audit.db.
   Credentials: Each vCenter/ESXi target requires a per-target password env var in ~/.vmware-aiops/.env following the pattern VMWARE_<TARGET_NAME_UPPER>_PASSWORD. Passwords are never logged or echoed.
-  Destructive operations: All write tools require explicit parameters and pass through the @vmware_tool decorator (policy check + audit + sanitize). Every MCP write tool annotated destructive (23 of 43: power-off, delete, migrate, snapshot revert/delete, guest exec/upload/provision, cluster delete/remove-host, TTL, Clean Slate, plan apply/rollback, host-network, DRS and alarm reset) takes one confirm argument whose default returns a no-write blast-radius preview (HLD section 7); confirm=True is refused, and audited as a failure, on a blocker or an unreadable measurement, and vm_delete also requires the preview's acknowledgement echoed back and still matching; the other 20 write tools (create, clone, deploy, power-on, reconfigure) act on the first call. The enforcement boundary is the RBAC of the vCenter/ESXi account the server connects with, so run it under a dedicated least-privilege service account (a read-only role makes it read-only). Optional deny rules in ~/.vmware/rules.yaml are checked before every MCP call and remote CLI command; the shipped baseline denies nothing. CLI destructive commands additionally require double confirmation and most CLI writes support --dry-run; neither applies to MCP calls.
-  Guest operations: vm_name and command are required; no implicit or background execution. The command is unbounded and runs with the guest credentials supplied — the username is required on MCP and CLI alike (no root default) and over MCP the password is a tool argument the agent sees (redacted from the audit row). The guest account is a second authorization boundary that a read-only vCenter role does not limit; pass a least-privilege guest account. vm_guest_upload reads any local file the server process can read.
+  Destructive operations: All write tools require explicit parameters and pass through the @vmware_tool decorator (policy check + audit + sanitize). Every MCP write tool annotated destructive (23 of 43: power-off, delete, migrate, snapshot revert/delete, guest exec/upload/provision, cluster delete/remove-host, TTL, Clean Slate, plan apply/rollback, host-network, DRS and alarm reset) takes one confirm argument whose default returns a no-write blast-radius preview (HLD section 7); confirm=True is refused, and audited as a failure, on a blocker or an unreadable measurement, and delete_vm also requires the preview's acknowledgement echoed back and still matching; the other 20 write tools (create, clone, deploy, power-on, reconfigure) act on the first call. The enforcement boundary is the RBAC of the vCenter/ESXi account the server connects with, so run it under a dedicated least-privilege service account (a read-only role makes it read-only). Optional deny rules in ~/.vmware/rules.yaml are checked before every MCP call and remote CLI command; the shipped baseline denies nothing. CLI destructive commands additionally require double confirmation and most CLI writes support --dry-run; neither applies to MCP calls.
+  Guest operations: vm_name and command are required; no implicit or background execution. The command is unbounded and runs with the guest credentials supplied — the username is required on MCP and CLI alike (no root default) and over MCP the password is a tool argument the agent sees (redacted from the audit row). The guest account is a second authorization boundary that a read-only vCenter role does not limit; pass a least-privilege guest account. upload_vm_guest_file reads any local file the server process can read.
   Webhooks: Disabled by default. When enabled, the daemon posts to user-configured URLs only: issue counts plus every critical issue and every alarm/event warning (host-log warnings and info rows are not sent), each with its entity name and the sanitized alarm, event, or ESXi log text, or a connection error — which can include host names, IPs, and user names. No credentials from the skill's config are sent. Reading host logs needs the Global.Diagnostics privilege; an unreadable log is recorded, not skipped.
   TLS verification is on by default (verify_ssl: true); set verify_ssl: false only for self-signed certs in isolated lab environments.
   Transitive dependencies: Only vmware-policy (audit/policy). No post-install scripts or background services.
@@ -52,17 +52,17 @@ VMware family entry point — AI-powered VM lifecycle, deployment, and alarm man
 
 Read before connecting an agent. Per-tool inventory: `references/capabilities.md`.
 
-- **MCP gates default to a no-write preview.** 23 write tools — every destructive one — return their blast radius unless `confirm=True`, which is refused on a blocker or unreadable measurement; `vm_delete` also needs `acknowledge_blast_radius` echoing the preview. The other 20 (create, clone, deploy, power-on, reconfigure) act on the first call.
+- **MCP gates default to a no-write preview.** 23 write tools — every destructive one — return their blast radius unless `confirm=True`, which is refused on a blocker or unreadable measurement; `delete_vm` also needs `acknowledge_blast_radius` echoing the preview. The other 20 (create, clone, deploy, power-on, reconfigure) act on the first call.
 - **The enforcement boundary is vCenter/ESXi RBAC**: an agent can do whatever the configured account can. Use a dedicated, least-privilege service account scoped to what the agent may change (a read-only role makes the skill read-only). Store its password in `~/.vmware-aiops/.env` (0600) or a secret manager (`VMWARE_<TARGET>_PASSWORD`).
 - **CLI only**: destructive commands require double confirmation; most CLI writes take `--dry-run`. Neither applies to MCP.
 - **Policy**: deny rules and a maintenance window in `~/.vmware/rules.yaml` are checked before every MCP and remote CLI call (e.g. deny writes to `environment: production` targets). The shipped baseline denies nothing. An in-process guardrail, not a substitute for RBAC.
 - **Audit**: every MCP call is recorded in `~/.vmware/audit.db`, credentials redacted (`vmware-audit log --last 20`). Best-effort: a failed audit write warns, never blocks.
-- **Guest ops** run any command or file write the guest account allows — a read-only vCenter role does not limit this. `username` is required (no default account) and over MCP the password is a tool argument the agent sees; pass a minimal guest account. `vm_guest_upload` reads any local file the server can read.
+- **Guest ops** run any command or file write the guest account allows — a read-only vCenter role does not limit this. `username` is required (no default account) and over MCP the password is a tool argument the agent sees; pass a minimal guest account. `upload_vm_guest_file` reads any local file the server can read.
 
 ## Quick Install
 
 ```bash
-uv tool install vmware-aiops==1.12.1
+uv tool install vmware-aiops==2.0.0
 vmware-aiops doctor
 vmware-aiops hub status   # see which family members are installed
 ```
@@ -123,8 +123,8 @@ vmware-aiops is the entry point. Add modules for additional capabilities:
 
 Start here when the ask is "is anything on fire?" before diving into a specific VM. This is a read-only rollup delegated to vmware-monitor, exposed here so triage-then-act stays in one conversation.
 
-1. One glance --> `cluster_health_summary` (MCP) or `vmware-aiops summary` (CLI). Read `top_issues` first — ranked anomalies (disconnected hosts, red/yellow alarms, capacity pressure), each with a drill-down hint; the per-cluster table is context
-2. Act on what it surfaces --> a `host_down` row → investigate the host; an alarm → `acknowledge_vcenter_alarm` / `reset_vcenter_alarm`; a hot VM implicated → `vm_migrate` or `vm_reconfigure` (after the investigation protocol)
+1. One glance --> `get_cluster_health_summary` (MCP) or `vmware-aiops summary` (CLI). Read `top_issues` first — ranked anomalies (disconnected hosts, red/yellow alarms, capacity pressure), each with a drill-down hint; the per-cluster table is context
+2. Act on what it surfaces --> a `host_down` row → investigate the host; an alarm → `acknowledge_vcenter_alarm` / `reset_vcenter_alarm`; a hot VM implicated → `migrate_vm` or `reconfigure_vm` (after the investigation protocol)
 3. Save/share a snapshot --> `vmware-aiops summary --html` writes an offline, timestamped HTML file (identical to `vmware-monitor summary --html` — same shared renderer)
 4. **If vmware-monitor is not installed** --> this command/tool is unavailable (AIops delegates to it); install `vmware-monitor`, or use the deeper per-object read tools in that skill
 
@@ -132,11 +132,11 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 
 **Judgment**: after triage points at a problem object, drill in with one correlated read *before* actuating — the bundle aggregates the object with its surrounding infrastructure and recent history so you (and the operator) see the full picture, not a guess. AIops is the conversational entry point, so triage → investigate → act stays in one conversation.
 
-1. Estate-wide --> `cross_vcenter_attention` ("what needs attention now?" across every vCenter). One vCenter configured → skip to `cluster_health_summary`
+1. Estate-wide --> `get_cross_vcenter_attention` ("what needs attention now?" across every vCenter). One vCenter configured → skip to `get_cluster_health_summary`
 2. Drill into the flagged object (offer the level; skip the question when unambiguous):
-   - a VM --> `vm_investigation_bundle` → state, host it runs on, cluster context, backing datastores, snapshots, alarms & recent changes, performance signals, correlated event timeline
-   - a host --> `host_investigation_bundle`; a datastore --> `datastore_investigation_bundle`
-3. **Then** act on the evidence --> e.g. bundle shows a wedged VM on a hot host → `vm_migrate`; a full datastore → `vm_delete_snapshot` on the sprawl the bundle surfaced. Follow the investigation protocol before any destructive action
+   - a VM --> `investigate_vm` → state, host it runs on, cluster context, backing datastores, snapshots, alarms & recent changes, performance signals, correlated event timeline
+   - a host --> `investigate_host`; a datastore --> `investigate_datastore`
+3. **Then** act on the evidence --> e.g. bundle shows a wedged VM on a hot host → `migrate_vm`; a full datastore → `delete_vm_snapshot` on the sprawl the bundle surfaced. Follow the investigation protocol before any destructive action
 4. Widen the window with `hours=72`; render an offline snapshot with `--html` (drill-down sections collapse natively, nothing uploaded)
 5. **If the object name is unknown** --> the bundle returns a teaching error naming how to list objects; get the exact name and retry. **If vmware-monitor is not installed** --> these delegated tools are unavailable
 
@@ -165,10 +165,10 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 - TTL: every clone must have one. Use the plan's metadata to track ownership.
 
 **Steps**:
-1. `vm_create_plan` with clone + reconfigure + set-ttl steps grouped per VM (atomic per clone)
+1. `create_vm_plan` with clone + reconfigure + set-ttl steps grouped per VM (atomic per clone)
 2. Review the plan with the user — surface count, datastore, irreversible warnings
-3. `vm_apply_plan` — stops on first failure (intentional, do not auto-resume)
-4. On failure: `vm_rollback_plan` → reverses completed clones; manually verify rollback before retrying
+3. `apply_vm_plan` — stops on first failure (intentional, do not auto-resume)
+4. On failure: `rollback_vm_plan` → reverses completed clones; manually verify rollback before retrying
 
 ### Migrate VM to Another Host
 
@@ -197,25 +197,25 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 
 | Category | Tools | R/W |
 |----------|-------|:---:|
-| VM Lifecycle (16) | `vm_list_ttl`, `vm_list_snapshots`, `vm_task_status` | Read |
-| | `vm_power_on`, `vm_power_off`, `vm_create`, `vm_reconfigure`, `vm_clone`, `vm_migrate`, `vm_delete`, `vm_create_snapshot`, `vm_revert_snapshot`, `vm_delete_snapshot`, `vm_set_ttl`, `vm_cancel_ttl`, `vm_clean_slate` | Write |
+| VM Lifecycle (16) | `list_vm_ttls`, `list_vm_snapshots`, `get_vm_task_status` | Read |
+| | `power_on_vm`, `power_off_vm`, `create_vm`, `reconfigure_vm`, `clone_vm`, `migrate_vm`, `delete_vm`, `create_vm_snapshot`, `revert_vm_snapshot`, `delete_vm_snapshot`, `set_vm_ttl`, `cancel_vm_ttl`, `restore_vm_clean_slate` | Write |
 | Deployment (8) | `deploy_vm_from_ova`, `deploy_vm_from_template`, `deploy_linked_clone`, `attach_iso_to_vm`, `convert_vm_to_template`, `batch_clone_vms`, `batch_linked_clone_vms`, `batch_deploy_from_spec` | Write |
-| Guest Ops (5) | `vm_guest_exec`, `vm_guest_exec_output`, `vm_guest_upload`, `vm_guest_download`, `vm_guest_provision` | Write |
-| Plan/Apply (4) | `vm_list_plans` | Read |
-| | `vm_create_plan`, `vm_apply_plan`, `vm_rollback_plan` | Write |
-| Datastore (2) | `browse_datastore`, `scan_datastore_images` | Read |
-| Network (7) | `list_dvs_portgroups`, `list_host_vmks`, `vmk_ping` | Read |
+| Guest Ops (5) | `run_vm_guest_command`, `run_vm_guest_command_with_output`, `upload_vm_guest_file`, `download_vm_guest_file`, `provision_vm_guest` | Write |
+| Plan/Apply (4) | `list_vm_plans` | Read |
+| | `create_vm_plan`, `apply_vm_plan`, `rollback_vm_plan` | Write |
+| Datastore (2) | `browse_datastore`, `scan_all_datastore_images` | Read |
+| Network (7) | `list_dvs_portgroups`, `list_host_vmks`, `ping_from_vmk` | Read |
 | | `create_dvs_portgroup`, `add_host_vmk`, `remove_host_vmk`, `set_vmk_service` | Write |
-| Cluster (10) | `cluster_info`, `list_drs_rules` | Read |
-| | `cluster_create`, `cluster_delete`, `cluster_add_host`, `cluster_remove_host`, `cluster_configure`, `set_drs_rule_enabled`, `create_drs_rule`, `delete_drs_rule` | Write |
+| Cluster (10) | `get_cluster_info`, `list_drs_rules` | Read |
+| | `create_cluster`, `delete_cluster`, `add_cluster_host`, `remove_cluster_host`, `configure_cluster`, `set_drs_rule_enabled`, `create_drs_rule`, `delete_drs_rule` | Write |
 | Alarm Management (3) | `list_vcenter_alarms` | Read |
 | | `acknowledge_vcenter_alarm`, `reset_vcenter_alarm` | Write |
-| Cluster Triage (1) | `cluster_health_summary` (delegates to vmware-monitor) | Read |
-| Object Investigation (4) | `vm_investigation_bundle`, `host_investigation_bundle`, `datastore_investigation_bundle`, `cross_vcenter_attention` (all delegate to vmware-monitor) | Read |
+| Cluster Triage (1) | `get_cluster_health_summary` (delegates to vmware-monitor) | Read |
+| Object Investigation (4) | `investigate_vm`, `investigate_host`, `investigate_datastore`, `get_cross_vcenter_attention` (all delegate to vmware-monitor) | Read |
 
-**List envelope**: the read list tools — `browse_datastore`, `list_vcenter_alarms`, `vm_list_plans`, `vm_list_snapshots`, `vm_list_ttl` — return `{items, returned, limit, total, truncated, hint}` rather than a bare array. Read the rows from `items` and check `truncated` before concluding a listing is complete; empty `items` with `truncated: false` means checked-and-none, not a failure. The write `batch_*` tools keep their bare list (complete by construction). Rationale, `total` semantics, error shape: `references/capabilities.md`.
+**List envelope**: the read list tools — `browse_datastore`, `list_vcenter_alarms`, `list_vm_plans`, `list_vm_snapshots`, `list_vm_ttls` — return `{items, returned, limit, total, truncated, hint}` rather than a bare array. Read the rows from `items` and check `truncated` before concluding a listing is complete; empty `items` with `truncated: false` means checked-and-none, not a failure. The write `batch_*` tools keep their bare list (complete by construction). Rationale, `total` semantics, error shape: `references/capabilities.md`.
 
-**Read/write split**: 17 tools are read-only (per `[READ]` docstring marker), 43 modify state — gating in [Audit & Safety](#audit--safety). `vm_set_ttl` schedules an unattended auto-delete.
+**Read/write split**: 17 tools are read-only (per `[READ]` docstring marker), 43 modify state — gating in [Audit & Safety](#audit--safety). `set_vm_ttl` schedules an unattended auto-delete.
 
 **Network write gating**: all four network writes are preview/confirm-gated — `confirm=False` (default) returns the exact spec without writing. `remove_host_vmk` is **fail-closed**: it refuses when the vmk is selected for a host service (management/vMotion/vSAN), lives on a non-default netstack (NSX TEPs, dedicated vMotion stacks), carries a default gateway route, or when any of that cannot be verified — pass `force_unprotected=True` to override the non-absolute protections. The host's only management-enabled vmk is never removable (no override). `set_vmk_service` is **fail-closed** too: it refuses both directions when the host's service map is unreadable, and refuses (no override) to untag `management` from the host's only management-enabled vmk — the call rides the interface it would untag.
 
@@ -276,7 +276,7 @@ vmware-aiops hub status        # show installed family members + install command
 VM names are case-sensitive in vSphere. Use exact name from `vmware-monitor inventory vms`.
 
 ### Guest exec returns empty output
-Use `vm_guest_exec_output` instead of `vm_guest_exec` — it auto-captures stdout/stderr. Basic `vm_guest_exec` only returns exit code.
+Use `run_vm_guest_command_with_output` instead of `run_vm_guest_command` — it auto-captures stdout/stderr. Basic `run_vm_guest_command` only returns exit code.
 
 ### Deploy OVA times out
 Large OVA files (>10GB) may exceed the default 120s timeout. The upload happens via HTTP NFC lease — ensure network between the machine running vmware-aiops and ESXi is stable.
@@ -289,7 +289,7 @@ returns a "still running, NOT failed" message with a task id, the delete did **n
 prefer `vm snapshot-delete <name> --name <snap> --no-wait` to get the task id immediately and poll.
 
 ### Plan apply fails mid-way
-Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to rollback with `vm_rollback_plan`. Irreversible steps (delete_vm) are skipped during rollback.
+Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to rollback with `rollback_vm_plan`. Irreversible steps (delete_vm) are skipped during rollback.
 
 ### Connection refused / SSL error
 1. Verify target is reachable: `vmware-aiops doctor`
@@ -298,7 +298,7 @@ Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to
 ## Setup
 
 ```bash
-uv tool install vmware-aiops==1.12.1
+uv tool install vmware-aiops==2.0.0
 mkdir -p ~/.vmware-aiops
 vmware-aiops init  # generates config.yaml and .env templates
 chmod 600 ~/.vmware-aiops/.env

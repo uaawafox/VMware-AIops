@@ -73,7 +73,7 @@ def _wait_for_task(task, timeout: int = 300) -> object:
     if err is None:
         raise TaskFailedError(
             f"Task {_task_moid(task)} failed but vCenter attached no fault detail. "
-            f"Run vm_task_status with task_id='{_task_moid(task)}' for its final state, "
+            f"Run get_vm_task_status with task_id='{_task_moid(task)}' for its final state, "
             f"and check get_events (vmware-monitor skill) around now for the underlying "
             f"cause before retrying."
         )

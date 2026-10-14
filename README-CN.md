@@ -42,7 +42,7 @@ vmware-aiops investigate vm web-01 --hours 72     # 一个 VM 的全貌，然后
 vmware-aiops investigate vm web-01 --html         # → 离线快照写入 ~/vmware-health/
 ```
 
-MCP 下对应工具为 `cluster_health_summary`、`cross_vcenter_attention`、`vm_investigation_bundle`、`host_investigation_bundle`、`datastore_investigation_bundle`。（需安装 `vmware-monitor`。）
+MCP 下对应工具为 `get_cluster_health_summary`、`get_cross_vcenter_attention`、`investigate_vm`、`investigate_host`、`investigate_datastore`。（需安装 `vmware-monitor`。）
 
 ### 快速安装（推荐）
 
@@ -164,10 +164,10 @@ ESXi 独立主机 ──→ VM
 
 ### 批量克隆测试
 
-1. 创建计划：`vm_create_plan`，包含多个克隆 + 配置步骤
+1. 创建计划：`create_vm_plan`，包含多个克隆 + 配置步骤
 2. 审查计划（展示受影响的 VM、不可逆操作警告）
-3. 执行：`vm_apply_plan` 顺序执行，失败即停止
-4. 如失败：`vm_rollback_plan` 逆序撤销已执行步骤
+3. 执行：`apply_vm_plan` 顺序执行，失败即停止
+4. 如失败：`rollback_vm_plan` 逆序撤销已执行步骤
 5. 对所有克隆设置 TTL 自动清理
 
 ### 迁移 VM 到另一台主机
@@ -185,8 +185,8 @@ ESXi 独立主机 ──→ VM
 | 开机 | `vm power-on <name>` | — | ✅ | ✅ |
 | 优雅关机 | `vm power-off <name>` | 双重 | ✅ | ✅ |
 | 强制关机 | `vm power-off <name> --force` | 双重 | ✅ | ✅ |
-| 重置 | plan 动作 `reset`，经 `vm_create_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
-| 挂起 | plan 动作 `suspend`，经 `vm_create_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
+| 重置 | plan 动作 `reset`，经 `create_vm_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
+| 挂起 | plan 动作 `suspend`，经 `create_vm_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
 | 创建 | `vm create <name> --cpu --memory --disk` | — | ✅ | ✅ |
 | 删除 | `vm delete <name>` | 双重 | ✅ | ✅ |
 | 调整配置 | `vm reconfigure <name> --cpu --memory` | 双重 | ✅ | ✅ |
@@ -202,11 +202,11 @@ ESXi 独立主机 ──→ VM
 | **列出 TTL** | `vm list-ttl` | — | ✅ | ✅ |
 | **Clean Slate** | `vm clean-slate <name> [--snapshot baseline]` | 双重 | ✅ | ✅ |
 | **Guest 执行** | `vm guest-exec <name> --cmd /bin/bash --args "..." --user <account>` | 双重 | ✅ | ✅ |
-| **Guest 执行（含输出）** | 仅 MCP：`vm_guest_exec_output`（`username` 必填）——没有 CLI 命令 | — | ✅ | ✅ |
+| **Guest 执行（含输出）** | 仅 MCP：`run_vm_guest_command_with_output`（`username` 必填）——没有 CLI 命令 | — | ✅ | ✅ |
 | **Guest 上传** | `vm guest-upload <name> --local f.sh --guest /tmp/f.sh --user <account>` | 双重 | ✅ | ✅ |
 | **Guest 下载** | `vm guest-download <name> --guest /var/log/syslog --local ./syslog --user <account>` | — | ✅ | ✅ |
 
-> Guest Operations 需要 VM 内运行 VMware Tools，且客户机账号必须显式指定——CLI 用 `--user`，MCP 用 `username`。没有默认值，所以任何调用都不会在没选 root 的情况下以 root 身份执行。`vm_guest_exec_output`（仅 MCP，CLI 没有对应命令）自动检测 Linux/Windows shell 并捕获 stdout/stderr。
+> Guest Operations 需要 VM 内运行 VMware Tools，且客户机账号必须显式指定——CLI 用 `--user`，MCP 用 `username`。没有默认值，所以任何调用都不会在没选 root 的情况下以 root 身份执行。`run_vm_guest_command_with_output`（仅 MCP，CLI 没有对应命令）自动检测 Linux/Windows shell 并捕获 stdout/stderr。
 
 ### Plan → Apply（多步操作编排）
 
@@ -214,10 +214,10 @@ ESXi 独立主机 ──→ VM
 
 | 步骤 | 说明 |
 |------|------|
-| 1. **创建 Plan** | AI 调用 `vm_create_plan` — 校验操作、检查 vSphere 中目标是否存在、生成带回滚信息的 plan |
+| 1. **创建 Plan** | AI 调用 `create_vm_plan` — 校验操作、检查 vSphere 中目标是否存在、生成带回滚信息的 plan |
 | 2. **审查** | AI 展示 plan 给用户：步骤、影响的 VM、不可逆操作警告 |
-| 3. **执行** | `vm_apply_plan` 先预览；`confirm=True` 时按顺序执行，某步失败立即停止。每个受门控的步骤都按其自身工具的方式检查；iSCSI/重扫步骤会被拒绝（请用 vmware-storage） |
-| 4. **回滚**（如失败） | 询问用户是否回滚，`vm_rollback_plan` 逆序撤销已执行步骤（不可逆操作跳过）；每个破坏性回滚步骤先经检查，检查拒绝即停止回滚 |
+| 3. **执行** | `apply_vm_plan` 先预览；`confirm=True` 时按顺序执行，某步失败立即停止。每个受门控的步骤都按其自身工具的方式检查；iSCSI/重扫步骤会被拒绝（请用 vmware-storage） |
+| 4. **回滚**（如失败） | 询问用户是否回滚，`rollback_vm_plan` 逆序撤销已执行步骤（不可逆操作跳过）；每个破坏性回滚步骤先经检查，检查拒绝即停止回滚 |
 
 Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小时自动清理。
 
@@ -283,7 +283,7 @@ Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小�
 | 预演模式（Dry-Run，**仅 CLI**） | 加 `--dry-run` 只打印将要发出的 API 调用而不执行；除 `deploy iso`、`deploy mark-template`、`vm cancel-ttl`、`vm guest-download` 外，每个 CLI 写操作都支持 |
 | Plan → Confirm → Execute → Log | CLI 工作流：展示当前状态、确认变更、执行、审计日志 |
 | 双重确认（**仅 CLI**） | 破坏性与部署类 CLI 命令（`vm` power-off, delete, reconfigure, snapshot-revert/delete, clone, migrate, set-ttl, clean-slate, guest-exec, guest-upload; `deploy` ova, template, linked-clone, batch, batch-clone, mark-template; `cluster` delete, add-host, remove-host, configure, drs-rule-set/create/delete; `alarm reset`）需连续两次确认，无绕过参数 |
-| MCP 上只有破坏性工具需要确认 | agent 通过 MCP 看到的 43 个写工具里，23 个（所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具）先预览、需 `confirm=True` 才执行；其余 20 个（创建、克隆、部署、开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、确认告警）**第一次调用就直接执行**。没有审批分级、没有只读开关。决定一次写入能否落地的是 vCenter 账号的权限，记录它的是审计日志。见[真正保护你的是什么](#真正保护你的是什么) |
+| MCP 上只有破坏性工具需要确认 | agent 通过 MCP 看到的 43 个写工具里，23 个（所有标注为破坏性的工具，加上 `migrate_vm` 和网络/DRS 编写类工具）先预览、需 `confirm=True` 才执行；其余 20 个（创建、克隆、部署、开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、确认告警）**第一次调用就直接执行**。没有审批分级、没有只读开关。决定一次写入能否落地的是 vCenter 账号的权限，记录它的是审计日志。见[真正保护你的是什么](#真正保护你的是什么) |
 | 拒绝记录 | 用户在 CLI 拒绝的操作也会记录到审计日志，便于安全审计 |
 | 审计日志 | 所有操作记录到 `~/.vmware-aiops/audit.log`（JSONL），包含操作前后状态 |
 | 输入校验 | VM 名称长度/格式、CPU（1-128）、内存（128-1048576 MB）、磁盘（1-65536 GB）参数校验 |
@@ -319,12 +319,12 @@ Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小�
 `vm cancel-ttl`、`vm guest-download` 外，每个写操作都可用 `--dry-run` 预览。
 这防的是人手误敲的命令，**防不住 agent**——一个 `yes |` 就能同时满足两次确认。
 
-**MCP 上**，所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具——43 个写工具中的 23 个，包括 `reset_vcenter_alarm`、`vm_power_off`、`vm_migrate`、
-`cluster_delete`，以及快照、guest、TTL、Clean Slate 和计划类工具——都接受同一个参数
+**MCP 上**，所有标注为破坏性的工具，加上 `migrate_vm` 和网络/DRS 编写类工具——43 个写工具中的 23 个，包括 `reset_vcenter_alarm`、`power_off_vm`、`migrate_vm`、
+`delete_cluster`，以及快照、guest、TTL、Clean Slate 和计划类工具——都接受同一个参数
 `confirm`，默认是不写入的预览：不带参数调用只返回影响范围（blast radius），什么都不改。
 `confirm=True` 会重新测量；如果预览发现阻断项（VM 里 VMware Tools 没在运行、目标主机处于
 维护模式、集群里还有主机、快照不存在或重名）或有读不到的字段，调用会被拒绝，返回教学性
-错误并在审计中记为失败。`vm_delete` 还要求把预览里的 `acknowledge_with` 原样传回，
+错误并在审计中记为失败。`delete_vm` 还要求把预览里的 `acknowledge_with` 原样传回，
 VM 在预览之后变了、处于开机或挂起状态都会被拒绝。其余 20 个写工具——创建、克隆、部署、
 开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、确认告警——第一次调用就执行。确认不是授权，所以 `VMWARE_READ_ONLY` 开关依然不恢复
 （它只在 MCP 路径上生效，有 shell 的 agent 走 CLI 就绕过去了）。预览换来的东西更窄：
@@ -339,12 +339,12 @@ skill 内部无法绕过。**想让 agent 只读，就给它一个只读的 vCen
 `environment: production` 的目标的写入。随包附带的基线什么都不拒绝，而且规则与工具
 运行在同一进程内：它是 RBAC 之上的护栏，不是替代品。
 
-**`vm_guest_exec` 是最需要想清楚的那个。** 它用传入的凭据在客户机里执行调用方
+**`run_vm_guest_command` 是最需要想清楚的那个。** 它用传入的凭据在客户机里执行调用方
 给的任意命令——它的 `username` 是必填项（没有默认账号）；没有任何东西限制这条命令的内容。
 **客户机账号是与 vCenter 账号相互独立的第二道授权边界**——一个只读的 vCenter
 角色约束不了这个工具在 VM *内部*做什么。skill 自身不保存客户机凭据：在 MCP 上它们是
 agent 看得到的工具参数（审计行里会脱敏密码）。请传入最小权限的客户机账号，不要把
-agent 用不到的客户机凭据交给它。`vm_guest_upload` 能读取 server 进程可读的任何本地文件。
+agent 用不到的客户机凭据交给它。`upload_vm_guest_file` 能读取 server 进程可读的任何本地文件。
 
 哪些工具有闸门、哪些没有，完整清单见
 [references/capabilities.md](skills/vmware-aiops/references/capabilities.md#what-gates-a-write)；
@@ -358,13 +358,13 @@ agent 用不到的客户机凭据交给它。`vm_guest_upload` 能读取 server 
 vSphere 中 VM 名称区分大小写。请使用 `vmware-monitor inventory vms` 获取准确名称。
 
 ### Guest exec 返回空输出
-使用 `vm_guest_exec_output` 而非 `vm_guest_exec` — 前者自动捕获 stdout/stderr。基础版 `vm_guest_exec` 仅返回退出码。
+使用 `run_vm_guest_command_with_output` 而非 `run_vm_guest_command` — 前者自动捕获 stdout/stderr。基础版 `run_vm_guest_command` 仅返回退出码。
 
 ### 部署 OVA 超时
 大型 OVA 文件（>10GB）可能超过默认 120 秒超时。上传通过 HTTP NFC lease 进行 — 确保运行 vmware-aiops 的机器与 ESXi 之间网络稳定。
 
 ### Plan 执行中途失败
-运行 `vmware-aiops plan list` 查看失败的 plan 状态。询问用户是否使用 `vm_rollback_plan` 回滚。不可逆步骤（delete_vm）在回滚时会跳过。
+运行 `vmware-aiops plan list` 查看失败的 plan 状态。询问用户是否使用 `rollback_vm_plan` 回滚。不可逆步骤（delete_vm）在回滚时会跳过。
 
 ### 连接被拒 / SSL 错误
 1. 验证目标可达：`vmware-aiops doctor`

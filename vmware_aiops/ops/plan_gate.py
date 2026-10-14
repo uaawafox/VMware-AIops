@@ -1,7 +1,7 @@
 """The blast-radius gate in front of plan apply and rollback (HLD §7).
 
 A plan can delete VMs, power them off, revert snapshots and run guest commands,
-so ``vm_apply_plan`` and ``vm_rollback_plan`` preview first. A plan must not be
+so ``apply_vm_plan`` and ``rollback_vm_plan`` preview first. A plan must not be
 a way around the gate of the tool that does the same thing on its own:
 
 * The preview lists every step with its full parameters (secrets redacted), so
@@ -59,11 +59,11 @@ DESTRUCTIVE_ACTIONS = frozenset({
 #: Actions that run unchecked, each with the reason no check is needed. A new
 #: action lands here only with a reason; otherwise it is refused.
 NON_DESTRUCTIVE_ACTIONS: dict[str, str] = {
-    "power_on": "Starts a stopped VM; nothing is removed, and vm_power_on is not gated.",
+    "power_on": "Starts a stopped VM; nothing is removed, and power_on_vm is not gated.",
     "create_vm": "Creates a new VM; nothing existing changes, and rollback deletes "
                  "only the VM it created (checked by instance UUID).",
     "reconfigure": "Changes CPU/memory of one VM, shown in full in the preview; "
-                   "vm_reconfigure is not gated.",
+                   "reconfigure_vm is not gated.",
     "create_snapshot": "Adds a restore point; nothing is removed.",
     "clone": "Copies a VM under a new name; the source is only read.",
     "deploy_ova": "Creates a new VM from an OVA; nothing existing changes.",
@@ -73,7 +73,7 @@ NON_DESTRUCTIVE_ACTIONS: dict[str, str] = {
     "convert_to_template": "Marks a powered-off VM as a template; its disks are kept.",
     "create_cluster": "Creates an empty cluster; nothing existing changes.",
     "configure_cluster": "Changes HA/DRS settings shown in the preview; "
-                         "cluster_configure is not gated.",
+                         "configure_cluster is not gated.",
     "cluster_add_host": "Moves a host into a cluster; no VM or data is removed.",
 }
 
@@ -81,10 +81,10 @@ NON_DESTRUCTIVE_ACTIONS: dict[str, str] = {
 #: the dispatch table so existing plan files load, but a plan holding one is
 #: refused at preview, at apply and at rollback. Value: the tool to use instead.
 REFUSED_ACTIONS: dict[str, str] = {
-    "iscsi_enable": "storage_iscsi_enable",
-    "iscsi_add_target": "storage_iscsi_add_target",
-    "iscsi_remove_target": "storage_iscsi_remove_target",
-    "storage_rescan": "storage_rescan",
+    "iscsi_enable": "enable_iscsi",
+    "iscsi_add_target": "add_iscsi_target",
+    "iscsi_remove_target": "remove_iscsi_target",
+    "storage_rescan": "rescan_storage",
 }
 
 #: Step parameters that identify what a step acts on. Credentials never appear.
@@ -408,7 +408,7 @@ def _load(plan_id: str, status: str, wrong_status: str) -> dict[str, Any]:
     plan = load_plan(plan_id)
     if plan is None:
         raise PlanStateError(
-            f"Plan '{sanitize(plan_id, 100)}' not found. Run vm_list_plans for the "
+            f"Plan '{sanitize(plan_id, 100)}' not found. Run list_vm_plans for the "
             "plan ids that exist."
         )
     if plan.get("status") != status:
@@ -456,14 +456,14 @@ def _step_entry(
     if action not in _ACTION_SCHEMA:
         blockers.append(
             f"Step {index} has unknown action '{sanitize(str(action), 60)}'. "
-            "Create the plan again with vm_create_plan."
+            "Create the plan again with create_vm_plan."
         )
         return entry, blockers, []
     if action == "delete_vm" and not isinstance(params.get("acknowledge_blast_radius"), dict):
         blockers.append(
             f"Step {index} (delete_vm '{sanitize(str(params.get('vm_name')), 200)}') has "
             "no acknowledge_blast_radius, so it would be refused after the earlier "
-            "steps ran. Preview that VM with vm_delete, put its acknowledge_with into "
+            "steps ran. Preview that VM with delete_vm, put its acknowledge_with into "
             "the step, and create the plan again."
         )
     fields, gate_blockers, unmeasured = _gate(steps, position, si)
@@ -523,7 +523,7 @@ def measure_apply(
     plan = _load(
         plan_id, "pending",
         "Plan '{plan_id}' status is '{status}', expected 'pending'. Only a pending plan "
-        "can be applied; create a new one with vm_create_plan.",
+        "can be applied; create a new one with create_vm_plan.",
     )
     blockers = _target_blocker(plan, target)
     si = None if blockers else connect()
@@ -607,7 +607,7 @@ def measure_rollback(
                 if uuid else
                 "The instance UUID of the VM this step created was not recorded, so "
                 "this rollback step will be refused; check the VM in vCenter and delete "
-                "it with vm_delete if it is the one."
+                "it with delete_vm if it is the one."
             )
         would_run.append(entry)
     return {

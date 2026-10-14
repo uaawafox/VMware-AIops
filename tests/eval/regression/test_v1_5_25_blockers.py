@@ -5,7 +5,7 @@ Each test guards a specific production bug. Failures here block release.
 Bugs prevented:
 - Clone lands on template host (no target_host param)
 - Migrate fails with no shared storage (no target_datastore param)
-- MCP server missing vm_clone / vm_migrate / vm_delete / vm_snapshot_*
+- MCP server missing clone_vm / migrate_vm / delete_vm / vm_snapshot_*
 - cli/mcp_config.py NameError on json
 - _wait_for_task drops fault chain
 - FastMCP schema build crashes on Python 3.10 (PEP 604 unions)
@@ -112,12 +112,12 @@ def test_mcp_server_exposes_clone_migrate_delete_snapshot() -> None:
     names = {t.name for t in tools}
 
     required = {
-        "vm_clone",
-        "vm_migrate",
-        "vm_delete",
-        "vm_create_snapshot",
-        "vm_revert_snapshot",
-        "vm_delete_snapshot",
+        "clone_vm",
+        "migrate_vm",
+        "delete_vm",
+        "create_vm_snapshot",
+        "revert_vm_snapshot",
+        "delete_vm_snapshot",
     }
     missing = required - names
     assert not missing, f"MCP server missing required write tools: {missing}"

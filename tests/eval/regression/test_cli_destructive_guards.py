@@ -27,7 +27,7 @@ Until 2026-08-30 the marker was joined by a hard-coded set of guest-execution
 tool names, because those tools were annotated ``destructiveHint: false`` while
 running arbitrary commands as root. Correcting the annotations dissolved the
 list — which is the better outcome, since the list had already drifted past
-``vm_guest_exec_output``.
+``run_vm_guest_command_with_output``.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def _must_confirm_tool_names() -> frozenset[str]:
     *plus* a hard-coded ``_GUEST_EXEC_TOOLS`` set, which existed only because
     the guest tools were annotated ``destructiveHint: false`` while running
     arbitrary commands as root — the list was a patch over a wrong label, and it
-    had already gone stale by omitting ``vm_guest_exec_output``. The labels were
+    had already gone stale by omitting ``run_vm_guest_command_with_output``. The labels were
     corrected (see ``test_tool_annotations_match_behaviour``), so the patch is
     removed rather than extended: a fifth guest tool now arrives in this set by
     being annotated honestly, not by someone remembering to edit a frozenset.
@@ -163,7 +163,7 @@ def test_specific_high_blast_radius_commands_are_covered():
     """Pin named commands so a broad-but-wrong derivation cannot pass the floor."""
     driving, _ = _matched()
     names = {d.split(":", 1)[1] for d in driving}
-    for must in ("vm_delete", "vm_guest_exec_cmd", "vm_snapshot_revert"):
+    for must in ("delete_vm", "vm_guest_exec_cmd", "vm_snapshot_revert"):
         assert must in names, (
             f"{must} is no longer derived as must-confirm — the destructiveHint /"
             f" guest-exec → ops-function derivation stopped resolving it"

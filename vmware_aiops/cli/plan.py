@@ -13,7 +13,7 @@ plan_app = typer.Typer(help="Plan → Apply: view and manage operation plans.")
 
 @plan_app.command("list")
 @cli_errors
-@audited("vm_list_plans")
+@audited("list_vm_plans")
 def plan_list() -> None:
     """List all pending/failed operation plans."""
     from vmware_aiops.ops.planner import list_plans

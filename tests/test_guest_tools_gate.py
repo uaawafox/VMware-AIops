@@ -1,7 +1,7 @@
 """The four guest-writing MCP tools sit behind the HLD §7 gate (revised 2026-09-16).
 
-``vm_guest_exec``, ``vm_guest_exec_output``, ``vm_guest_upload`` and
-``vm_guest_provision`` hand caller-supplied content to a guest OS. Until this
+``run_vm_guest_command``, ``run_vm_guest_command_with_output``, ``upload_vm_guest_file`` and
+``provision_vm_guest`` hand caller-supplied content to a guest OS. Until this
 change each of them acted on the first call.
 
 * L2 — a bare call previews: nothing is started in the guest, nothing is
@@ -32,7 +32,7 @@ ON = vim.VirtualMachine.PowerState.poweredOn
 OFF = vim.VirtualMachine.PowerState.poweredOff
 PASSWORD = "s3cret-Guest-Pw!"
 
-GATED = ("vm_guest_exec", "vm_guest_exec_output", "vm_guest_upload", "vm_guest_provision")
+GATED = ("run_vm_guest_command", "run_vm_guest_command_with_output", "upload_vm_guest_file", "provision_vm_guest")
 
 
 @pytest.fixture(autouse=True)
@@ -116,17 +116,17 @@ def local_file(tmp_path):
 
 
 def _exec(**kw):
-    return guest_tools.vm_guest_exec(
+    return guest_tools.run_vm_guest_command(
         "web-01", "/bin/bash", "ops", arguments="-c 'whoami'", password=PASSWORD,
         working_directory="/tmp", **kw)
 
 
 def _exec_output(**kw):
-    return guest_tools.vm_guest_exec_output("web-01", "df -h", "ops", password=PASSWORD, **kw)
+    return guest_tools.run_vm_guest_command_with_output("web-01", "df -h", "ops", password=PASSWORD, **kw)
 
 
 def _upload(local, **kw):
-    return guest_tools.vm_guest_upload(
+    return guest_tools.upload_vm_guest_file(
         "web-01", str(local), "/etc/motd", "ops", password=PASSWORD, **kw)
 
 
@@ -137,15 +137,15 @@ def _provision(local, steps=None, **kw):
         {"type": "service", "name": "nginx", "action": "restart"},
         {"type": "exec", "command": "nginx -t"},
     ]
-    return guest_tools.vm_guest_provision("web-01", "ops", PASSWORD, steps, **kw)
+    return guest_tools.provision_vm_guest("web-01", "ops", PASSWORD, steps, **kw)
 
 
 def _call(tool, local, **kw):
     return {
-        "vm_guest_exec": lambda: _exec(**kw),
-        "vm_guest_exec_output": lambda: _exec_output(**kw),
-        "vm_guest_upload": lambda: _upload(local, **kw),
-        "vm_guest_provision": lambda: _provision(local, **kw),
+        "run_vm_guest_command": lambda: _exec(**kw),
+        "run_vm_guest_command_with_output": lambda: _exec_output(**kw),
+        "upload_vm_guest_file": lambda: _upload(local, **kw),
+        "provision_vm_guest": lambda: _provision(local, **kw),
     }[tool]()
 
 
@@ -214,7 +214,7 @@ def test_exec_radius_caps_a_huge_command(world):
     # parameter length (50k chars took minutes), which is a policy-side issue.
     from vmware_aiops.ops.guest_gate import MAX_COMMAND_CHARS
 
-    br = guest_tools.vm_guest_exec("web-01", "/bin/sh", "ops",
+    br = guest_tools.run_vm_guest_command("web-01", "/bin/sh", "ops",
                                    arguments="x" * (MAX_COMMAND_CHARS + 200),
                                    password=PASSWORD)["blast_radius"]
     assert len(br["arguments"]) <= MAX_COMMAND_CHARS
@@ -267,10 +267,10 @@ def test_provision_lists_every_step_even_past_sixteen(world, local_file):
 
 
 @pytest.mark.parametrize("tool,op", [
-    ("vm_guest_exec", "guest_exec"),
-    ("vm_guest_exec_output", "guest_exec_with_output"),
-    ("vm_guest_upload", "guest_upload"),
-    ("vm_guest_provision", "guest_provision"),
+    ("run_vm_guest_command", "guest_exec"),
+    ("run_vm_guest_command_with_output", "guest_exec_with_output"),
+    ("upload_vm_guest_file", "guest_upload"),
+    ("provision_vm_guest", "guest_provision"),
 ])
 def test_confirm_acts_once_and_returns_blast_radius(world, local_file, tool, op):
     out = _call(tool, local_file, confirm=True)
@@ -314,7 +314,7 @@ def test_powered_off_vm_is_a_blocker_and_refuses(world, local_file, tool):
     world.install(_vm(power=OFF))
     assert _call(tool, local_file)["blast_radius"]["blockers"]
     out = _call(tool, local_file, confirm=True)
-    assert "vm_power_on" in out["error"]
+    assert "power_on_vm" in out["error"]
     assert world.rec.calls == []
 
 

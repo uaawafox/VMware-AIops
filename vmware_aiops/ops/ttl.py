@@ -232,7 +232,7 @@ MAX_LISTED_SNAPSHOTS = 16
 def measure_ttl(si: ServiceInstance, vm_name: str, minutes: int) -> dict:
     """What a TTL schedules: the deletion of this VM, unattended, at ``expires_at``.
 
-    The VM is measured the way ``vm_delete`` measures it. ``vm_delete``'s power
+    The VM is measured the way ``delete_vm`` measures it. ``delete_vm``'s power
     blockers do not apply: the daemon powers a running VM off before deleting
     it, and a TTL on a running lab VM is the ordinary case. Every other blocker,
     and an unreadable field, refuses.
@@ -257,7 +257,7 @@ def measure_ttl(si: ServiceInstance, vm_name: str, minutes: int) -> dict:
         "deleted_by": "the scheduler daemon, unattended, when the TTL expires, and "
                       "only if the VM still has this instance_uuid; a running VM is "
                       "powered off first. Nothing happens unless the daemon is running.",
-        # Only vm_delete's power blockers do not apply: the daemon powers off first.
+        # Only delete_vm's power blockers do not apply: the daemon powers off first.
         "blockers": [b for b in measured["blockers"] if b not in power],
     }
 
@@ -298,14 +298,14 @@ def measure_clean_slate(si: ServiceInstance, vm_name: str, snapshot_name: str) -
         blockers.append(
             f"No snapshot named '{wanted}' on this VM. Available: "
             f"{', '.join(names) or 'none'}. Pass snapshot_name with one of those, or "
-            "create the baseline first with vm_create_snapshot."
+            "create the baseline first with create_vm_snapshot."
         )
     elif len(matches) > 1:
         blockers.append(
             f"{len(matches)} snapshots match '{wanted}' (duplicate names, or names that "
             "differ only by control/invisible characters), and this tool will not "
             "guess which one you meant. Rename or delete the duplicate "
-            "(vm_list_snapshots shows them), then preview again."
+            "(list_vm_snapshots shows them), then preview again."
         )
     chosen = matches[0] if len(matches) == 1 else None
     created = str(read(lambda: chosen.createTime)) if chosen is not None else None

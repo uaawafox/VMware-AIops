@@ -1,3 +1,60 @@
+## v2.0.0 — MCP tools renamed verb-first
+
+**Breaking for MCP clients: 38 of the 60 tools have new names.** The family now names every MCP tool one way —
+verb first (`power_on_vm`, `get_cluster_info`, `investigate_vm`) — with a domain word where two skills would
+otherwise collide (`scan_all_datastore_images` here, because vmware-storage's `scan_datastore_images` scans one
+datastore). Parameters, annotations and behaviour are unchanged; no tool was added or removed. The six
+triage/investigation tools that reuse vmware-monitor's code (`get_cluster_health_summary`,
+`get_cross_vcenter_attention`, `investigate_vm`, `investigate_host`, `investigate_datastore`, `list_vm_snapshots`)
+carry the same names and parameters as Monitor's.
+
+| Old name | New name |
+|---|---|
+| `cluster_add_host` | `add_cluster_host` |
+| `cluster_configure` | `configure_cluster` |
+| `cluster_create` | `create_cluster` |
+| `cluster_delete` | `delete_cluster` |
+| `cluster_health_summary` | `get_cluster_health_summary` |
+| `cluster_info` | `get_cluster_info` |
+| `cluster_remove_host` | `remove_cluster_host` |
+| `cross_vcenter_attention` | `get_cross_vcenter_attention` |
+| `datastore_investigation_bundle` | `investigate_datastore` |
+| `host_investigation_bundle` | `investigate_host` |
+| `vm_investigation_bundle` | `investigate_vm` |
+| `vm_apply_plan` | `apply_vm_plan` |
+| `vm_cancel_ttl` | `cancel_vm_ttl` |
+| `vm_clean_slate` | `restore_vm_clean_slate` |
+| `vm_clone` | `clone_vm` |
+| `vm_create` | `create_vm` |
+| `vm_create_plan` | `create_vm_plan` |
+| `vm_create_snapshot` | `create_vm_snapshot` |
+| `vm_delete` | `delete_vm` |
+| `vm_delete_snapshot` | `delete_vm_snapshot` |
+| `vm_guest_download` | `download_vm_guest_file` |
+| `vm_guest_exec` | `run_vm_guest_command` |
+| `vm_guest_exec_output` | `run_vm_guest_command_with_output` |
+| `vm_guest_provision` | `provision_vm_guest` |
+| `vm_guest_upload` | `upload_vm_guest_file` |
+| `vm_list_plans` | `list_vm_plans` |
+| `vm_list_snapshots` | `list_vm_snapshots` |
+| `vm_list_ttl` | `list_vm_ttls` |
+| `vm_migrate` | `migrate_vm` |
+| `vm_power_off` | `power_off_vm` |
+| `vm_power_on` | `power_on_vm` |
+| `vm_reconfigure` | `reconfigure_vm` |
+| `vm_revert_snapshot` | `revert_vm_snapshot` |
+| `vm_rollback_plan` | `rollback_vm_plan` |
+| `vm_set_ttl` | `set_vm_ttl` |
+| `vm_task_status` | `get_vm_task_status` |
+| `vmk_ping` | `ping_from_vmk` |
+| `scan_datastore_images` | `scan_all_datastore_images` |
+
+* **CLI commands are unchanged.** The audit record a CLI command writes carries its MCP twin's new name.
+* Deny rules in `~/.vmware/rules.yaml` written with old names keep working with vmware-policy ≥ 1.18.0 (it matches
+  both names); `vmware-audit policy` lists any rule that now matches more.
+* Plan files are unaffected: plan step actions (`cluster_add_host`, `storage_rescan`, …) are action names, not
+  tool names, and keep their spelling.
+
 ## v1.12.1 — `reset_vcenter_alarm` previews before it clears
 
 * **`reset_vcenter_alarm` cleared alarms on the first MCP call.** vSphere has no per-alarm clear:

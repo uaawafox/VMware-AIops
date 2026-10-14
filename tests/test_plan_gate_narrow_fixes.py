@@ -4,7 +4,7 @@ A plan must never be a way around a tool's gate. Each test reproduces one findin
 
 * 1 — an action in the executor's dispatch table could be neither measured nor
   classified non-destructive; ``iscsi_remove_target`` ran "not measured".
-* 2 — ``migrate`` was classified non-destructive although ``vm_migrate`` is
+* 2 — ``migrate`` was classified non-destructive although ``migrate_vm`` is
   gated; the four storage actions (gated in vmware-storage) had no measurement.
 * 3 — rollback ran every action except delete_vm unmeasured.
 * 4 — the secret-key pattern missed ``pwd``/``auth`` and hid ``bypass``.
@@ -29,10 +29,10 @@ ON = vim.VirtualMachine.PowerState.poweredOn
 OFF = vim.VirtualMachine.PowerState.poweredOff
 SUSPENDED = vim.VirtualMachine.PowerState.suspended
 STORAGE = {
-    "iscsi_enable": "storage_iscsi_enable",
-    "iscsi_add_target": "storage_iscsi_add_target",
-    "iscsi_remove_target": "storage_iscsi_remove_target",
-    "storage_rescan": "storage_rescan",
+    "iscsi_enable": "enable_iscsi",
+    "iscsi_add_target": "add_iscsi_target",
+    "iscsi_remove_target": "remove_iscsi_target",
+    "storage_rescan": "rescan_storage",
 }
 
 
@@ -157,7 +157,7 @@ def test_a_gated_action_that_loses_its_measurement_refuses(world, monkeypatch):
         plan_gate.check_step(MagicMock(), {"index": 0, "action": "power_off",
                                            "params": {"vm_name": "web-01"}})
     pid = _write_plan([_step(0, "power_off", {"vm_name": "web-01"})])
-    br = plan_tools.vm_apply_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.apply_vm_plan(pid, target="vc01")["blast_radius"]
     assert any("no measurement" in b for b in br["blockers"])
 
 
@@ -166,19 +166,19 @@ def test_an_unclassified_action_refuses_at_check_step():
         plan_gate.check_step(MagicMock(), {"index": 0, "action": "format_disk", "params": {}})
 
 
-# ═══ 2a: migrate is measured the way vm_migrate measures it ═══════════════════
+# ═══ 2a: migrate is measured the way migrate_vm measures it ═══════════════════
 
 
 def test_migrate_is_measured_in_the_preview(world, dispatched):
     world["vms"] = [_vm("web-01")]
     world["hosts"] = [_host("esx-02", maintenance=True)]
     pid = _write_plan([_step(0, "migrate", {"vm_name": "web-01", "target_host": "esx-02"})])
-    br = plan_tools.vm_apply_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.apply_vm_plan(pid, target="vc01")["blast_radius"]
     (entry,) = br["steps"]
     assert entry["check"] == "measured"
     assert entry["measured"]["target_host"]["name"] == "esx-02"
     assert any("maintenance mode" in b for b in br["blockers"])
-    out = plan_tools.vm_apply_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, confirm=True, target="vc01")
     assert dispatched == [] and "maintenance mode" in out["error"]
 
 
@@ -195,7 +195,7 @@ def test_a_clean_migrate_plan_runs(world, dispatched):
     world["vms"] = [web]
     world["hosts"] = [_host("esx-02")]
     pid = _write_plan([_step(0, "migrate", {"vm_name": "web-01", "target_host": "esx-02"})])
-    out = plan_tools.vm_apply_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, confirm=True, target="vc01")
     assert out["status"] == "completed" and dispatched == [("do", "migrate")]
 
 
@@ -207,10 +207,10 @@ def test_storage_action_in_a_plan_is_a_blocker(action, tool, world, dispatched):
     params = {"host_name": "esx-01", "address": "10.0.0.9"}
     params = {k: params[k] for k in planner._ACTION_SCHEMA[action]["required"]}
     pid = _write_plan([_step(0, "power_on", {"vm_name": "a"}), _step(1, action, params)])
-    br = plan_tools.vm_apply_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.apply_vm_plan(pid, target="vc01")["blast_radius"]
     blocker = next(b for b in br["blockers"] if b.startswith("Step 1"))
     assert tool in blocker and "vmware-storage" in blocker
-    out = plan_tools.vm_apply_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, confirm=True, target="vc01")
     assert dispatched == [] and tool in out["error"]
 
 
@@ -224,8 +224,8 @@ def test_storage_action_is_refused_at_check_step(action, tool):
 def test_storage_action_is_a_blocker_even_when_the_target_does_not_match(world, dispatched):
     pid = _write_plan([_step(0, "iscsi_remove_target",
                              {"host_name": "esx-01", "address": "10.0.0.9"})])
-    br = plan_tools.vm_apply_plan(pid, target="other")["blast_radius"]
-    assert any("storage_iscsi_remove_target" in b for b in br["blockers"])
+    br = plan_tools.apply_vm_plan(pid, target="other")["blast_radius"]
+    assert any("remove_iscsi_target" in b for b in br["blockers"])
 
 
 # ═══ 3: rollback steps are checked like forward steps ═════════════════════════
@@ -239,19 +239,19 @@ def _failed(*steps):
 def test_rollback_preview_measures_each_destructive_rollback_step(world, dispatched):
     world["vms"] = [_vm("web-02", power=ON), _vm("web-02", power=ON)]
     pid = _failed(_step(0, "power_on", {"vm_name": "web-02"}, status="success"))
-    br = plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]
     (entry,) = br["would_run"]
     assert entry["check"] == "measured"
     # Two VMs share the name: the measurement is a blocker, and refuses.
     assert any(b.startswith("Step 0 (rollback power_off)") for b in br["blockers"])
-    out = plan_tools.vm_rollback_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.rollback_vm_plan(pid, confirm=True, target="vc01")
     assert dispatched == [] and "error" in out
 
 
 def test_rollback_power_off_is_measured_as_a_hard_power_off(world, dispatched):
     world["vms"] = [_vm("web-02", power=ON)]
     pid = _failed(_step(0, "power_on", {"vm_name": "web-02"}, status="success"))
-    br = plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]
     (entry,) = br["would_run"]
     assert entry["measured"]["mode"] == "hard_power_off" and br["blockers"] == []
 
@@ -262,19 +262,19 @@ def test_rollback_preview_refuses_on_an_unmeasurable_rollback_step(world, dispat
     monkeypatch.setitem(plan_gate._MEASURES, "power_off",
                         lambda _si, _p: (_ for _ in ()).throw(RuntimeError("boom")))
     pid = _failed(_step(0, "power_on", {"vm_name": "web-02"}, status="success"))
-    br = plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]
     assert br["unmeasured"]
-    out = plan_tools.vm_rollback_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.rollback_vm_plan(pid, confirm=True, target="vc01")
     assert dispatched == [] and "error" in out
 
 
 def test_rollback_storage_step_is_refused(world, dispatched):
     pid = _failed(_step(0, "iscsi_add_target", {"host_name": "esx-01", "address": "10.0.0.9"},
                         status="success"))
-    br = plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]
-    assert any("storage_iscsi_remove_target" in b for b in br["blockers"])
-    out = plan_tools.vm_rollback_plan(pid, confirm=True, target="vc01")
-    assert dispatched == [] and "storage_iscsi_remove_target" in out["error"]
+    br = plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]
+    assert any("remove_iscsi_target" in b for b in br["blockers"])
+    out = plan_tools.rollback_vm_plan(pid, confirm=True, target="vc01")
+    assert dispatched == [] and "remove_iscsi_target" in out["error"]
 
 
 def test_a_failed_check_during_rollback_stops_it_with_a_teaching_error(world, dispatched,
@@ -293,8 +293,8 @@ def test_a_failed_check_during_rollback_stops_it_with_a_teaching_error(world, di
               status="success"),
         _step(1, "power_on", {"vm_name": "web-02"}, status="success"),
     )
-    assert plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]["blockers"] == []
-    out = plan_tools.vm_rollback_plan(pid, confirm=True, target="vc01")
+    assert plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]["blockers"] == []
+    out = plan_tools.rollback_vm_plan(pid, confirm=True, target="vc01")
     assert [c[1] for c in dispatched] == ["power_off"]
     refused = out["rollback_results"][-1]
     assert refused["step_index"] == 0 and refused["rollback_status"] == "refused"
@@ -315,7 +315,7 @@ def test_rollback_check_is_deferred_behind_an_earlier_rollback_step(world, dispa
               status="success"),
         _step(1, "power_on", {"vm_name": "web-02"}, status="success"),
     )
-    br = plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]
     first, second = br["would_run"]
     assert first["check"] == "measured"
     assert second["check"] == "deferred" and second["deferred_until_after_step"] == 1

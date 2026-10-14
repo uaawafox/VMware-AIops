@@ -20,7 +20,7 @@ def browse_datastore(
     """[READ] Browse files in a vSphere datastore directory.
 
     Use this to find OVA/ISO/VMDK paths before calling deploy_vm_from_ova or
-    attach_iso_to_vm; for an estate-wide image sweep use scan_datastore_images.
+    attach_iso_to_vm; for an estate-wide image sweep use scan_all_datastore_images.
 
     Returns the list envelope: 'items' is one row per file, and
     'returned'/'total'/'truncated' state completeness. Every match in the
@@ -39,7 +39,7 @@ def browse_datastore(
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def scan_datastore_images(target: Optional[str] = None) -> dict:
+def scan_all_datastore_images(target: Optional[str] = None) -> dict:
     """[READ] Scan all accessible datastores for deployable images (OVA/ISO/OVF/VMDK).
 
     Returns the images found and refreshes the cache at

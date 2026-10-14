@@ -1,8 +1,8 @@
 """Guest operations must say which guest account they run as.
 
 Until 2026-09-11 every guest tool defaulted ``username`` to ``root`` — on the
-MCP surface (vm_guest_exec, vm_guest_exec_output, vm_guest_upload,
-vm_guest_download) and the CLI (guest-exec / guest-upload / guest-download).
+MCP surface (run_vm_guest_command, run_vm_guest_command_with_output, upload_vm_guest_file,
+download_vm_guest_file) and the CLI (guest-exec / guest-upload / guest-download).
 An agent that omitted the argument ran a command as root without anyone
 having chosen root. ClawHub's review flagged guest exec as the highest-impact
 capability of the skill; the maintainer decided the account must be explicit.
@@ -18,7 +18,7 @@ import asyncio
 import pytest
 from typer.testing import CliRunner
 
-GUEST_TOOLS = ("vm_guest_exec", "vm_guest_exec_output", "vm_guest_upload", "vm_guest_download")
+GUEST_TOOLS = ("run_vm_guest_command", "run_vm_guest_command_with_output", "upload_vm_guest_file", "download_vm_guest_file")
 
 
 def _schemas():

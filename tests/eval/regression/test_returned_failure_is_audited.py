@@ -10,7 +10,7 @@ Three things were wrong at once, and the undo one is the worst:
 
 1. the audit row said ``ok`` for an operation that failed;
 2. ``_record_undo`` wrote an inverse token for a change that never landed — a
-   failed ``vm_power_on`` filed "power it back off", so vmware-pilot could
+   failed ``power_on_vm`` filed "power it back off", so vmware-pilot could
    offer to reverse a power-on that never happened;
 3. the circuit breaker was told ``success=True``, so repeated failures never
    tripped it.
@@ -84,7 +84,7 @@ def _connection_works(_target=None):
 def test_failed_string_tool_is_audited_as_a_failure(audit_rows, monkeypatch) -> None:
     monkeypatch.setattr(vm_tools, "_get_connection", _connection_fails)
 
-    returned = vm_tools.vm_power_on("web-01", target="vcenter-prod")
+    returned = vm_tools.power_on_vm("web-01", target="vcenter-prod")
 
     # The string was never the bug — it says "Error:" both before and after.
     assert returned.startswith("Error:")
@@ -95,9 +95,9 @@ def test_failed_string_tool_is_audited_as_a_failure(audit_rows, monkeypatch) -> 
 def test_successful_string_tool_is_still_audited_ok(audit_rows, monkeypatch) -> None:
     """The other direction: declaring failure must not mark working calls failed."""
     monkeypatch.setattr(vm_tools, "_get_connection", _connection_works)
-    monkeypatch.setattr(vm_tools, "power_on_vm", lambda si, name: f"VM '{name}' powered on.")
+    monkeypatch.setattr(vm_tools, "_ops_power_on_vm", lambda si, name: f"VM '{name}' powered on.")
 
-    vm_tools.vm_power_on("web-01", target="vcenter-prod")
+    vm_tools.power_on_vm("web-01", target="vcenter-prod")
 
     assert audit_rows[0]["status"] == "ok"
 
@@ -113,7 +113,7 @@ def test_failed_power_on_records_no_undo_token(audit_rows, monkeypatch) -> None:
     """
     monkeypatch.setattr(vm_tools, "_get_connection", _connection_fails)
 
-    vm_tools.vm_power_on("web-01", target="vcenter-prod")
+    vm_tools.power_on_vm("web-01", target="vcenter-prod")
 
     assert get_undo_store().list() == [], "filed an undo token for a power-on that never ran"
 
@@ -121,13 +121,13 @@ def test_failed_power_on_records_no_undo_token(audit_rows, monkeypatch) -> None:
 def test_successful_power_on_does_record_its_undo_token(audit_rows, monkeypatch) -> None:
     """Control for the test above — otherwise "no token" passes if undo is dead."""
     monkeypatch.setattr(vm_tools, "_get_connection", _connection_works)
-    monkeypatch.setattr(vm_tools, "power_on_vm", lambda si, name: f"VM '{name}' powered on.")
+    monkeypatch.setattr(vm_tools, "_ops_power_on_vm", lambda si, name: f"VM '{name}' powered on.")
 
-    vm_tools.vm_power_on("web-01", target="vcenter-prod")
+    vm_tools.power_on_vm("web-01", target="vcenter-prod")
 
     tokens = get_undo_store().list()
     assert len(tokens) == 1
-    assert tokens[0]["tool"] == "vm_power_on"
+    assert tokens[0]["tool"] == "power_on_vm"
 
 
 # ── coverage of the shapes, not just the one tool ────────────────────────────
@@ -170,7 +170,7 @@ def _failed_task() -> MagicMock:
 
 
 def test_polling_a_failed_task_is_not_a_failed_call(audit_rows, monkeypatch) -> None:
-    """vm_task_status reported the task's fault under a top-level ``error`` key.
+    """get_vm_task_status reported the task's fault under a top-level ``error`` key.
 
     That key is the family's envelope for "this call failed", so policy read a
     working read as a failure: an agent polling one failed snapshot-delete three
@@ -182,7 +182,7 @@ def test_polling_a_failed_task_is_not_a_failed_call(audit_rows, monkeypatch) -> 
     monkeypatch.setattr(vm_tools, "_get_connection", _connection_works)
 
     with patch.object(vm_lifecycle.vim, "Task", return_value=_failed_task()):
-        payload = vm_tools.vm_task_status("task-42", target="vcenter-prod")
+        payload = vm_tools.get_vm_task_status("task-42", target="vcenter-prod")
 
     assert payload["state"] == "error"
     assert payload["task_error"], "the fault text must still reach the agent"
@@ -198,7 +198,7 @@ def test_polling_a_succeeding_task_carries_no_task_error(audit_rows, monkeypatch
     task.info.error = None
 
     with patch.object(vm_lifecycle.vim, "Task", return_value=task):
-        payload = vm_tools.vm_task_status("task-42", target="vcenter-prod")
+        payload = vm_tools.get_vm_task_status("task-42", target="vcenter-prod")
 
     assert payload["state"] == "success"
     assert "task_error" not in payload

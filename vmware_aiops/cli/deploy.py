@@ -59,7 +59,7 @@ def ds_browse(
 
 @datastore_app.command("scan-images")
 @cli_errors
-@audited("scan_datastore_images")
+@audited("scan_all_datastore_images")
 def ds_scan_images(
     target: TargetOption = None,
     config: ConfigOption = None,

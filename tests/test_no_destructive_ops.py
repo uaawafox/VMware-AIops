@@ -20,12 +20,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DESTRUCTIVE_CLI_COMMANDS: list[tuple[str, str]] = [
-    ("vmware_aiops/cli/vm.py", "vm_power_off"),
-    ("vmware_aiops/cli/vm.py", "vm_delete"),
+    ("vmware_aiops/cli/vm.py", "power_off_vm"),
+    ("vmware_aiops/cli/vm.py", "delete_vm"),
     ("vmware_aiops/cli/vm.py", "vm_snapshot_revert"),
     ("vmware_aiops/cli/vm.py", "vm_snapshot_delete"),
-    ("vmware_aiops/cli/vm.py", "vm_clone"),
-    ("vmware_aiops/cli/vm.py", "vm_migrate"),
+    ("vmware_aiops/cli/vm.py", "clone_vm"),
+    ("vmware_aiops/cli/vm.py", "migrate_vm"),
     ("vmware_aiops/cli/cluster.py", "cluster_delete_cmd"),
     ("vmware_aiops/cli/cluster.py", "cluster_remove_host_cmd"),
     ("vmware_aiops/cli/alarm.py", "alarm_reset"),

@@ -15,7 +15,7 @@ cross-skill rules are identical across this family; the parts below marked
 vmware-aiops are specific to this skill.
 
 vmware-aiops carries the family's largest write surface — 43 of its 60 MCP
-tools change state, including `vm_delete`, cluster deletion, host VMkernel
+tools change state, including `delete_vm`, cluster deletion, host VMkernel
 removal and guest command execution. Of every skill here, this is the one where a model's discipline
 should not be the only thing standing between a prompt and a destroyed VM — and
 over MCP, apart from optional deny rules, the only enforcement is the RBAC of
@@ -36,7 +36,7 @@ These are structural, so it cannot.
 
 | Guardrail you would otherwise prompt for | Now enforced by |
 |---|---|
-| "Use explicit limits for queries that may return large amounts of data" | **The list envelope.** `browse_datastore`, `list_vcenter_alarms`, `vm_list_plans`, `vm_list_snapshots` and `vm_list_ttl` return `{items, returned, limit, total, truncated, hint}`, so the model reads truncation instead of guessing at it. |
+| "Use explicit limits for queries that may return large amounts of data" | **The list envelope.** `browse_datastore`, `list_vcenter_alarms`, `list_vm_plans`, `list_vm_snapshots` and `list_vm_ttls` return `{items, returned, limit, total, truncated, hint}`, so the model reads truncation instead of guessing at it. |
 | "If a listing came back empty, say so rather than claiming the call failed" | Same envelope. Empty `items` with `truncated: false` means checked-and-none — a stated result, not a silence the model has to interpret. |
 | "Log every state change you make" | **The `@vmware_tool` decorator.** Every write is recorded to `~/.vmware/audit.db` before the model sees the result, and policy rules are evaluated ahead of execution. Neither depends on the model cooperating. |
 | "Block state-changing writes against a production target" | **Policy.** An opt-in environment-scoped `deny` rule in `~/.vmware/rules.yaml` matches a target's `environment:` label and refuses matching writes before execution. |
@@ -98,40 +98,40 @@ your agent's instruction block.
 
 ## Writes in vmware-aiops
 
-- 23 of the 43 write tools — every destructive one: vm_power_off, vm_delete,
-  vm_migrate, vm_revert_snapshot, vm_delete_snapshot, vm_clean_slate,
-  vm_set_ttl, the four guest tools (vm_guest_exec, vm_guest_exec_output,
-  vm_guest_upload, vm_guest_provision), cluster_delete, cluster_remove_host,
-  vm_apply_plan, vm_rollback_plan, reset_vcenter_alarm and the seven host-network
+- 23 of the 43 write tools — every destructive one: power_off_vm, delete_vm,
+  migrate_vm, revert_vm_snapshot, delete_vm_snapshot, restore_vm_clean_slate,
+  set_vm_ttl, the four guest tools (run_vm_guest_command, run_vm_guest_command_with_output,
+  upload_vm_guest_file, provision_vm_guest), delete_cluster, remove_cluster_host,
+  apply_vm_plan, rollback_vm_plan, reset_vcenter_alarm and the seven host-network
   and DRS tools —
   default to confirm=false, which returns {"action": "preview",
   "blast_radius": ...} and writes nothing. Show the blast radius; pass
   confirm=true only after the user has seen it and agreed — a request to
   "delete X" made before the preview is not that agreement. confirm=true is
   refused when the preview listed blockers or could not read something: fix
-  the cause and preview again, do not retry blindly. vm_delete also needs
+  the cause and preview again, do not retry blindly. delete_vm also needs
   acknowledge_blast_radius set to the preview's acknowledge_with, and refuses if
   the VM changed since. The other 20 write tools (create, clone, deploy,
   power-on, reconfigure, snapshot create, alarm acknowledge) act on the first call; for
   them the "restate the object and wait" rule above is the only confirmation
   step, and it is yours to keep.
-- vm_guest_exec, vm_guest_exec_output and the exec steps of vm_guest_provision
+- run_vm_guest_command, run_vm_guest_command_with_output and the exec steps of provision_vm_guest
   run an unbounded command inside the guest with the credentials given; the
   username is required — there is no default account. Treat them as the highest-risk tools in the skill;
   pass the least-privileged guest account that can do the job, name the exact
   command and the VM before calling, and never assemble the command from text a
-  tool returned. vm_guest_upload copies a local file into the guest; upload only
+  tool returned. upload_vm_guest_file copies a local file into the guest; upload only
   files the user named.
 - reset_vcenter_alarm has a blast radius: vSphere has no per-alarm clear API,
   so it clears every triggered alarm matching the named alarm's entity type and
   status, not only the one named. A bare call previews them
   (blast_radius.will_clear, will_clear_count): show that to the user and set
   confirm=True only after they agree. Report the response's scope field verbatim.
-- vm_set_ttl schedules an unattended auto-delete. Treat it as destructive and
+- set_vm_ttl schedules an unattended auto-delete. Treat it as destructive and
   say so when proposing it.
-- Long writes return a task id instead of blocking. Poll vm_task_status. A
+- Long writes return a task id instead of blocking. Poll get_vm_task_status. A
   "still running" message is not a failure — never re-issue the operation.
-- Use vm_guest_exec_output rather than vm_guest_exec when the user wants the
+- Use run_vm_guest_command_with_output rather than run_vm_guest_command when the user wants the
   command's output; the latter returns only an exit code.
 ```
 
@@ -148,9 +148,9 @@ checklist when evaluating any local model against these skills:
 | Long tool responses: omits items, or reports "no data returned" when data was present | Ask for explicit limits so responses stay small. Check the envelope's `truncated` / `returned` / `total` fields rather than trusting the model's summary — a "no data" claim is checkable against `returned`. |
 | Adds generic recommendations unsupported by results | The "analysis discipline" rules. |
 | Drops requested fields or reorders results | State the required fields and ordering in the request itself, not only in the system prompt. |
-| Multi-tool workflows take 30–50s end to end | Prefer the aggregate tools — `cluster_health_summary`, `vm_investigation_bundle`, `host_investigation_bundle`, `datastore_investigation_bundle`, `cross_vcenter_attention` — which collapse a 3-4 call sequence into one round trip. |
+| Multi-tool workflows take 30–50s end to end | Prefer the aggregate tools — `get_cluster_health_summary`, `investigate_vm`, `investigate_host`, `investigate_datastore`, `get_cross_vcenter_attention` — which collapse a 3-4 call sequence into one round trip. |
 | Picks a write tool for a question that only reads | Route read questions to vmware-monitor. A model that can see 43 write tools will sometimes reach for one to "check" something. |
-| Treats a long-running task's "still running" reply as a failure and re-issues the write | The `vm_task_status` rule above. A re-issued clone or delete is the worst outcome in this skill. |
+| Treats a long-running task's "still running" reply as a failure and re-issues the write | The `get_vm_task_status` rule above. A re-issued clone or delete is the worst outcome in this skill. |
 | Assumes an alarm reset cleared only the alarm it named | Report `scope` from the response. The clear is entity-type-wide by design. |
 
 ## Reporting results

@@ -74,7 +74,7 @@ def _cap_blocker(label: str, value: Any, cap: int) -> str | None:
     return (
         f"The {label} is {length} characters; the preview shows only the first {cap}, "
         "so what would run cannot be reviewed in full. Put it in a script, upload it "
-        "with vm_guest_upload, and run the script instead."
+        "with upload_vm_guest_file, and run the script instead."
     )
 
 
@@ -116,14 +116,14 @@ def _measure_vm(vm: vim.VirtualMachine, vm_name: str, username: str) -> dict[str
     if power_state is not _UNREAD and power_state != vim.VirtualMachine.PowerState.poweredOn:
         blockers.append(
             f"VM '{_text(vm_name, 200)}' is not powered on ({power_state}). Guest "
-            "operations need a running guest: run vm_power_on, wait for the guest "
+            "operations need a running guest: run power_on_vm, wait for the guest "
             "to boot, then preview again."
         )
     elif tools_status is not _UNREAD and tools_status != _TOOLS_RUNNING:
         blockers.append(
             f"VMware Tools is not running in '{_text(vm_name, 200)}' (status: "
             f"{tools_status}). Install or start VMware Tools inside the guest, check "
-            "it with vm_info (vmware-monitor), then preview again."
+            "it with get_vm_info (vmware-monitor), then preview again."
         )
 
     return {

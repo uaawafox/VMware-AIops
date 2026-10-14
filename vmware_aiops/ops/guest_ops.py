@@ -55,7 +55,7 @@ def _require_vm_with_tools(
     if vm.runtime.powerState != vim.VirtualMachine.PowerState.poweredOn:
         raise GuestOpsError(
             f"VM '{vm_name}' is not powered on. Guest operations need a running guest: "
-            f"run vm_power_on (CLI: vmware-aiops vm power-on '{vm_name}'), wait for the "
+            f"run power_on_vm (CLI: vmware-aiops vm power-on '{vm_name}'), wait for the "
             f"guest to boot, then retry."
         )
     tools_status = vm.guest.toolsRunningStatus if vm.guest else None
@@ -63,7 +63,7 @@ def _require_vm_with_tools(
         raise GuestOpsError(
             f"VMware Tools not running on '{vm_name}' (status: {tools_status}). "
             f"Install or start VMware Tools inside the guest, then check the new status "
-            f"with vm_info (CLI: vmware-monitor vm info '{vm_name}') before retrying."
+            f"with get_vm_info (CLI: vmware-monitor vm info '{vm_name}') before retrying."
         )
     return vm
 

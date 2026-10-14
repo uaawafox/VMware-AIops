@@ -43,7 +43,7 @@ def _tgt(target: str | None, cfg: object) -> str:
 
 @investigate_app.command("vm")
 @cli_errors
-@audited("vm_investigation_bundle")
+@audited("investigate_vm")
 def investigate_vm_cmd(
     vm_name: Annotated[str, typer.Argument(help="Exact VM name to investigate")],
     hours: _Hours = 24,
@@ -70,7 +70,7 @@ def investigate_vm_cmd(
 
 @investigate_app.command("host")
 @cli_errors
-@audited("host_investigation_bundle")
+@audited("investigate_host")
 def investigate_host_cmd(
     host_name: Annotated[str, typer.Argument(help="Exact ESXi host name to investigate")],
     hours: _Hours = 24,
@@ -97,7 +97,7 @@ def investigate_host_cmd(
 
 @investigate_app.command("datastore")
 @cli_errors
-@audited("datastore_investigation_bundle")
+@audited("investigate_datastore")
 def investigate_datastore_cmd(
     datastore_name: Annotated[str, typer.Argument(help="Exact datastore name to investigate")],
     hours: _Hours = 24,
@@ -126,7 +126,7 @@ def investigate_datastore_cmd(
 
 
 @cli_errors
-@audited("cross_vcenter_attention")
+@audited("get_cross_vcenter_attention")
 def attention_cmd(
     cluster: Annotated[
         str | None, typer.Option("--cluster", help="Show only clusters matching this substring")

@@ -14,7 +14,7 @@ from vmware_aiops.ops.planner import create_plan, list_plans
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("dict")
-def vm_create_plan(
+def create_vm_plan(
     operations: list[dict[str, Any]],
     target: Optional[str] = None,
 ) -> dict:
@@ -31,7 +31,7 @@ def vm_create_plan(
 
     Returns plan dict with plan_id, steps, summary (vms_affected,
     irreversible_steps, rollback_available). Show to user for confirmation
-    before calling vm_apply_plan.
+    before calling apply_vm_plan.
 
     Args:
         operations: List of operation dicts, each with "action" + params.
@@ -48,7 +48,7 @@ def vm_create_plan(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("dict")
-def vm_apply_plan(
+def apply_vm_plan(
     plan_id: str,
     confirm: bool = False,
     target: Optional[str] = None,
@@ -63,8 +63,8 @@ def vm_apply_plan(
     earlier: they have not seen the preview yet.
 
     Each step is shown with its full parameters (passwords redacted). Each
-    destructive step is measured as its own tool would measure it (vm_delete,
-    vm_power_off, vm_revert_snapshot, vm_guest_exec, cluster_delete ...), and
+    destructive step is measured as its own tool would measure it (delete_vm,
+    power_off_vm, revert_vm_snapshot, run_vm_guest_command, delete_cluster ...), and
     that tool's blockers refuse the plan. A step on something an earlier step
     creates or changes is marked check "deferred": it is measured immediately
     before it runs, and the plan stops there if it fails.
@@ -72,23 +72,24 @@ def vm_apply_plan(
     Refused: a target other than the one the plan was created against (no
     target is a target of its own), a step its tool would refuse, anything it
     could not read, a delete_vm step without its acknowledge_blast_radius
-    (from a vm_delete preview), and any iscsi_* or storage_rescan step — those
-    are gated in vmware-storage; run storage_iscsi_* / storage_rescan there.
+    (from a delete_vm preview), and any iscsi_* or storage_rescan step — those
+    are gated in vmware-storage; run enable_iscsi, add_iscsi_target,
+    remove_iscsi_target or rescan_storage there.
 
     With confirm=True steps run sequentially. On failure: stops immediately,
     keeps the plan file with per-step results, and returns rollback_available.
     On success: deletes the plan file. If a step fails and rollback_available
-    is true, ask the user whether to rollback, then call vm_rollback_plan.
+    is true, ask the user whether to rollback, then call rollback_vm_plan.
 
     Args:
-        plan_id: The plan ID returned by vm_create_plan.
+        plan_id: The plan ID returned by create_vm_plan.
         confirm: False (default) returns the blast radius and changes nothing. True applies it.
         target: The vCenter/ESXi target the plan was created against.
     """
     radius = measure_apply(plan_id, target, lambda: _get_connection(target))
     if not confirm:
         return preview(radius)
-    refuse_on(radius, "vm_apply_plan")
+    refuse_on(radius, "apply_vm_plan")
     si = _get_connection(target)
     result = apply_plan(si, plan_id, step_check=check_step)
     return {**redact_plan(result), **_failure_hint(result), "blast_radius": radius}
@@ -109,7 +110,7 @@ def _failure_hint(result: dict) -> dict:
     if result.get("rollback_available"):
         parts.append(
             "Ask the user: 'Do you want to rollback the already-executed steps?' If "
-            "yes, preview vm_rollback_plan and show it to them."
+            "yes, preview rollback_vm_plan and show it to them."
         )
     return {"hint": "Plan failed. " + " ".join(parts)} if parts else {}
 
@@ -117,7 +118,7 @@ def _failure_hint(result: dict) -> dict:
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("dict")
-def vm_rollback_plan(
+def rollback_vm_plan(
     plan_id: str,
     confirm: bool = False,
     target: Optional[str] = None,
@@ -131,8 +132,8 @@ def vm_rollback_plan(
     your own because the user asked earlier: they have not seen the preview
     yet.
 
-    Only call this after vm_apply_plan returns status='failed'; check
-    vm_list_plans first for the plan_id. Irreversible steps (delete_vm,
+    Only call this after apply_vm_plan returns status='failed'; check
+    list_vm_plans first for the plan_id. Irreversible steps (delete_vm,
     revert_snapshot, etc.) are skipped with a warning. Each destructive
     rollback step (power off, delete snapshot, cluster delete, host removal)
     is measured as its own tool measures it, in the preview and again just
@@ -148,7 +149,7 @@ def vm_rollback_plan(
     radius = measure_rollback(plan_id, target, lambda: _get_connection(target))
     if not confirm:
         return preview(radius)
-    refuse_on(radius, "vm_rollback_plan")
+    refuse_on(radius, "rollback_vm_plan")
     si = _get_connection(target)
     result = rollback_plan(si, plan_id, step_check=check_step)
     return {**result, **_rollback_stop_hint(result), "blast_radius": radius}
@@ -162,21 +163,21 @@ def _rollback_stop_hint(result: dict) -> dict:
         f"Rollback stopped at Step {result['stopped_at_step']}: rolling it back was "
         "refused (see its error). Steps listed before it "
         "were rolled back; none after it ran. The plan is still 'failed': resolve what "
-        "the error names, then preview vm_rollback_plan again."
+        "the error names, then preview rollback_vm_plan again."
     )}
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def vm_list_plans() -> dict:
+def list_vm_plans() -> dict:
     """[READ] List all pending/failed plans.
 
-    Use this first to find a plan_id for vm_apply_plan or vm_rollback_plan.
+    Use this first to find a plan_id for apply_vm_plan or rollback_vm_plan.
     Returns the list envelope: 'items' holds plan summaries (plan_id,
     created_at, status, steps count, VMs affected), and 'returned'/'total'/
     'truncated' state whether the listing is complete. Every plan file is
     read, so truncated is always false. Listing never deletes: stale plans
-    (>24h) are swept by vm_create_plan, not by this tool.
+    (>24h) are swept by create_vm_plan, not by this tool.
     """
     return list_plans()
