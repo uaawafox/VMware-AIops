@@ -23,7 +23,7 @@ dependencies = [
     # Read-only cluster-health triage (summary + HTML snapshot) is owned by
     # vmware-monitor; AIops delegates to it so a conversation with the AIops
     # entry point can produce the same report without duplicating the code.
-    "vmware-monitor>=1.13.0,<2.0",
+    "vmware-monitor>=2.0.0,<3.0",
 ]
 
 

@@ -58,6 +58,9 @@ carry the same names and parameters as Monitor's.
 * **Daemon audit rows say `daemon`.** The TTL / scan daemon's audit rows carried no surface and read as MCP
   stdio calls; they now record `surface=daemon` (vmware-policy 1.18.0 audit column, HLD §16 D-14).
 
+* Requires **vmware-monitor 2.0**: the investigation and summary tools reuse Monitor's ops layer, whose drill-down
+  hints now name the 2.0 tools.
+
 ## v1.12.1 — `reset_vcenter_alarm` previews before it clears
 
 * **`reset_vcenter_alarm` cleared alarms on the first MCP call.** vSphere has no per-alarm clear:
