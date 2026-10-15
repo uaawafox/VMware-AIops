@@ -135,7 +135,7 @@ def cluster_add_host_cmd(
 
     if dry_run:
         _dry_run_print(
-            target=_resolve_target(target), vm_name=name, operation="cluster_add_host",
+            target=_resolve_target(target), vm_name=name, operation="add_cluster_host",
             api_call="cluster.MoveInto_Task()",
             parameters={"host": host},
             resource_label="Cluster",
@@ -146,7 +146,7 @@ def cluster_add_host_cmd(
     result = add_host_to_cluster(si, cluster_name=name, host_name=host)
     console.print(f"[green]{result}[/]")
     _audit.log(
-        target=_resolve_target(target), operation="cluster_add_host",
+        target=_resolve_target(target), operation="add_cluster_host",
         resource=name, parameters={"host": host}, result=result,
     )
 
@@ -166,7 +166,7 @@ def cluster_remove_host_cmd(
 
     if dry_run:
         _dry_run_print(
-            target=_resolve_target(target), vm_name=name, operation="cluster_remove_host",
+            target=_resolve_target(target), vm_name=name, operation="remove_cluster_host",
             api_call="datacenter.hostFolder.MoveIntoFolder_Task(list=[host])",
             parameters={"host": host},
             resource_label="Cluster",
@@ -177,7 +177,7 @@ def cluster_remove_host_cmd(
     result = remove_host_from_cluster(si, cluster_name=name, host_name=host)
     console.print(f"[green]{result}[/]")
     _audit.log(
-        target=_resolve_target(target), operation="cluster_remove_host",
+        target=_resolve_target(target), operation="remove_cluster_host",
         resource=name, parameters={"host": host}, result=result,
     )
 

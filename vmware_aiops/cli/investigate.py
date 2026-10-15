@@ -60,7 +60,7 @@ def investigate_vm_cmd(
     tgt = _tgt(target, cfg)
     bundle = get_vm_investigation_bundle(si, vm_name, hours=hours)
     _audit.log_query(
-        target=tgt, resource=vm_name, query_type="vm_investigation_bundle", skill="aiops"
+        target=tgt, resource=vm_name, query_type="investigate_vm", skill="aiops"
     )
     if html or html_path is not None:
         write_bundle_html_snapshot(bundle, "vm", tgt, html_path)
@@ -87,7 +87,7 @@ def investigate_host_cmd(
     tgt = _tgt(target, cfg)
     bundle = get_host_investigation_bundle(si, host_name, hours=hours)
     _audit.log_query(
-        target=tgt, resource=host_name, query_type="host_investigation_bundle", skill="aiops"
+        target=tgt, resource=host_name, query_type="investigate_host", skill="aiops"
     )
     if html or html_path is not None:
         write_bundle_html_snapshot(bundle, "host", tgt, html_path)
@@ -116,7 +116,7 @@ def investigate_datastore_cmd(
     _audit.log_query(
         target=tgt,
         resource=datastore_name,
-        query_type="datastore_investigation_bundle",
+        query_type="investigate_datastore",
         skill="aiops",
     )
     if html or html_path is not None:
@@ -148,7 +148,7 @@ def attention_cmd(
         sessions, unreachable=unreachable, cluster_filter=cluster, top_n=top
     )
     _audit.log_query(
-        target="*", resource="all-vcenters", query_type="cross_vcenter_attention", skill="aiops"
+        target="*", resource="all-vcenters", query_type="get_cross_vcenter_attention", skill="aiops"
     )
     if html or html_path is not None:
         write_attention_html_snapshot(data, html_path)

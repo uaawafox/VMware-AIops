@@ -588,7 +588,7 @@ def set_vm_ttl(
 
     if dry_run:
         _dry_run_print(
-            target=_resolve_target(target), vm_name=vm_name, operation="vm_set_ttl",
+            target=_resolve_target(target), vm_name=vm_name, operation="set_vm_ttl",
             api_call="scheduler.delete_vm() on TTL expiry",
             parameters={
                 "minutes": minutes,
@@ -601,7 +601,7 @@ def set_vm_ttl(
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
-        operation="vm_set_ttl",
+        operation="set_vm_ttl",
         resource=vm_name,
         parameters={"minutes": minutes},
         result=result,
