@@ -42,8 +42,11 @@ def get_access_info(
         tool: A tool name on this server, e.g. clone_vm (None = all tools).
         target: Optional vCenter/ESXi target name from config. Uses default if omitted.
     """
-    from vmware_policy.access import vsphere_access_info
+    from vmware_policy.access import unknown_tool_message, vsphere_access_info
 
+    unknown = unknown_tool_message(tool, REQUIREMENTS)  # no login for a misspelled name
+    if unknown:
+        return {"error": unknown}
     si = _get_connection(target)
     cfg = _ensure_conn_mgr()._config
     name = (cfg.get_target(target) if target else cfg.default_target).name

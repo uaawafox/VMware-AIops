@@ -105,8 +105,11 @@ def test_failed_lookup_is_undetermined(_wired) -> None:
     assert access.get_access_info(tool="power_on_vm")["tool"]["verdict"] == "undetermined"
 
 
-def test_unknown_tool_is_a_teaching_error(_wired) -> None:
-    _wired(_fake_si(set()))
+def test_unknown_tool_is_a_teaching_error(monkeypatch) -> None:
+    def no_login(*_a, **_k):
+        raise AssertionError("connected for a misspelled tool name")
+
+    monkeypatch.setattr(access, "_get_connection", no_login)
     out = access.get_access_info(tool="vm_clone")
     assert "clone_vm" in out["error"]
 
