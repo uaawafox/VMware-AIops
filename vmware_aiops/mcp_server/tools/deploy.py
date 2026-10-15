@@ -33,7 +33,9 @@ def deploy_vm_from_ova(
         ova_path: Local path to the .ova file (must be readable by this server).
         vm_name: Name for the new VM; must not already exist.
         datastore_name: Target datastore (see browse_datastore).
-        network_name: Port group for the NICs (default "VM Network").
+        network_name: Port group every network in the OVF is mapped to (default
+            "VM Network"). Refused before anything is imported if no network, or
+            more than one, has this name in the datacenter.
         folder_path: vCenter folder path; omit for the datacenter root.
         power_on: Power the VM on after import (default False).
         snapshot_name: If set, snapshots the new VM with this name.

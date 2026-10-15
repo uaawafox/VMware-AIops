@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from urllib.request import Request, urlopen
 
 from pyVmomi import vim
+from vmware_policy import sanitize
 
 from vmware_aiops.connection import get_verify_ssl
 from vmware_aiops.ops.inventory import (
@@ -238,6 +239,44 @@ def _report_lease_progress(lease: vim.HttpNfcLease, percent: int) -> None:
         _log.debug("Lease progress report failed at %d%%: %s", percent, e)
 
 
+def _ovf_networks(ovf_manager, ovf_content: str) -> list[str]:
+    """Names of the networks the OVF descriptor declares (empty when it declares none)."""
+    parsed = ovf_manager.ParseDescriptor(
+        ovfDescriptor=ovf_content, pdp=vim.OvfManager.ParseDescriptorParams()
+    )
+    if parsed.error:
+        errors = "; ".join(sanitize(str(e.msg), 200) for e in parsed.error)
+        raise InventoryError(
+            f"OVF parse failed: {errors}. Check that the .ova is a valid OVF package."
+        )
+    return [n.name for n in (parsed.network or [])]
+
+
+def _resolve_network(datacenter, network_name: str):
+    """The datacenter's one network named ``network_name``, or a teaching error.
+
+    Standard and distributed port groups share the datacenter's network list and
+    may share a name; a name that matches more than one is refused rather than
+    picking one (the VM would silently land on the wrong segment).
+    """
+    networks = list(datacenter.network or [])
+    matches = [n for n in networks if n.name == network_name]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise InventoryError(
+            f"Network name '{sanitize(network_name, 100)}' matches more than one network "
+            f"in this datacenter ({len(matches)}, e.g. a standard and a distributed port group). "
+            "Rename one, or deploy with a unique port group name."
+        )
+    names = sorted({sanitize(str(n.name), 80) for n in networks})
+    shown = ", ".join(names[:20]) + (f" (+{len(names) - 20} more)" if len(names) > 20 else "")
+    raise InventoryError(
+        f"Network '{sanitize(network_name, 100)}' not found in this datacenter. "
+        f"Available: {shown or 'none'}. Pass one of these as network_name."
+    )
+
+
 def deploy_ova(
     si: ServiceInstance,
     ova_path: str,
@@ -303,13 +342,23 @@ def deploy_ova(
     ovf_content, disks = _read_ovf_from_ova(ova_path)
     _log.info("OVA parsed: %d disk(s) found", len(disks))
 
-    # Create import spec
+    # Map every network the OVF declares to the requested vSphere network, and
+    # refuse before importing anything when that name does not resolve.
     ovf_manager = content.ovfManager
+    ovf_networks = _ovf_networks(ovf_manager, ovf_content)
+    mapping = []
+    if ovf_networks:
+        network = _resolve_network(datacenter, network_name)
+        mapping = [
+            vim.OvfManager.NetworkMapping(name=name, network=network) for name in ovf_networks
+        ]
+
+    # Create import spec
     import_spec_params = vim.OvfManager.CreateImportSpecParams(
         entityName=vm_name,
+        networkMapping=mapping,
     )
 
-    # Map OVF networks to vSphere networks
     import_spec_result = ovf_manager.CreateImportSpec(
         ovfDescriptor=ovf_content,
         resourcePool=resource_pool,

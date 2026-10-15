@@ -1,3 +1,12 @@
+## Unreleased — OVA deploy honours `network_name`
+
+* **`deploy_vm_from_ova` / `deploy ova --network` now attach the NICs to the network you name.** The import spec
+  carried no network mapping, so the argument had no effect and each NIC landed on whatever network the OVF
+  descriptor named. Every network the OVF declares is now mapped to the named port group (standard or distributed).
+  A name that matches no network, or more than one (a standard and a distributed port group can share a name), is
+  refused before anything is imported, with the available names in the error. An OVF descriptor the server cannot
+  parse is refused the same way. Found in the 2026-10-16 pre-release review.
+
 ## v2.3.0 — calls on one target run side by side; `get_access_info`
 
 Needs vmware-policy 1.22.0.

@@ -97,7 +97,10 @@ def deploy_ova_cmd(
     ova_path: Annotated[str, typer.Argument(help="Local path to .ova file")],
     name: Annotated[str, typer.Option(help="VM name")],
     datastore: Annotated[str, typer.Option(help="Target datastore")],
-    network: Annotated[str, typer.Option(help="Network name")] = "VM Network",
+    network: Annotated[
+        str,
+        typer.Option(help="Port group every OVF network is mapped to (must be unique by name)"),
+    ] = "VM Network",
     folder: Annotated[str, typer.Option(help="VM folder path")] = "",
     power_on: Annotated[bool, typer.Option("--power-on", help="Power on after deploy")] = False,
     snapshot: Annotated[str, typer.Option(help="Create baseline snapshot")] = "",
