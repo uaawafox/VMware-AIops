@@ -42,6 +42,7 @@ License: MIT
 """
 
 import logging
+from typing import Optional
 
 from vmware_policy import describe_tool_parameters
 
@@ -144,10 +145,12 @@ def _exit_on_stop_signals() -> None:
         signal.signal(sig, _stop)
 
 
-def main() -> None:
+def main(expose: Optional[str] = None, allow_write: Optional[str] = None) -> None:
     """Run the MCP server over stdio."""
     logging.basicConfig(level=logging.INFO)
     _exit_on_stop_signals()
+    from vmware_policy.exposure import apply_or_exit
+    apply_or_exit(mcp, skill="aiops", expose=expose, allow_write=allow_write)
     mcp.run(transport="stdio")
 
 # The docstrings above are the schema. `describe_tool_parameters` copies each
