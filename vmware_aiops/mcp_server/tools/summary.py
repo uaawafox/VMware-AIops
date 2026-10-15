@@ -187,7 +187,9 @@ def get_cross_vcenter_attention(
     globally ranked ``top_issues`` list (worst first, each tagged with its
     ``vcenter``) plus a per-target rollup — "where do I look first, anywhere in the
     estate?". Degrades gracefully: an unreachable target is listed under
-    ``unreachable`` and the rest still aggregate. Delegates to the vmware-monitor
+    ``unreachable`` and the rest still aggregate, but it is never counted as
+    healthy: ``totals.worst_status`` is at least ``warn`` (``critical`` when no
+    target answered) and ``totals.status_reason`` says why. Delegates to the vmware-monitor
     library (read-only). Lead with ``top_issues``, then drill in with
     investigate_vm. Point-in-time.
 

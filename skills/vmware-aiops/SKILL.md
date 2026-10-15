@@ -285,11 +285,10 @@ Use `run_vm_guest_command_with_output` instead of `run_vm_guest_command` — it 
 Large OVA files (>10GB) may exceed the default 120s timeout. The upload happens via HTTP NFC lease — ensure network between the machine running vmware-aiops and ESXi is stable.
 
 ### Snapshot delete is slow / "still running after Ns"
-Deleting an old or large snapshot consolidates its delta disk into the parent — the slowest write
-operation, often several minutes. `vm snapshot-delete` waits up to 30 min by default; if it still
-returns a "still running, NOT failed" message with a task id, the delete did **not** fail — poll it with
-`vm task-status <task-id>`. Do not re-issue the delete or hand-roll polling. For very large snapshots,
-prefer `vm snapshot-delete <name> --name <snap> --no-wait` to get the task id immediately and poll.
+Deleting a large snapshot consolidates its delta disk, often for minutes. `vm snapshot-delete` waits
+up to 30 min; a "still running, NOT failed" message with a task id means the delete did **not** fail —
+poll `vm task-status <task-id>`; do not re-issue it. For large ones, use
+`vm snapshot-delete <name> --name <snap> --no-wait` and poll.
 
 ### Plan apply fails mid-way
 Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to rollback with `rollback_vm_plan`. Irreversible steps (delete_vm) are skipped during rollback.
@@ -297,6 +296,9 @@ Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to
 ### Connection refused / SSL error
 1. Verify target is reachable: `vmware-aiops doctor`
 2. For self-signed certs: set `verify_ssl: false` in config.yaml (lab environments only)
+
+### Doctor passes but every command fails with "session is not authenticated"
+The account has no vSphere role. Assign one (Read-Only or higher) on the vCenter root folder; `vmware-aiops doctor` reports this case by name.
 
 ## Setup
 

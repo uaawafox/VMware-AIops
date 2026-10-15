@@ -34,7 +34,7 @@ def _cli_error_types() -> tuple[type[BaseException], ...]:
     are common user mistakes that must not surface as raw tracebacks.
     OSError covers FileNotFoundError / ConnectionError / TimeoutError.
     """
-    from pyVmomi import vim
+    from pyVmomi import vim, vmodl
 
     from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
     from vmware_aiops.ops.guest_ops import GuestOpsError
@@ -58,6 +58,9 @@ def _cli_error_types() -> tuple[type[BaseException], ...]:
         KeyError,
         OSError,
         vim.fault.InvalidLogin,
+        # Any other vSphere fault. Without it `summary` printed a traceback for
+        # NotAuthenticated (AIops#47) where vmware-monitor prints one line.
+        vmodl.MethodFault,
     )
 
 
@@ -83,7 +86,9 @@ def cli_errors(fn):
             console.print(f"[red]Denied by policy: {e.result.reason}[/]{rule}")
             raise typer.Exit(1) from e
         except _cli_error_types() as e:
-            from pyVmomi import vim
+            from pyVmomi import vim, vmodl
+
+            from vmware_aiops.connection import NOT_AUTHENTICATED_HINT
 
             message = getattr(e, "msg", None) or str(e)
             if isinstance(e, KeyError):
@@ -97,6 +102,18 @@ def cli_errors(fn):
                     "password in ~/.vmware-aiops/.env (env var "
                     "VMWARE_<TARGET>_PASSWORD) and the username in "
                     "~/.vmware-aiops/config.yaml. Re-run 'vmware-aiops init' to reset both."
+                )
+            elif isinstance(e, vim.fault.NotAuthenticated):
+                # An account with no vSphere role looks exactly like this
+                # (AIops#47), and 'doctor' passed for it.
+                message = NOT_AUTHENTICATED_HINT
+            elif isinstance(e, vmodl.MethodFault):
+                # str() of a fault is its full repr; name it by msg or class.
+                message = (
+                    f"vSphere API fault: {getattr(e, 'msg', None) or type(e).__name__} → "
+                    "Run 'vmware-aiops doctor' to check connectivity, credentials and the "
+                    "account's vSphere role, and 'vmware-aiops access-info' for what this "
+                    "account may do."
                 )
             elif isinstance(e, ssl.SSLError):
                 # Self-signed lab certs are the usual cause; teach the toggle.

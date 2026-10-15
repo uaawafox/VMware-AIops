@@ -1,3 +1,19 @@
+## Unreleased — an account with no vSphere role is named, not passed (AIops#47)
+
+Needs vmware-policy 1.23.0, and the vmware-monitor release with the same fix for the `attention` part.
+
+* **A login with no vSphere role fails at connect time with the reason.** vCenter accepts the login but shows no
+  session for it, and every call then fails with `NotAuthenticated`. The connection is now closed at once and
+  `doctor`, the CLI and MCP tools say the account most likely has no vSphere role and to assign one (Read-Only or
+  higher). Reported on vCenter 8.0.3; not yet reproduced on our own hardware.
+* **`NotAuthenticated` later on names both causes**: the session expired (retry), or the account's role was
+  removed. It no longer says "verify connectivity and credentials".
+* **Every CLI command prints one line for a vSphere fault.** `summary` (and any other command) printed a raw
+  traceback for faults other than a failed login; they now print the fault's message and what to check.
+* **`attention` never reports OK for targets it could not read** (computed by vmware-monitor): any unread target
+  makes the overall status at least WARN, none read makes it CRITICAL, and the console and HTML say how many were
+  not read. A role-less target is listed as unreachable with reason `NoVSphereRoleError`.
+
 ## Unreleased — OVA deploy honours `network_name`
 
 * **`deploy_vm_from_ova` / `deploy ova --network` now attach the NICs to the network you name.** The import spec

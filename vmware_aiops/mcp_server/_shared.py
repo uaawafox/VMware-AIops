@@ -20,11 +20,16 @@ from typing import Any, Callable, Optional
 
 from mcp import types as mcp_types
 from mcp.server.fastmcp import FastMCP
+from pyVmomi import vim
 from vmware_policy import report_tool_failure, sanitize
 
 from vmware_aiops import __version__
 from vmware_aiops.config import ConfigError, load_config
-from vmware_aiops.connection import ConnectionManager
+from vmware_aiops.connection import (
+    NOT_AUTHENTICATED_HINT,
+    ConnectionManager,
+    NoVSphereRoleError,
+)
 from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
 from vmware_aiops.ops.datastore_browser import DatastoreBrowseError
 from vmware_aiops.ops.guest_ops import GuestOpsError
@@ -38,6 +43,17 @@ from vmware_aiops.ops.vm_lifecycle import TaskFailedError, TaskStillRunning, VMN
 logger = logging.getLogger(__name__)
 
 _DOCTOR_HINT = "Run 'vmware-aiops doctor' to verify connectivity and credentials."
+#: For the two failures where connectivity and credentials are fine (AIops#47).
+_ROLE_HINT = (
+    "Run 'vmware-aiops doctor': it checks every target's login and whether "
+    "vCenter gives the account a session."
+)
+
+
+def _hint_for(exc: Exception) -> str:
+    if isinstance(exc, (NoVSphereRoleError, vim.fault.NotAuthenticated)):
+        return _ROLE_HINT
+    return _DOCTOR_HINT
 
 
 #: Cap for messages this skill authored. 500 is sanitize's own default; it was
@@ -91,6 +107,10 @@ def _safe_error(exc: Exception, tool: str) -> str:
     # allowlist already reduces it. Adding it here would guard nothing.)
     if isinstance(exc, ssl.SSLError):
         return f"{type(exc).__name__}: operation failed."
+    # A vmodl fault would be reduced to its class name, and the hint would then
+    # point at credentials; for this one both are wrong (AIops#47).
+    if isinstance(exc, vim.fault.NotAuthenticated):
+        return f"NotAuthenticated: {NOT_AUTHENTICATED_HINT}"
     _passthrough = (
         ValueError,
         FileNotFoundError,
@@ -283,11 +303,12 @@ def tool_errors(shape: str = "str") -> Callable:
                 # the audit row. Both have to hear it: the audit trail is for
                 # the operator afterwards, ``isError`` is for the agent now.
                 _mark_call_failed()
+                hint = _hint_for(e)
                 if shape == "dict":
-                    return {"error": msg, "hint": _DOCTOR_HINT}
+                    return {"error": msg, "hint": hint}
                 if shape == "list":
-                    return [{"error": msg, "hint": _DOCTOR_HINT}]
-                return f"Error: {msg} {_DOCTOR_HINT}"
+                    return [{"error": msg, "hint": hint}]
+                return f"Error: {msg} {hint}"
             # A tool can also fail by *returning* the family's error envelope
             # without ever raising — the plan guards do exactly that. Policy
             # already reads that envelope when it audits; the frame agrees.

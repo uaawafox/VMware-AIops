@@ -12,12 +12,38 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
+from vmware_policy.access import login_has_no_session, no_role_message
 from vmware_policy.pool import SessionPool
 
 if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
 
 from vmware_aiops.config import CONFIG_FILE, AppConfig, ConfigError, TargetConfig, load_config
+
+
+class NoVSphereRoleError(ConfigError):
+    """The login was accepted but vCenter shows no session for it (AIops#47).
+
+    That is what an account with no vSphere role looks like: every inventory
+    call that follows fails with ``NotAuthenticated``, whose usual remedy
+    (check the password) sends the operator the wrong way. Raised at connect
+    time so doctor fails on it and the pool never caches such a session. A
+    ``ConfigError`` so the CLI and ``_safe_error`` pass its message whole; a
+    class of its own so the cross-vCenter roll-up, which reports class names
+    only, says this rather than a generic config problem.
+    """
+
+
+#: What a NotAuthenticated fault raised after connecting means. Two causes look
+#: identical here: the session expired, or the account's vSphere role was
+#: removed (AIops#47). A retry tells them apart, because the next login fails
+#: with the role message when there is no role. "Check credentials" fits neither.
+NOT_AUTHENTICATED_HINT = (
+    "The vSphere session is not authenticated. Either it expired: retry, and a new "
+    "session is opened. Or the account has no vSphere role: assign one (Read-Only or "
+    "higher) on the vCenter root folder; the retry says so if that is the cause. "
+    "Changing the password will not help."
+)
 
 
 # ServiceInstance is a pyVmomi ManagedObject — its __setattr__ rejects any
@@ -233,6 +259,11 @@ class ConnectionManager:
 
         _SI_ATEXIT[id(si)] = _cleanup
         atexit.register(_cleanup)
+        if login_has_no_session(si):
+            # Closed exactly as the pool closes a session (side stores, atexit
+            # handler, logout), so nothing outlives the refusal.
+            _close_session(si)
+            raise NoVSphereRoleError(no_role_message(target.name, "vmware-aiops"))
         return si
 
 
