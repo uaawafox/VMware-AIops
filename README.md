@@ -26,7 +26,7 @@ AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 61 tools.
 
 ## Upgrading to 2.0
 
-2.0 renames 38 of its 60 MCP tools so every name starts with a verb (e.g. `cluster_add_host` → `add_cluster_host`, `cluster_configure` → `configure_cluster`, `cluster_create` → `create_cluster`). The full old → new table is in
+2.0 renames 38 of its MCP tools so every name starts with a verb (e.g. `cluster_add_host` → `add_cluster_host`, `cluster_configure` → `configure_cluster`, `cluster_create` → `create_cluster`). The full old → new table is in
 [RELEASE_NOTES.md](RELEASE_NOTES.md#v200--mcp-tools-renamed-verb-first). Nothing else changes: same tools, parameters,
 safety gates and CLI commands. If an agent prompt, script or `~/.vmware/rules.yaml` names a tool, update it (but not the `action` words in saved plan
 files — `cluster_add_host`, `storage_rescan` and the like are plan actions, not tool names, and keep their spelling) — though deny
