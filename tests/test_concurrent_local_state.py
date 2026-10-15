@@ -151,3 +151,31 @@ def test_daemon_jobs_each_hold_their_own_sessions(monkeypatch, tmp_path):
     scheduler.start_scheduler()
     assert {j[0] for j in jobs} == {"vmware_scan", "vmware_ttl"}
     assert seen == {"scan": True, "ttl": True}
+
+
+def test_a_plan_being_saved_is_never_read_half_written(monkeypatch, tmp_path):
+    monkeypatch.setattr(planner, "_PLANS_DIR", tmp_path / "plans")
+    planner._PLANS_DIR.mkdir(parents=True)
+    plan = {"plan_id": "plan-rw", "status": "running", "steps": [{"n": i} for i in range(400)]}
+    planner.save_plan(plan)
+    stop = threading.Event()
+    errors: list = []
+
+    def writer() -> None:
+        i = 0
+        while not stop.is_set():
+            i += 1
+            planner.save_plan({**plan, "status": f"step-{i}"})
+
+    t = threading.Thread(target=writer)
+    t.start()
+    try:
+        for _ in range(800):
+            try:
+                assert planner.load_plan("plan-rw") is not None
+            except json.JSONDecodeError as exc:
+                errors.append(exc)
+    finally:
+        stop.set()
+        t.join(5)
+    assert not errors
