@@ -55,6 +55,8 @@ _FROM_TEMPLATE = [
     "VirtualMachine.Inventory.CreateFromExisting",
     *_PLACE,
 ]
+# Edits the existing CD-ROM's backing, or adds a CD-ROM when the VM has none.
+_ATTACH_ISO = ["VirtualMachine.Config.EditDevice", "VirtualMachine.Config.AddRemoveDevice"]
 _GUEST_EXEC = "VirtualMachine.GuestOperations.Execute"
 _GUEST_QUERY = "VirtualMachine.GuestOperations.Query"
 _GUEST_MODIFY = "VirtualMachine.GuestOperations.Modify"
@@ -129,23 +131,20 @@ REQUIREMENTS: dict[str, list[str] | None] = {
     # one (pyVmomi names it only inside a vSAN parameter's "Create Delete" pair).
     "delete_vm": [*_READ, _POWER_OFF, "VirtualMachine.Inventory.Delete"],
     "reconfigure_vm": _all(_READ, _RESIZE),
-    # Edits the existing CD-ROM's backing, or adds a CD-ROM when the VM has none.
-    "attach_iso_to_vm": [
-        *_READ,
-        "VirtualMachine.Config.EditDevice",
-        "VirtualMachine.Config.AddRemoveDevice",
-    ],
+    "attach_iso_to_vm": [*_READ, *_ATTACH_ISO],
     "create_vm_snapshot": [*_READ, _SNAPSHOT],
     "revert_vm_snapshot": [*_READ, "VirtualMachine.State.RevertToSnapshot"],
     "delete_vm_snapshot": [*_READ, "VirtualMachine.State.RemoveSnapshot"],
     "restore_vm_clean_slate": [*_READ, _POWER_OFF, "VirtualMachine.State.RevertToSnapshot"],
-    "clone_vm": _all(_READ, _CLONE),
+    # power_on=True sends CloneSpec(powerOn=True), which needs PowerOn too.
+    "clone_vm": _all(_READ, _CLONE, [_POWER_ON]),
     # RelocateVM_Task: ColdMigrate (metadata); a powered-on move checks Resource.HotMigrate,
     # and a storage move allocates on the target datastore.
     "migrate_vm": [
         *_READ,
         "Resource.ColdMigrate",
         "Resource.HotMigrate",
+        "Resource.AssignVMToPool",  # RelocateSpec.pool
         "Datastore.AllocateSpace",
     ],
     "convert_vm_to_template": [*_READ, "VirtualMachine.Provisioning.MarkAsTemplate"],
@@ -155,11 +154,21 @@ REQUIREMENTS: dict[str, list[str] | None] = {
     # --- deployment (optional baseline snapshot and power-on included) ---
     "deploy_vm_from_template": _all(_READ, _FROM_TEMPLATE, _RESIZE, [_SNAPSHOT, _POWER_ON]),
     "deploy_linked_clone": _all(_READ, _CLONE, _RESIZE, [_SNAPSHOT, _POWER_ON]),
-    "deploy_vm_from_ova": _all(_READ, _IMPORT, [_SNAPSHOT, _POWER_ON]),
+    # The imported VM's NICs attach to a network (the OVF's default mapping).
+    "deploy_vm_from_ova": _all(_READ, _IMPORT, ["Network.Assign", _SNAPSHOT, _POWER_ON]),
     "batch_clone_vms": _all(_READ, _CLONE, _RESIZE, [_SNAPSHOT, _POWER_ON]),
     "batch_linked_clone_vms": _all(_READ, _CLONE, _RESIZE, [_SNAPSHOT, _POWER_ON]),
+    # A spec can clone, deploy from a template, import an OVA, create from scratch
+    # (no source) and attach an ISO, so it needs the union of those paths.
     "batch_deploy_from_spec": _all(
-        _READ, _CLONE, _FROM_TEMPLATE, _IMPORT, _RESIZE, [_SNAPSHOT, _POWER_ON]
+        _READ,
+        _CLONE,
+        _FROM_TEMPLATE,
+        _IMPORT,
+        _CREATE,
+        _RESIZE,
+        _ATTACH_ISO,
+        [_SNAPSHOT, _POWER_ON],
     ),
     # --- guest operations (parameter privileges of the GuestOperations managers) ---
     "run_vm_guest_command": [*_READ, _GUEST_EXEC, _GUEST_QUERY],
