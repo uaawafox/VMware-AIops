@@ -7,6 +7,7 @@ from typing import Optional, Annotated
 import typer
 
 from vmware_aiops.cli._common import cli_errors
+from vmware_aiops.cli.access import access_info_cmd
 from vmware_aiops.cli.alarm import alarm_app
 from vmware_aiops.cli.cluster import cluster_app
 from vmware_aiops.cli.deploy import datastore_app, deploy_app
@@ -43,6 +44,7 @@ app.command("summary")(cluster_summary_cmd)
 app.command("attention")(attention_cmd)
 app.add_typer(investigate_app, name="investigate")
 app.command("doctor")(doctor_cmd)
+app.command("access-info")(access_info_cmd)
 
 
 @app.command("init")

@@ -14,7 +14,7 @@ vmware-monitor and vmware-aria against a production vSphere estate with Llama
 cross-skill rules are identical across this family; the parts below marked
 vmware-aiops are specific to this skill.
 
-vmware-aiops carries the family's largest write surface — 43 of its 60 MCP
+vmware-aiops carries the family's largest write surface — 43 of its 61 MCP
 tools change state, including `delete_vm`, cluster deletion, host VMkernel
 removal and guest command execution. Of every skill here, this is the one where a model's discipline
 should not be the only thing standing between a prompt and a destroyed VM — and

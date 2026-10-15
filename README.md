@@ -7,7 +7,7 @@
 
 English | [中文](README-CN.md)
 
-AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 60 tools.
+AI-powered VMware vCenter/ESXi VM lifecycle and deployment tool — 61 tools.
 
 > **Companion skills** handle everything else:
 >
@@ -151,6 +151,7 @@ operator an auditor can sign off on, that's what this family is for — see
 | **Cluster** | create, delete, HA/DRS config, add/remove hosts | 6 |
 | **Datastore** | browse files, scan for images | 2 |
 | **Network** | dvSwitch portgroup list/create, host VMkernel list/add/remove, DF-bit MTU-path ping | 6 |
+| **Access** | which account is in use, and whether it holds each tool's privileges (`get_access_info`, CLI `access-info`) | 1 |
 
 ### CLI vs MCP: Which Mode to Use
 
@@ -956,6 +957,7 @@ User → Aider CLI → Ollama (localhost:11434) → Qwen / DeepSeek local model
 # Diagnostics
 vmware-aiops doctor                   # Check environment, config, connectivity
 vmware-aiops doctor --skip-auth       # Skip vSphere auth check (faster)
+vmware-aiops access-info [--tool <mcp-tool>] [--target <name>]  # Account in use + privileges per tool
 
 # MCP Config Generator
 vmware-aiops mcp-config generate --agent goose        # Generate config for Goose
@@ -1162,8 +1164,8 @@ claude mcp add --transport http vmware-aiops https://mcp.example.com:8443/mcp \
   before it binds that unauthenticated requests get 401. Use a certificate your clients trust for those names.
 - Behind a TLS-terminating reverse proxy on the same machine use `--transport http --host 127.0.0.1
   --public-name mcp.example.com` and pass the `Authorization` header through.
-- The audit log records each caller as `token:<name>`. Calls naming different targets run in parallel; calls that
-  name no target run one at a time, so name the target when several people share a server.
+- The audit log records each caller as `token:<name>`. Calls run side by side, with up to `VMWARE_MCP_POOL_SIZE`
+  (default 2) sessions per target; each session is a login on the target, and a call waits at most 300 s for one.
 - **Everyone who can reach the endpoint acts with this server's account.** Tokens identify callers; they grant
   nothing on the platform. Run one endpoint per privilege level.
 

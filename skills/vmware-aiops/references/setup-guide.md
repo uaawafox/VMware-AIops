@@ -179,7 +179,7 @@ For Claude Code / Cursor users who prefer structured tool calls, add to `~/.clau
 > PyPI on each launch and breaks behind corporate TLS proxies. The legacy
 > `vmware-aiops-mcp` entry point is also kept for backward compatibility.
 
-MCP exposes 60 tools across 10 categories. All accept optional `target` parameter.
+MCP exposes 61 tools across 11 categories. All accept optional `target` parameter.
 
 ## Limiting which tools are offered
 
@@ -230,8 +230,8 @@ vmware-aiops mcp --transport https --host 0.0.0.0 --port 8443 \
   Replace a leaked token under a new name.
 - The server will not start without at least one token, and checks before it binds that unauthenticated requests
   are refused.
-- Each audit row records the caller as `token:<name>`. Calls naming different targets run in parallel; calls that
-  name no target run one at a time, so name the target when several people use one server.
+- Each audit row records the caller as `token:<name>`. Calls run side by side, with up to `VMWARE_MCP_POOL_SIZE`
+  (default 2) sessions per target; each session is a login on the target, and a call waits at most 300 s for one.
 - **Everyone who can reach the endpoint acts with this server's account.** Tokens identify callers; they grant
   nothing on the platform. Run one endpoint per privilege level (for example a read-only account behind
   `--expose read`, and a separate endpoint for operators).

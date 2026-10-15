@@ -51,6 +51,7 @@ from vmware_aiops.mcp_server._shared import _safe_error, mcp, tool_errors
 # Importing the tool modules registers every @mcp.tool() onto the shared
 # `mcp` instance above. Order does not matter; each module is self-contained.
 from vmware_aiops.mcp_server.tools import (  # noqa: F401 — imported for registration side effects
+    access,
     alarm,
     cluster,
     datastore,
@@ -165,6 +166,7 @@ def main(
         skill="aiops",
         expose=expose, allow_write=allow_write, transport=transport, host=host, port=port,
         cert=cert, key=key, public_name=public_name, token_file=token_file,
+        pooled=True,
     )
 
 # The docstrings above are the schema. `describe_tool_parameters` copies each

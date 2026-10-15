@@ -7,13 +7,14 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from vmware_policy.guard import audit_call, guard
 from vmware_policy.policy import PolicyDenied
+from vmware_policy.pool import call_scope
 from vmware_policy.sanitize import sanitize
 
 from vmware_aiops.config import AppConfig, load_config
@@ -270,6 +271,21 @@ def _run_scan(
         _audit("daemon_scan", {"targets": targets}, status, outcome, started)
 
 
+def _own_sessions(job: Callable[..., None]) -> Callable[..., None]:
+    """Run each scheduled job in its own session scope.
+
+    APScheduler runs jobs on a thread pool, so the scan and the TTL check can
+    overlap. Outside a call scope both would get the target's one cached session
+    and interleave SOAP on it (D-13(2)); inside one, each run holds its own.
+    """
+
+    def run(*args: object) -> None:
+        with call_scope():
+            job(*args)
+
+    return run
+
+
 def _run_ttl_check(conn_mgr: ConnectionManager) -> None:
     """Check for expired VM TTLs and delete them."""
     global _last_ttl_outcome
@@ -367,8 +383,9 @@ def start_scheduler(config_path: Path | None = None) -> None:
     # in one cycle rather than in every cycle it stays within the last 500.
     cursors = HostLogCursors()
     scheduler = BlockingScheduler()
+
     scheduler.add_job(
-        _run_scan,
+        _own_sessions(_run_scan),
         trigger=IntervalTrigger(minutes=config.scanner.interval_minutes),
         args=[config, conn_mgr, cursors],
         id="vmware_scan",
@@ -377,7 +394,7 @@ def start_scheduler(config_path: Path | None = None) -> None:
         next_run_time=None,  # Scheduler interval starts after manual first run below
     )
     scheduler.add_job(
-        _run_ttl_check,
+        _own_sessions(_run_ttl_check),
         trigger=IntervalTrigger(minutes=1),
         args=[conn_mgr],
         id="vmware_ttl",

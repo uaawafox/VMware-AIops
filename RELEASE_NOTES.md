@@ -1,3 +1,23 @@
+## Unreleased — calls on one target run side by side; `get_access_info`
+
+Needs vmware-policy 1.22.0.
+
+* **Calls no longer queue behind each other on a shared server.** Served over `--transport https`/`http`,
+  calls run side by side with up to `VMWARE_MCP_POOL_SIZE` (default 2) sessions per target; each call holds its
+  own session for its whole run, so two calls never share one. Each session is a login on the target. A call
+  that finds every session busy waits at most 300 s, then fails with a message saying so. stdio and the CLI
+  keep one session per target, as before.
+* **Side-by-side calls no longer race on local state.** Two TTL changes at once could drop each other's entry
+  (and a reader catching the file mid-write saw no entries at all); the TTL store and the image registry are now
+  written atomically and TTL updates are serialized. One plan can no longer be applied or rolled back by two
+  calls at once: the second is refused with a message, and nothing runs twice.
+* **The daemon's scan and TTL check each use their own session.** They run on APScheduler's thread pool and
+  could overlap on one pyVmomi session.
+* **New tool `get_access_info`** (CLI `vmware-aiops access-info [--tool X] [--target T]`): which account the
+  server uses on a target, and whether it holds the privileges each tool needs, e.g. `--tool clone_vm`. It asks
+  vCenter about its own session (System.View is enough). Checked on the root folder: `not_granted_at_root` can
+  still be granted on a cluster, folder or VM, and `undetermined` is never read as granted. 61 tools (was 60).
+
 ## v2.2.0 — serve MCP over HTTPS
 
 `vmware-aiops mcp` can now serve the network as well as stdio (HLD §16, via vmware-policy 1.21.0):

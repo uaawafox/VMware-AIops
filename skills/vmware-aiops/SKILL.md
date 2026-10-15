@@ -27,7 +27,7 @@ compatibility: >
 
 > **Disclaimer**: This is a community-maintained open-source project and is **not affiliated with, endorsed by, or sponsored by VMware, Inc. or Broadcom Inc.** "VMware" and "vSphere" are trademarks of Broadcom. Source code is publicly auditable at [github.com/vmware-skills/VMware-AIops](https://github.com/vmware-skills/VMware-AIops) under the MIT license.
 
-VMware family entry point — AI-powered VM lifecycle, deployment, and alarm management — 60 MCP tools.
+VMware family entry point — AI-powered VM lifecycle, deployment, and alarm management — 61 MCP tools.
 
 > **Start here**: install vmware-aiops first, then add modules as needed.
 > Run `vmware-aiops hub status` to see which family members are installed.
@@ -47,6 +47,7 @@ VMware family entry point — AI-powered VM lifecycle, deployment, and alarm man
 | **Network** | dvSwitch portgroup list/create, host VMkernel list/add/remove/tag-service, DF-bit MTU-path ping | 7 |
 | **Alarm Management** | list alarms, acknowledge, reset | 3 |
 | **Triage & Investigation** (read-only, delegates to vmware-monitor) | one-glance cluster health summary, object-centered VM/host/datastore drill-down bundles, cross-vCenter "what needs attention now?" | 5 |
+| **Access** | which account is in use, and whether it holds each tool's privileges | 1 |
 
 ## Audit & Safety
 
@@ -117,7 +118,7 @@ vmware-aiops is the entry point. Add modules for additional capabilities:
 
 ## Common Workflows
 
-> **Diagnostic investigations**: Before remediating any "why is X slow / failing / down" issue, follow [`references/investigation-protocol.md`](references/investigation-protocol.md). It enforces the four root-cause completeness criteria (falsifiability / sufficiency / necessity / mechanism) and the up-to-three-rounds deepening loop. Only invoke L3+ write tools after the four criteria are satisfied AND the user has approved a remediation plan.
+> **Diagnostic investigations**: Before remediating any "why is X slow / failing / down" issue, follow [`references/investigation-protocol.md`](references/investigation-protocol.md). It enforces four root-cause completeness criteria and a deepening loop. Only invoke L3+ write tools after the four criteria are satisfied AND the user has approved a remediation plan.
 
 ### Cluster Health Triage ("what's wrong right now?")
 
@@ -125,7 +126,7 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 
 1. One glance --> `get_cluster_health_summary` (MCP) or `vmware-aiops summary` (CLI). Read `top_issues` first — ranked anomalies (disconnected hosts, red/yellow alarms, capacity pressure), each with a drill-down hint; the per-cluster table is context
 2. Act on what it surfaces --> a `host_down` row → investigate the host; an alarm → `acknowledge_vcenter_alarm` / `reset_vcenter_alarm`; a hot VM implicated → `migrate_vm` or `reconfigure_vm` (after the investigation protocol)
-3. Save/share a snapshot --> `vmware-aiops summary --html` writes an offline, timestamped HTML file (identical to `vmware-monitor summary --html` — same shared renderer)
+3. Save/share a snapshot --> `vmware-aiops summary --html` writes an offline, timestamped HTML file (same renderer as vmware-monitor)
 4. **If vmware-monitor is not installed** --> this command/tool is unavailable (AIops delegates to it); install `vmware-monitor`, or use the deeper per-object read tools in that skill
 
 ### Object-Centered Investigation → Act (drill-down before you change anything)
@@ -143,7 +144,7 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 ### Deploy a Lab Environment
 
 **Pre-flight (judgment, not blind sequence)**:
-- Free space: target datastore must have ≥ OVA size × 2 (delta files + thin-provision overhead). If multiple datastores qualify, prefer one with lowest current IOPS pressure (cross-check `vmware-aria` if available).
+- Free space: target datastore must have ≥ OVA size × 2 (delta files + thin-provision overhead).
 - Name hygiene: prefix with date or owner (`lab-2026-04-30-alice`) so the TTL cleanup audit trail is meaningful.
 - TTL: always set. 480 min for a single test session, 7200 min for a week-long sandbox. **Never deploy a "lab" VM without a TTL** — that is how datastores fill up at 3 AM.
 - Snapshot timing: take the baseline **after** provisioning succeeds, not before — a pre-provision snapshot is just an empty checkpoint.
@@ -161,8 +162,9 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 - Source VM state: powered-off is safest. If powered-on, VMware Tools must be running and quiesce-capable, else clones may have inconsistent disk state.
 - Capacity math: `free_space ≥ source.size × count × 1.2` (full clone) or `≥ count × 2 GB` (linked clone, delta-only).
 - Decision rule: **count > 10 → use linked clones** (`deploy linked-clone`); seconds vs minutes per clone, ~100× less storage. Tradeoff: linked clones depend on source snapshot — deleting the snapshot breaks all children.
-- Network exhaustion: each clone gets a unique MAC from the vSphere pool; if you batch > 200, verify pool capacity in advance.
+- Network: batches > 200 can exhaust the vSphere MAC pool.
 - TTL: every clone must have one. Use the plan's metadata to track ownership.
+- Privileges: `get_access_info(tool="clone_vm")` (CLI `vmware-aiops access-info --tool clone_vm`) — root folder only; `undetermined` is not granted.
 
 **Steps**:
 1. `create_vm_plan` with clone + reconfigure + set-ttl steps grouped per VM (atomic per clone)
@@ -193,7 +195,7 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 | Cloud models (Claude, GPT-4o) | Either | MCP gives structured JSON I/O |
 | Automated pipelines | **MCP** | Type-safe parameters, structured output |
 
-## MCP Tools (60 — 17 read, 43 write)
+## MCP Tools (61 — 18 read, 43 write)
 
 | Category | Tools | R/W |
 |----------|-------|:---:|
@@ -212,10 +214,11 @@ Start here when the ask is "is anything on fire?" before diving into a specific 
 | | `acknowledge_vcenter_alarm`, `reset_vcenter_alarm` | Write |
 | Cluster Triage (1) | `get_cluster_health_summary` (delegates to vmware-monitor) | Read |
 | Object Investigation (4) | `investigate_vm`, `investigate_host`, `investigate_datastore`, `get_cross_vcenter_attention` (all delegate to vmware-monitor) | Read |
+| Access (1) | `get_access_info` | Read |
 
 **List envelope**: the read list tools — `browse_datastore`, `list_vcenter_alarms`, `list_vm_plans`, `list_vm_snapshots`, `list_vm_ttls` — return `{items, returned, limit, total, truncated, hint}` rather than a bare array. Read the rows from `items` and check `truncated` before concluding a listing is complete; empty `items` with `truncated: false` means checked-and-none, not a failure. The write `batch_*` tools keep their bare list (complete by construction). Rationale, `total` semantics, error shape: `references/capabilities.md`.
 
-**Read/write split**: 17 tools are read-only (per `[READ]` docstring marker), 43 modify state — gating in [Audit & Safety](#audit--safety). `set_vm_ttl` schedules an unattended auto-delete.
+**Read/write split**: 18 tools are read-only (per `[READ]` docstring marker), 43 modify state — gating in [Audit & Safety](#audit--safety). `set_vm_ttl` schedules an unattended auto-delete.
 
 **Network write gating**: all four network writes are preview/confirm-gated — `confirm=False` (default) returns the exact spec without writing. `remove_host_vmk` is **fail-closed**: it refuses when the vmk is selected for a host service (management/vMotion/vSAN), lives on a non-default netstack (NSX TEPs, dedicated vMotion stacks), carries a default gateway route, or when any of that cannot be verified — pass `force_unprotected=True` to override the non-absolute protections. The host's only management-enabled vmk is never removable (no override). `set_vmk_service` is **fail-closed** too: it refuses both directions when the host's service map is unreadable, and refuses (no override) to untag `management` from the host's only management-enabled vmk — the call rides the interface it would untag.
 

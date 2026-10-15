@@ -8,7 +8,9 @@ are best-effort: a failed chmod must never break the operation it guards.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import tempfile
 from pathlib import Path
 
 
@@ -28,3 +30,23 @@ def secure_chmod_file(path: Path) -> None:
             os.chmod(path, 0o600)
     except OSError:
         pass
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Replace ``path`` with ``text`` in one step, created owner-only (0600).
+
+    MCP calls run side by side in worker threads (HLD §16 D-13(2)), and the
+    daemon is another process: a reader that opened the file mid-write saw
+    truncated JSON, which the TTL loader reads as "no entries" — and the next
+    save then wrote every other entry away. ``os.replace`` is atomic on one
+    filesystem, so a reader sees the old file or the new one.
+    """
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise

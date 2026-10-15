@@ -9,6 +9,7 @@ default, the other 20 write tools act immediately, and the enforcement boundary 
 ```bash
 # Diagnostics
 vmware-aiops doctor [--skip-auth]   # --skip-auth only skips doctor's own vSphere login check; no other command has it
+vmware-aiops access-info [--tool <mcp-tool>] [--target <name>]   # account in use + its privileges per MCP tool (JSON; root folder only)
 
 # MCP Config Generator
 vmware-aiops mcp-config generate --agent <goose|cursor|claude-code|continue|vscode-copilot|localcowork|mcp-agent>

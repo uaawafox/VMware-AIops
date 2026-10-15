@@ -1,7 +1,7 @@
 {
   "id": "vmware-aiops",
   "name": "VMware AIops",
-  "description": "AI-powered VMware vCenter/ESXi VM lifecycle and deployment with 60 MCP tools.",
+  "description": "AI-powered VMware vCenter/ESXi VM lifecycle and deployment with 61 MCP tools.",
   "skills": [
     "./skills"
   ],

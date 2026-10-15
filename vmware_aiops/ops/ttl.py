@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vmware-aiops.ttl")
 
 _TTL_FILE = Path.home() / ".vmware-aiops" / "ttl.json"
+
+# Serializes load-modify-save of the store inside this process: concurrent MCP
+# calls (HLD §16 D-13(2)) each loading the store and saving their own copy would
+# drop each other's entries. The daemon is another process; the atomic write keeps
+# it from ever reading a half-written file.
+_STORE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -60,11 +67,10 @@ def _load_ttl_store() -> dict[str, dict]:
 
 def _save_ttl_store(store: dict[str, dict]) -> None:
     """Persist the TTL store to disk (owner-only)."""
-    from vmware_aiops._fsutil import secure_chmod_file, secure_mkdir
+    from vmware_aiops._fsutil import atomic_write_text, secure_mkdir
 
     secure_mkdir(_TTL_FILE.parent)
-    _TTL_FILE.write_text(json.dumps(store, indent=2), encoding="utf-8")
-    secure_chmod_file(_TTL_FILE)
+    atomic_write_text(_TTL_FILE, json.dumps(store, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -92,15 +98,16 @@ def set_ttl(
     from datetime import timedelta
     expires_at = expires_at + timedelta(minutes=minutes)
 
-    store = _load_ttl_store()
     entry = TTLEntry(
         vm_name=vm_name,
         expires_at=expires_at.isoformat(),
         target=target,
         instance_uuid=instance_uuid,
     )
-    store[vm_name] = asdict(entry)
-    _save_ttl_store(store)
+    with _STORE_LOCK:
+        store = _load_ttl_store()
+        store[vm_name] = asdict(entry)
+        _save_ttl_store(store)
 
     logger.info("TTL set for VM '%s': expires at %s (UTC)", vm_name, expires_at.isoformat())
     return (
@@ -131,11 +138,12 @@ def preview_ttl(vm_name: str, minutes: int, target: str | None = None) -> str:
 
 def cancel_ttl(vm_name: str) -> str:
     """Cancel a VM's TTL. Returns confirmation message."""
-    store = _load_ttl_store()
-    if vm_name not in store:
-        return f"No TTL registered for VM '{vm_name}'."
-    del store[vm_name]
-    _save_ttl_store(store)
+    with _STORE_LOCK:
+        store = _load_ttl_store()
+        if vm_name not in store:
+            return f"No TTL registered for VM '{vm_name}'."
+        del store[vm_name]
+        _save_ttl_store(store)
     logger.info("TTL cancelled for VM '%s'", vm_name)
     return f"TTL cancelled for VM '{vm_name}'."
 
@@ -208,10 +216,11 @@ def verify_ttl_identity(si: ServiceInstance, entry: TTLEntry) -> None:
 
 def remove_entry(vm_name: str) -> None:
     """Remove a TTL entry after deletion (called by scheduler)."""
-    store = _load_ttl_store()
-    if vm_name in store:
-        del store[vm_name]
-        _save_ttl_store(store)
+    with _STORE_LOCK:
+        store = _load_ttl_store()
+        if vm_name in store:
+            del store[vm_name]
+            _save_ttl_store(store)
 
 
 def get_ttl(vm_name: str) -> dict | None:

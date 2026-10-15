@@ -188,12 +188,11 @@ def _load_registry() -> dict:
 
 def _save_registry(registry: dict) -> None:
     """Save the image registry to disk (owner-only — infra topology metadata)."""
-    from vmware_aiops._fsutil import secure_chmod_file, secure_mkdir
+    from vmware_aiops._fsutil import atomic_write_text, secure_mkdir
 
     secure_mkdir(CONFIG_DIR)
-    with open(IMAGE_REGISTRY_FILE, "w", encoding="utf-8") as f:
-        json.dump(registry, f, indent=2, ensure_ascii=False)
-    secure_chmod_file(IMAGE_REGISTRY_FILE)
+    # Atomic: two scans at once, or a read during a scan, never see half a file.
+    atomic_write_text(IMAGE_REGISTRY_FILE, json.dumps(registry, indent=2, ensure_ascii=False))
 
 
 def update_registry(si: ServiceInstance) -> dict:

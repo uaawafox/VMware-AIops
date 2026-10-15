@@ -291,6 +291,29 @@ MCP-only (no CLI subcommand). Seven tools for distributed-switch portgroup and h
 
 > **Blast radius**: vSphere has no per-alarm clear API. `alarm reset` / `reset_vcenter_alarm` uses `AlarmManager.ClearTriggeredAlarms`, which clears **all** triggered alarms matching the named alarm's entity type (host/VM/all) and current status (red/yellow) — not just the named one. The named alarm is looked up first (typos fail fast). Over MCP a bare call previews every alarm it would clear (`blast_radius.will_clear`) and changes nothing; `confirm=True` clears, and the result's `scope` field reports exactly what was cleared. Cleared alarms re-trigger automatically if their underlying condition persists.
 
+## Access self-check — `get_access_info`
+
+`get_access_info(tool=None, target=None)` (CLI `access-info`) asks the target about this
+server's own session (`HasPrivilegeOnEntities`, which needs only System.View) and answers
+which account it acts as and whether that account holds the privileges a tool needs: with
+`tool`, `{name, requires, verdict, meaning, missing_at_root}`; without it, every tool sorted
+into `tools_granted_at_root` / `tools_not_granted_at_root` / `tools_undetermined` /
+`tools_no_privilege_needed`, plus the account's direct permissions. Use it before a write
+the account may not be allowed, or after a NoPermission. The table it reads is
+`vmware_aiops/access_requirements.py`.
+
+- Checked on the **root folder** only. `not_granted_at_root` may still be granted on a
+  cluster, folder or VM; `undetermined` (the platform did not answer) is never granted.
+- Where vSphere checks a privilege inside the method (reconfigure, clone from a template,
+  vMotion, cluster delete, datastore browse), the table lists vSphere's documented id.
+  `ping_from_vmk` (esxcli through the host) is always `undetermined`: what the host checks
+  for it is not documented.
+- `set_vm_ttl` includes what `delete_vm` needs: the daemon deletes later as this account.
+- `apply_vm_plan` / `rollback_vm_plan` list every privilege any plan step could need; a
+  given plan needs only its own steps'.
+
+**Typical response tokens**: ~310 for one tool, ~900 for all 61.
+
 ## Scheduled Scanning & Notifications
 
 | Feature | Details |

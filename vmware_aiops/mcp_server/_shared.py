@@ -15,6 +15,7 @@ import functools
 import inspect
 import logging
 import ssl
+import threading
 from typing import Any, Callable, Optional
 
 from mcp import types as mcp_types
@@ -480,19 +481,25 @@ mcp._mcp_server.version = __version__
 # ---------------------------------------------------------------------------
 
 _conn_mgr: Optional[ConnectionManager] = None
+# Calls run in worker threads side by side (HLD §16 D-13(2)); without the lock two
+# first calls could each build a manager, and so a second pool of sessions.
+_conn_mgr_lock = threading.Lock()
 
 
 def _ensure_conn_mgr() -> ConnectionManager:
     """Lazily build the shared ConnectionManager (does not connect anything)."""
     global _conn_mgr  # noqa: PLW0603
-    if _conn_mgr is None:
-        # No env-var read here: load_config resolves the path (explicit arg,
-        # then the environment, then the default). This copy was the reason the
-        # server and the CLI opened different files — load_config did not look
-        # at the variable at all, so only this path honoured it (形态 #6).
-        config = load_config()
-        _conn_mgr = ConnectionManager(config)
-    return _conn_mgr
+    if _conn_mgr is not None:
+        return _conn_mgr
+    with _conn_mgr_lock:
+        if _conn_mgr is None:
+            # No env-var read here: load_config resolves the path (explicit arg,
+            # then the environment, then the default). This copy was the reason the
+            # server and the CLI opened different files — load_config did not look
+            # at the variable at all, so only this path honoured it (形态 #6).
+            config = load_config()
+            _conn_mgr = ConnectionManager(config)
+        return _conn_mgr
 
 
 def _get_connection(target: Optional[str] = None) -> Any:

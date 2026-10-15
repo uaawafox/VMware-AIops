@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +15,35 @@ if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
 
 logger = logging.getLogger(__name__)
+
+# One apply or rollback per plan at a time in this process. MCP calls run side by
+# side in worker threads (HLD §16 D-13(2)); two calls applying the same plan both
+# read status "pending" before either saved "executing", and ran every step twice.
+_PLAN_LOCKS_GUARD = threading.Lock()
+_PLAN_LOCKS: dict[str, threading.Lock] = {}
+
+
+@contextlib.contextmanager
+def _plan_claimed(plan_id: str) -> Iterator[bool]:
+    """Hold the plan's lock for the block; yields False if another call holds it."""
+    with _PLAN_LOCKS_GUARD:
+        lock = _PLAN_LOCKS.setdefault(plan_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        lock.release()
+
+
+def _busy(plan_id: str) -> dict:
+    return {
+        "error": (
+            f"Plan '{plan_id}' is being applied or rolled back by another call right now. "
+            "Nothing was run. Check list_vm_plans once that call has finished."
+        )
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +336,18 @@ def apply_plan(
     plan_id: str,
     step_check: Callable[[ServiceInstance, dict[str, Any]], None] | None = None,
 ) -> dict:
+    """Execute a plan step by step; refused while another call applies or rolls it back."""
+    with _plan_claimed(plan_id) as claimed:
+        if not claimed:
+            return _busy(plan_id)
+        return _apply_plan(si, plan_id, step_check)
+
+
+def _apply_plan(
+    si: ServiceInstance,
+    plan_id: str,
+    step_check: Callable[[ServiceInstance, dict[str, Any]], None] | None = None,
+) -> dict:
     """Execute a plan step by step.
 
     Returns the final plan state dict with per-step results.
@@ -408,6 +451,18 @@ def _stop_refused(
 
 
 def rollback_plan(
+    si: ServiceInstance,
+    plan_id: str,
+    step_check: Callable[[ServiceInstance, dict[str, Any]], None] | None = None,
+) -> dict:
+    """Roll back a failed plan; refused while another call applies or rolls it back."""
+    with _plan_claimed(plan_id) as claimed:
+        if not claimed:
+            return _busy(plan_id)
+        return _rollback_plan(si, plan_id, step_check)
+
+
+def _rollback_plan(
     si: ServiceInstance,
     plan_id: str,
     step_check: Callable[[ServiceInstance, dict[str, Any]], None] | None = None,

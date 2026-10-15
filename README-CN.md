@@ -7,7 +7,7 @@
 
 [English](README.md) | 中文
 
-AI 驱动的 VMware vCenter/ESXi VM 生命周期管理与部署工具 — 60 个工具。
+AI 驱动的 VMware vCenter/ESXi VM 生命周期管理与部署工具 — 61 个工具。
 
 > **配套技能**负责其他领域：
 >
@@ -118,12 +118,13 @@ pip install --no-index --find-links dist vmware-aiops
 | **集群** | 创建、删除、HA/DRS 配置、添加/移除主机 | 6 |
 | **数据存储** | 浏览文件、扫描镜像 | 2 |
 | **网络** | dvSwitch 端口组 列出/创建、主机 VMkernel 列出/添加/移除、DF 位 MTU 路径 ping | 6 |
+| **权限** | 当前使用哪个账号，以及它是否具备每个工具所需的权限（`get_access_info`，CLI `access-info`） | 1 |
 
 ### CLI vs MCP：如何选择
 
 | 场景 | 推荐模式 | 原因 |
 |------|:-------:|------|
-| **本地/小模型**（Ollama、Qwen <32B） | **CLI** | 上下文占用 ~2K tokens vs MCP ~10K；小模型难以处理 60 个工具的 schema |
+| **本地/小模型**（Ollama、Qwen <32B） | **CLI** | 上下文占用 ~2K tokens vs MCP ~10K；小模型难以处理 61 个工具的 schema |
 | **Token 敏感场景** | **CLI** | SKILL.md + Bash = 最小开销 |
 | **云端大模型**（Claude、GPT-4o） | 均可 | MCP 提供结构化 JSON 输入输出 |
 | **自动化管道 / Agent 链式调用** | **MCP** | 类型安全参数，结构化输出，无需 Shell 解析 |
@@ -665,6 +666,7 @@ aider --conventions skills/vmware-aiops/SKILL.md --model ollama/qwen2.5-coder:32
 # 环境诊断
 vmware-aiops doctor                   # 检查环境、配置、连通性
 vmware-aiops doctor --skip-auth       # 跳过 vSphere 认证检查（更快）
+vmware-aiops access-info [--tool <mcp-tool>] [--target <name>]  # 当前账号 + 每个工具的权限
 
 # MCP 配置生成
 vmware-aiops mcp-config generate --agent goose        # 生成 Goose 配置
@@ -827,8 +829,8 @@ claude mcp add --transport http vmware-aiops https://mcp.example.com:8443/mcp \
   证书要用客户端信任、且覆盖这些名字的证书。
 - 在同一台机器上由反向代理终结 TLS 时，用 `--transport http --host 127.0.0.1 --public-name mcp.example.com`，
   并让代理透传 `Authorization` 头。
-- 审计日志把每个调用者记为 `token:<名字>`。指定不同 target 的调用并行执行；不指定 target 的调用逐个执行，
-  所以多人共用一个 server 时请写明 target。
+- 审计日志把每个调用者记为 `token:<名字>`。调用并行执行，每个 target 最多 `VMWARE_MCP_POOL_SIZE`（默认 2）
+  个会话；每个会话都是在该 target 上的一次登录，一个调用最多等待 300 秒拿到会话。
 - **能连到这个端点的人，都以该 server 配置的账号操作。** token 只用来识别调用者，不在平台上授予任何权限。
   每个权限级别单独起一个端点。
 
