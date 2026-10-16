@@ -63,7 +63,7 @@ Read before connecting an agent. Per-tool inventory: `references/capabilities.md
 ## Quick Install
 
 ```bash
-uv tool install vmware-aiops==2.3.1
+uv tool install vmware-aiops==2.3.2
 vmware-aiops doctor
 vmware-aiops hub status   # see which family members are installed
 ```
@@ -303,7 +303,7 @@ The account has no vSphere role. Assign one (Read-Only or higher) on the vCenter
 ## Setup
 
 ```bash
-uv tool install vmware-aiops==2.3.1
+uv tool install vmware-aiops==2.3.2
 mkdir -p ~/.vmware-aiops
 vmware-aiops init  # generates config.yaml and .env templates
 chmod 600 ~/.vmware-aiops/.env
