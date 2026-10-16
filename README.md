@@ -1173,6 +1173,9 @@ claude mcp add --transport http vmware-aiops https://mcp.example.com:8443/mcp \
   (vmware-policy ≥ 1.23.0).
 - Send `traceparent` or `X-Request-ID` with each request to have it stored on the audit row;
   `vmware-audit log --correlation-id ID` then finds the calls behind one platform request.
+- Tools that read or write files on this server (here: guest file upload/download, OVA and deployment-spec files) never touch its configuration, tokens, audit log or
+  TLS key, and over the network they are off unless `VMWARE_MCP_FILE_ROOT` names a directory for them
+  (vmware-policy ≥ 1.23.1).
 - The audit log records each caller as `token:<name>`. Calls run side by side, with up to `VMWARE_MCP_POOL_SIZE`
   (default 2) sessions per target; each session is a login on the target, and a call waits at most 300 s for one.
 - **Everyone who can reach the endpoint acts with this server's account.** Tokens identify callers; they grant

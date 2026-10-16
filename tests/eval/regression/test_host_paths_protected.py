@@ -81,3 +81,74 @@ def test_ordinary_paths_still_work(tmp_path):
     spec = tmp_path / "spec.yaml"
     spec.write_text("vms: []\n", encoding="utf-8")
     assert vm_deploy.load_deploy_spec(str(spec)) is not None
+
+
+# ── review 2026-10-16: hard links, symlink swapped in after the check, preview ──
+
+
+def _download_with_fake_transfer(local: str, overwrite: bool, before_write=None):
+    """Run guest_download with the guest transfer faked; call before_write after the check."""
+    si = MagicMock()
+    vm = MagicMock()
+    resp = MagicMock()
+    resp.__enter__.return_value.read.return_value = b"payload"
+
+    def urlopen(*a, **k):
+        if before_write:
+            before_write()
+        return resp
+
+    with patch.object(guest_ops, "_require_vm_with_tools", return_value=vm), \
+         patch("urllib.request.urlopen", side_effect=urlopen), \
+         patch.object(guest_ops, "get_verify_ssl", return_value=True):
+        return guest_ops.guest_download(
+            si, "vm1", "/etc/motd", local, "u", "p", overwrite=overwrite
+        )
+
+
+def test_a_hard_link_to_a_protected_file_is_not_written_through(ops_home, tmp_path):
+    outside = tmp_path / "innocent.txt"
+    os.link(ops_home / "mcp-tokens", outside)
+    with pytest.raises(ValueError, match="hard link"):
+        _download_with_fake_transfer(str(outside), overwrite=True)
+    assert (ops_home / "mcp-tokens").read_text(encoding="utf-8") == "alice:abc\n"
+
+
+def test_a_symlink_swapped_in_during_the_transfer_is_not_followed(ops_home, tmp_path):
+    dest = tmp_path / "out.txt"
+
+    def swap():
+        dest.symlink_to(ops_home / "mcp-tokens")
+
+    with pytest.raises((HostPathRefusedError, OSError)):
+        _download_with_fake_transfer(str(dest), overwrite=True, before_write=swap)
+    assert (ops_home / "mcp-tokens").read_text(encoding="utf-8") == "alice:abc\n"
+
+
+def test_an_ordinary_download_is_written(tmp_path):
+    dest = tmp_path / "out.txt"
+    _download_with_fake_transfer(str(dest), overwrite=False)
+    assert dest.read_bytes() == b"payload"
+
+
+def test_the_provision_preview_does_not_reveal_a_protected_file(ops_home):
+    from vmware_aiops.ops import guest_gate
+
+    info, blocker = guest_gate._local_file(str(ops_home / "mcp-tokens"))
+    assert info["local_size_bytes"] is None
+    assert blocker and "configuration, tokens and audit log" in blocker
+
+
+def test_a_parent_dir_swapped_for_a_link_during_the_transfer_is_caught(ops_home, tmp_path):
+    # O_NOFOLLOW guards only the last component; the re-check after the transfer
+    # catches a parent directory replaced by a link into OPS_HOME.
+    sub = tmp_path / "sub"
+    sub.mkdir()
+
+    def swap():
+        sub.rmdir()
+        sub.symlink_to(ops_home, target_is_directory=True)
+
+    with pytest.raises(HostPathRefusedError):
+        _download_with_fake_transfer(str(sub / "rules.yaml"), overwrite=False, before_write=swap)
+    assert not (ops_home / "rules.yaml").exists()

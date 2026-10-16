@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyVmomi import vim, vmodl
 from vmware_policy import sanitize
+from vmware_policy.hostpaths import HostPathRefusedError, check_host_path
 
 from vmware_aiops.ops import vm_lifecycle
 from vmware_aiops.ops.guest_ops import _FAMILY_WINDOWS, _detect_shell
@@ -148,6 +149,10 @@ def _local_file(path: str) -> tuple[dict[str, Any], str | None]:
     """
     local = Path(path).expanduser()
     info: dict[str, Any] = {"local_path": _text(path, MAX_PATH_CHARS), "local_size_bytes": None}
+    try:
+        check_host_path(path)  # the preview must not reveal what the run refuses
+    except HostPathRefusedError as exc:
+        return info, _text(str(exc), 300)
     if not local.is_file():
         return info, (
             f"Local upload source is not an existing regular file: {_text(local, MAX_PATH_CHARS)}. "

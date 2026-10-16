@@ -160,6 +160,7 @@ def _upload_disk(
     if not upload_url.lower().startswith("https://"):
         raise ValueError(f"Refusing non-HTTPS upload URL: {upload_url}")
 
+    check_host_path(ova_path)  # opened again here; check again (HLD §18 step 0)
     with tarfile.open(ova_path, "r", encoding="utf-8") as tar:
         member = tar.getmember(disk_name)
         if not _safe_tar_member(member):

@@ -3,7 +3,11 @@
 * **Security fix (HLD §18 step 0).** guest file download/upload, OVA and deployment-spec paths could name this server's own files, so over HTTPS a token holder could
   overwrite `$OPS_HOME/mcp-tokens` or `rules.yaml`, or read a skill's `.env`. A path that resolves into `$OPS_HOME`,
   a `~/.vmware-*` directory, a `VMWARE_*_CONFIG` directory, or the server's token file or TLS key/certificate is now
-  refused before anything is read or written. Needs vmware-policy 1.23.1.
+  refused before anything is read or written. Over a network transport these tools read and write host files only
+  inside `VMWARE_MCP_FILE_ROOT` (unset: refused). Needs vmware-policy 1.23.1.
+* `download_vm_guest_file` writes without following a link swapped in during the transfer (`O_NOFOLLOW`, a
+  re-check after the transfer) and refuses a hard-linked destination; the `provision_vm_guest` preview no longer
+  reports the size of a file the run would refuse.
 
 ## v2.3.1 — an account with no vSphere role is named, not passed (AIops#47)
 

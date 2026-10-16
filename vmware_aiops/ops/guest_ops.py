@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+import stat
 import tempfile
 import time
 import uuid
@@ -465,6 +466,34 @@ def guest_upload(
     return f"Uploaded {file_size} bytes to {guest_path} on VM '{vm_name}'"
 
 
+def _write_download(local: Path, data: bytes, *, overwrite: bool) -> None:
+    """Write a downloaded file without following a link swapped in after the checks.
+
+    ``O_NOFOLLOW`` refuses a final symlink; ``O_EXCL`` keeps the no-overwrite
+    promise even if a file appeared meanwhile; and a destination that is not a
+    single regular file (a hard link shares its inode with another path, which
+    may be a protected one) is refused before anything is truncated.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    if not overwrite:
+        flags |= os.O_EXCL
+    fd = os.open(local, flags, 0o666)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+            raise ValueError(
+                "Choose a new local path: the destination is a hard link or not a regular "
+                f"file, so writing it would change another file too. Path: {local}"
+            )
+        os.ftruncate(fd, 0)
+        with os.fdopen(fd, "wb") as f:
+            fd = -1
+            f.write(data)
+    finally:
+        if fd != -1:
+            os.close(fd)
+
+
 def _check_download_destination(local_path: str, overwrite: bool) -> None:
     """Refuse a download destination that is not free to write.
 
@@ -571,8 +600,9 @@ def guest_download(
 
     local = Path(local_path).expanduser()
     local.parent.mkdir(parents=True, exist_ok=True)
-    with open(local, "wb") as f:
-        f.write(file_data)
+    # The transfer took time: check again, then write without following a link.
+    check_host_path(local_path)
+    _write_download(local, file_data, overwrite=overwrite)
 
     logger.info(
         "Downloaded %d bytes from '%s:%s' to '%s'",
