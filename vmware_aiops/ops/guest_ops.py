@@ -430,8 +430,7 @@ def guest_upload(
             f"(chmod +r) to the user running vmware-aiops, or pass a readable "
             f"path to --local."
         )
-    with open(local, "rb") as f:
-        file_data = f.read()
+    file_data = _read_upload_source(local)
 
     file_size = len(file_data)
 
@@ -466,6 +465,27 @@ def guest_upload(
     return f"Uploaded {file_size} bytes to {guest_path} on VM '{vm_name}'"
 
 
+def _read_upload_source(local: Path) -> bytes:
+    """Read the upload source without following a link swapped in after the checks.
+
+    ``O_NOFOLLOW`` refuses a final symlink and ``O_NONBLOCK`` keeps a FIFO from
+    blocking the worker; anything but a regular file is refused after opening.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(local, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(
+                f"Local upload source is not a regular file: {local}. Pass a regular file."
+            )
+        with os.fdopen(fd, "rb") as f:
+            fd = -1
+            return f.read()
+    finally:
+        if fd != -1:
+            os.close(fd)
+
+
 def _write_download(local: Path, data: bytes, *, overwrite: bool) -> None:
     """Write a downloaded file without following a link swapped in after the checks.
 
@@ -474,7 +494,8 @@ def _write_download(local: Path, data: bytes, *, overwrite: bool) -> None:
     single regular file (a hard link shares its inode with another path, which
     may be a protected one) is refused before anything is truncated.
     """
-    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    # O_NONBLOCK: an existing FIFO must not block the worker in open().
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     if not overwrite:
         flags |= os.O_EXCL
     fd = os.open(local, flags, 0o666)

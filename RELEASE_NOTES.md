@@ -7,7 +7,12 @@
   inside `VMWARE_MCP_FILE_ROOT` (unset: refused). Needs vmware-policy 1.23.1.
 * `download_vm_guest_file` writes without following a link swapped in during the transfer (`O_NOFOLLOW`, a
   re-check after the transfer) and refuses a hard-linked destination; the `provision_vm_guest` preview no longer
-  reports the size of a file the run would refuse.
+  reports the size of a file the run would refuse. Uploads read the source the same way, and a FIFO no longer
+  blocks either direction.
+* **`plan_id` can no longer name a path.** `apply_vm_plan` / `rollback_vm_plan` / `list`/`delete` built the plan file
+  name from the caller's `plan_id`, and saving used the id stored in the file, so a crafted plan could be written to
+  any `*.json` on the host. Plan ids are now `plan-` plus letters, digits and hyphens, and a plan file whose stored id
+  differs from its name is refused.
 
 ## v2.3.1 — an account with no vSphere role is named, not passed (AIops#47)
 

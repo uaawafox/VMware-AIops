@@ -152,3 +152,73 @@ def test_a_parent_dir_swapped_for_a_link_during_the_transfer_is_caught(ops_home,
     with pytest.raises(HostPathRefusedError):
         _download_with_fake_transfer(str(sub / "rules.yaml"), overwrite=False, before_write=swap)
     assert not (ops_home / "rules.yaml").exists()
+
+
+# ── second review 2026-10-16: plan_id was an unchecked host path ──────────────
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["/tmp/evil", "../../.cursor/mcp", "plan-x/../../evil", "plan-..", "", "plan-a.b", "x" * 300],
+)
+def test_a_plan_id_cannot_name_a_path(bad, tmp_path, monkeypatch):
+    from vmware_aiops.ops import planner
+
+    monkeypatch.setattr(planner, "_PLANS_DIR", tmp_path / "plans")
+    with pytest.raises(ValueError, match="plan id"):
+        planner.load_plan(bad)
+    with pytest.raises(ValueError, match="plan id"):
+        planner.delete_plan(bad)
+    with pytest.raises(ValueError, match="plan id"):
+        planner.save_plan({"plan_id": bad, "steps": []})
+
+
+def test_a_plan_file_naming_another_plan_id_is_refused(tmp_path, monkeypatch):
+    import json
+
+    from vmware_aiops.ops import planner
+
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    monkeypatch.setattr(planner, "_PLANS_DIR", plans)
+    (plans / "plan-20261016-000000-abcd.json").write_text(
+        json.dumps({"plan_id": "../../.cursor/mcp", "steps": []}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="plan id"):
+        planner.load_plan("plan-20261016-000000-abcd")
+
+
+def test_a_generated_plan_id_round_trips(tmp_path, monkeypatch):
+    from vmware_aiops.ops import planner
+
+    monkeypatch.setattr(planner, "_PLANS_DIR", tmp_path / "plans")
+    (tmp_path / "plans").mkdir()
+    pid = planner._generate_plan_id()
+    planner.save_plan({"plan_id": pid, "steps": []})
+    assert planner.load_plan(pid)["plan_id"] == pid
+    planner.delete_plan(pid)
+    assert planner.load_plan(pid) is None
+
+
+def test_download_onto_a_fifo_does_not_hang(tmp_path):
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    with pytest.raises((ValueError, OSError)):
+        _download_with_fake_transfer(str(fifo), overwrite=True)
+
+
+def test_upload_reads_a_regular_file_without_following_a_swapped_link(ops_home, tmp_path):
+    src = tmp_path / "src.txt"
+    src.write_text("data", encoding="utf-8")
+    assert guest_ops._read_upload_source(src) == b"data"
+    link = tmp_path / "link.txt"
+    link.symlink_to(ops_home / "mcp-tokens")
+    with pytest.raises(OSError):
+        guest_ops._read_upload_source(link)
+
+
+def test_upload_source_swapped_for_a_fifo_is_refused_not_hung(tmp_path):
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    with pytest.raises(ValueError, match="regular file"):
+        guest_ops._read_upload_source(fifo)
