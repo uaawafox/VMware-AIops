@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from pyVmomi import vim
 from vmware_policy import sanitize
+from vmware_policy.hostpaths import check_host_path
 
 from vmware_aiops.connection import get_verify_ssl
 from vmware_aiops.ops.inventory import (
@@ -101,6 +102,7 @@ def _read_ovf_from_ova(ova_path: str) -> tuple[str, dict[str, int]]:
     Returns:
         Tuple of (ovf_xml_string, {vmdk_filename: file_size_bytes})
     """
+    check_host_path(ova_path)  # never this server's own files (HLD §18 step 0)
     disks: dict[str, int] = {}
     ovf_content = ""
 

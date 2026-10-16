@@ -37,7 +37,9 @@ GATED = ("run_vm_guest_command", "run_vm_guest_command_with_output", "upload_vm_
 
 @pytest.fixture(autouse=True)
 def harness(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPS_HOME", str(tmp_path))
+    # OPS_HOME in its own subdirectory: the files these tests upload live in
+    # tmp_path, and a file inside OPS_HOME is refused (HLD §18 step 0).
+    monkeypatch.setenv("OPS_HOME", str(tmp_path / "ops"))
     reset_policy_engine()
     reset_budget()
     reset_undo_store()

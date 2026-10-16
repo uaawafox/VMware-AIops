@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from pyVmomi import vim
 
 from vmware_policy import sanitize
+from vmware_policy.hostpaths import check_host_path
 
 from vmware_aiops.connection import get_verify_ssl
 from vmware_aiops.ops.inventory import find_vm_by_name
@@ -412,6 +413,8 @@ def guest_upload(
 
     auth = _guest_auth(username, password)
 
+    # Never this server's own config, tokens or audit log (HLD §18 step 0).
+    check_host_path(local_path)
     # Read local file — must be an existing regular file (not a dir/device/fifo).
     local = Path(local_path).expanduser()
     if not local.is_file():
@@ -487,6 +490,8 @@ def _check_download_destination(local_path: str, overwrite: bool) -> None:
     is caller-supplied and unbounded, so a message that closed with its remedy
     would lose exactly the part the agent needs.
     """
+    # Never this server's own config, tokens or audit log (HLD §18 step 0).
+    check_host_path(local_path)
     local = Path(local_path).expanduser()
     if local.is_symlink():
         raise ValueError(

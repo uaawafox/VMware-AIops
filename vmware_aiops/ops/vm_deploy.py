@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 import yaml
 from pyVmomi import vim
 
+from vmware_policy.hostpaths import check_host_path
+
 from vmware_aiops.ops.inventory import (
     InventoryError,
     find_compute_resource,
@@ -495,6 +497,7 @@ def load_deploy_spec(spec_path: str) -> dict:
         ova: /path/to/image.ova       # Per-VM OVA override
     ```
     """
+    check_host_path(spec_path)  # never this server's own files (HLD §18 step 0)
     with open(spec_path, encoding="utf-8") as f:
         spec = yaml.safe_load(f)
 
