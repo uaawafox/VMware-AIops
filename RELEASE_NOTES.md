@@ -1,3 +1,11 @@
+## v2.4.0 — roles for network callers (HLD §18)
+
+* Declares the role metadata vmware-policy ≥ 1.24.0 needs to apply **roles** to this server over HTTPS
+  (HLD §18): how a missing target resolves, the guest and host-file tools that escape a role, and what each composite tool can run — `apply_vm_plan` and `rollback_vm_plan` reach every tool a plan step maps to plus `delete_vm` (rollback), `set_vm_ttl` reaches `delete_vm`, the batch tools reach the deploy and clone tools. A role may allow a composite only if it allows all of them. A test fails when a new plan action is not mapped to a tool. With an older vmware-policy nothing changes. Once an operator runs
+  `vmware-audit roles enable`, a token's role decides which tools and targets it may use here; a refused call is
+  audited as `denied`. See vmware-policy's README, "Roles for network callers".
+* README and setup guide: one endpoint for several people or roles.
+
 ## v2.3.2 — tools may not touch this server's own control files
 
 * **Security fix (HLD §18 step 0).** guest file download/upload, OVA and deployment-spec paths could name this server's own files, so over HTTPS a token holder could

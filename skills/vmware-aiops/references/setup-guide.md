@@ -6,13 +6,13 @@ All install methods fetch from the same source: [github.com/vmware-skills/VMware
 
 ```bash
 # Via PyPI (recommended for version pinning)
-uv tool install vmware-aiops==2.3.2
+uv tool install vmware-aiops==2.4.0
 
 # Via Skills.sh (fetches from GitHub)
-npx skills add vmware-skills/VMware-AIops#v2.3.2
+npx skills add vmware-skills/VMware-AIops#v2.4.0
 
 # Via ClawHub (fetches from ClawHub registry snapshot of GitHub)
-clawhub install @zw008/vmware-aiops --version 2.3.2
+clawhub install @zw008/vmware-aiops --version 2.4.0
 ```
 
 ### Claude Code
@@ -35,7 +35,7 @@ claude mcp add vmware-aiops -- vmware-aiops mcp
 
 ```bash
 # 1. Install from PyPI (source: github.com/vmware-skills/VMware-AIops)
-uv tool install vmware-aiops==2.3.2
+uv tool install vmware-aiops==2.4.0
 
 # 2. Verify installation source
 vmware-aiops --version  # confirms installed version
@@ -73,7 +73,7 @@ The `vmware-aiops` package installs a Python CLI binary and its dependencies (py
 ## Development Install
 
 ```bash
-git clone --branch v2.3.2 https://github.com/vmware-skills/VMware-AIops.git
+git clone --branch v2.4.0 https://github.com/vmware-skills/VMware-AIops.git
 cd VMware-AIops
 uv venv && source .venv/bin/activate
 # --no-sources: pyproject's [tool.uv.sources] points vmware-monitor at a sibling
@@ -245,4 +245,5 @@ vmware-aiops mcp --transport https --host 0.0.0.0 --port 8443 \
 - **Everyone who can reach the endpoint acts with this server's account.** Tokens identify callers; they grant
   nothing on the platform. Run one endpoint per privilege level (for example a read-only account behind
   `--expose read`, and a separate endpoint for operators).
+- **Several people or roles on one endpoint:** give each token a role (`vmware-audit token create NAME --role reader`, or a role in `roles.yaml` naming tools and targets; vmware-policy ≥ 1.24.0). A role limits what the token may call on this endpoint; it cannot grant more than the account has. See vmware-policy's README, "Roles for network callers".
 
