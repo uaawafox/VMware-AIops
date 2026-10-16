@@ -474,9 +474,14 @@ def _read_upload_source(local: Path) -> bytes:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(local, flags)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
             raise ValueError(
                 f"Local upload source is not a regular file: {local}. Pass a regular file."
+            )
+        if st.st_nlink > 1:  # another path shares it, possibly a protected one
+            raise ValueError(
+                f"Local upload source is a hard link: {local}. Copy the file and upload the copy."
             )
         with os.fdopen(fd, "rb") as f:
             fd = -1

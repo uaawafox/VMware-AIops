@@ -234,7 +234,7 @@ _PLAN_ID = re.compile(r"^plan-[0-9A-Za-z-]{1,64}$")
 
 
 def _plan_path(plan_id: str) -> Path:
-    if not isinstance(plan_id, str) or not _PLAN_ID.match(plan_id):
+    if not isinstance(plan_id, str) or not _PLAN_ID.fullmatch(plan_id):
         raise ValueError(
             f"Not a valid plan id: {str(plan_id)[:80]!r}. Use the plan_id that create_vm_plan "
             "returned (list_vm_plans shows them)."

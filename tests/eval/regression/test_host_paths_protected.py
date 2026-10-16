@@ -222,3 +222,18 @@ def test_upload_source_swapped_for_a_fifo_is_refused_not_hung(tmp_path):
     os.mkfifo(fifo)
     with pytest.raises(ValueError, match="regular file"):
         guest_ops._read_upload_source(fifo)
+
+
+def test_a_plan_id_with_a_trailing_newline_is_refused(tmp_path, monkeypatch):
+    from vmware_aiops.ops import planner
+
+    monkeypatch.setattr(planner, "_PLANS_DIR", tmp_path / "plans")
+    with pytest.raises(ValueError, match="plan id"):
+        planner.load_plan("plan-abc\n")
+
+
+def test_an_upload_source_that_is_a_hard_link_is_refused(ops_home, tmp_path):
+    link = tmp_path / "innocent.txt"
+    os.link(ops_home / "mcp-tokens", link)
+    with pytest.raises(ValueError, match="hard link"):
+        guest_ops._read_upload_source(link)
