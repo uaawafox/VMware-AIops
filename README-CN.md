@@ -379,7 +379,7 @@ vSphere 中 VM 名称区分大小写。请使用 `vmware-monitor inventory vms` 
 1. 验证目标可达：`vmware-aiops doctor`
 2. 自签名证书：在 config.yaml 中设置 `verify_ssl: false`（仅限实验环境）
 
-### Doctor 通过但所有命令都报 "session is not authenticated"
+### `doctor` 报 "no vSphere role"，或所有命令都报 "session is not authenticated"
 账号能登录，但没有任何 vSphere 角色，所以 vCenter 不给它会话（AIops#47）。在 vCenter 根文件夹上给它分配角色（Read-Only 或更高）：Administration > Access Control > Global Permissions。改密码没有用。`vmware-aiops doctor` 会直接报出这种情况，`attention` 也会把这样的目标算作未读取（总体状态至少为 WARN）。
 
 ---

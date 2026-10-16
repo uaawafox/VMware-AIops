@@ -22,10 +22,11 @@ from vmware_aiops.config import CONFIG_FILE, AppConfig, ConfigError, TargetConfi
 
 
 class NoVSphereRoleError(ConfigError):
-    """The login was accepted but vCenter shows no session for it (AIops#47).
+    """The login was accepted but the account can read nothing (AIops#47).
 
-    That is what an account with no vSphere role looks like: every inventory
-    call that follows fails with ``NotAuthenticated``, whose usual remedy
+    That is what an account with no vSphere role looks like: no session, a
+    container view on the root folder refused, and every inventory call that
+    follows fails with ``NotAuthenticated``, whose usual remedy
     (check the password) sends the operator the wrong way. Raised at connect
     time so doctor fails on it and the pool never caches such a session. A
     ``ConfigError`` so the CLI and ``_safe_error`` pass its message whole; a

@@ -45,9 +45,18 @@ def _config(*names: str) -> AppConfig:
     )
 
 
-def _si(has_session: bool) -> MagicMock:
+def _si(has_session: bool, *, root_readable: bool = False) -> MagicMock:
+    """A login as vCenter answers it.
+
+    No role (AIops#47) takes both signals: ``currentSession`` reads ``None`` and
+    a container view on the root folder is refused with NotAuthenticated.
+    ``root_readable`` is the scoped account (one folder, or Supervisor namespace
+    permissions only): no session either, but the root view opens.
+    """
     si = MagicMock()
     si.content.sessionManager.currentSession = object() if has_session else None
+    if not has_session and not root_readable:
+        si.content.viewManager.CreateContainerView.side_effect = vim.fault.NotAuthenticated()
     return si
 
 
@@ -80,6 +89,22 @@ def test_a_normal_login_is_unaffected() -> None:
         assert mgr.connect("vc1") is si
         disconnect.assert_not_called()
         assert mgr.list_connected() == ["vc1"]
+        mgr.disconnect_all()
+
+
+def test_a_scoped_account_without_a_session_still_connects() -> None:
+    """``currentSession`` alone is not a verdict: a readable root view lets it through."""
+    mgr = ConnectionManager(_config("vc1"))
+    si = _si(False, root_readable=True)
+    with (
+        patch("pyVim.connect.SmartConnect", return_value=si),
+        patch("pyVim.connect.Disconnect") as disconnect,
+    ):
+        assert mgr.connect("vc1") is si  # no NoVSphereRoleError
+        disconnect.assert_not_called()
+        assert mgr.list_connected() == ["vc1"]  # cached like any session
+        view = si.content.viewManager.CreateContainerView.return_value
+        view.Destroy.assert_called_once_with()  # the probe leaves no view behind
         mgr.disconnect_all()
 
 

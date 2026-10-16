@@ -436,7 +436,7 @@ Run `vmware-aiops plan list` to see failed plan status. Ask user if they want to
 1. Verify target is reachable: `vmware-aiops doctor`
 2. For self-signed certs: set `verify_ssl: false` in config.yaml (lab environments only)
 
-### Doctor passes but every command fails with "session is not authenticated"
+### `doctor` reports "no vSphere role", or every command fails with "session is not authenticated"
 The account logs in but has no vSphere role, so vCenter gives it no session (AIops#47). Assign it a role (Read-Only or higher) on the vCenter root folder: Administration > Access Control > Global Permissions. Changing the password will not help. `vmware-aiops doctor` reports this case by name, and `attention` counts such a target as unread (overall at least WARN).
 
 ---
