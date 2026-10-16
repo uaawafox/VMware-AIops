@@ -4,7 +4,7 @@
   (HLD §18): how a missing target resolves, the guest and host-file tools that escape a role, and what each composite tool can run — `apply_vm_plan` and `rollback_vm_plan` reach every tool a plan step maps to plus `delete_vm` (rollback), `set_vm_ttl` reaches `delete_vm`, the batch tools reach the deploy and clone tools and the follow-up steps their arguments ask for (`reconfigure_vm`, `create_vm_snapshot`, `power_on_vm`, and `attach_iso_to_vm` for a deployment spec); a test derives these from what the batch code calls. A role may allow a composite only if it allows all of them. A test fails when a new plan action is not mapped to a tool. With an older vmware-policy nothing changes. Once an operator runs
   `vmware-audit roles enable`, a token's role decides which tools and targets it may use here; a refused call is
   audited as `denied`. See vmware-policy's README, "Roles for network callers".
-* A target-limited role is checked against the same config the connection uses: the config as loaded at startup. Edit `config.yaml` and restart for both to see the change.
+* A target-limited role is checked against the same config the connection uses: the copy the server's connection manager loaded on its first connection. Edit `config.yaml` and restart for both to see the change.
 * README and setup guide: one endpoint for several people or roles (run `vmware-audit roles enable` first).
 
 ## v2.3.2 — tools may not touch this server's own control files
