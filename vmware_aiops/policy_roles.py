@@ -81,6 +81,10 @@ REACHES: dict[str, frozenset[str]] = {
         }
     ),
     "restore_vm_clean_slate": frozenset({"power_off_vm", "revert_vm_snapshot"}),
+    # Runs a guest command and reads its output back (review 2026-10-17).
+    "run_vm_guest_command_with_output": frozenset(
+        {"run_vm_guest_command", "download_vm_guest_file"}
+    ),
     # Exec steps run through guest_exec_with_output (review 2026-10-17).
     "provision_vm_guest": frozenset(
         {"run_vm_guest_command", "run_vm_guest_command_with_output", "upload_vm_guest_file"}

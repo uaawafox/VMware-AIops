@@ -142,6 +142,8 @@ def run_vm_guest_command_with_output(
     if not confirm:
         return preview(radius, _HINT)
     refuse_on(radius, "run_vm_guest_command_with_output")
+    authorize_reached("run_vm_guest_command_with_output",
+                      {"vm_name": vm_name, "username": username}, target)
     result = guest_exec_with_output(si, vm_name, command, username, password, timeout=timeout)
     return {**result, "action": "executed", "blast_radius": radius}
 

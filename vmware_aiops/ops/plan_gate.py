@@ -411,10 +411,13 @@ def _follow_ups(action: Any, params: dict[str, Any]) -> set[str]:
     """Tools a deploy step also runs when its parameters ask (as the tools check)."""
     if action not in ("deploy_ova", "deploy_template", "linked_clone"):
         return set()
+    # A linked clone's snapshot_name is the SOURCE snapshot it clones from; only
+    # baseline_snapshot takes a new one (narrow review 2026-10-17).
+    new_snapshot = params.get("baseline_snapshot" if action == "linked_clone" else "snapshot_name")
     return used_by_options(
         (),
         reconfigure=params.get("cpu") is not None or params.get("memory_mb") is not None,
-        snapshot=bool(params.get("snapshot_name") or params.get("baseline_snapshot")),
+        snapshot=bool(new_snapshot),
         power_on=bool(params.get("power_on")),
     )
 

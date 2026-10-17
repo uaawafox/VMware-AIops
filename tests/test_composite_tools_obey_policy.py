@@ -187,3 +187,32 @@ def test_a_plan_deploy_step_that_powers_on_is_checked_as_power_on(harness):
     assert plan_gate.policy_refusal(step, "t", record=False)
     step["params"]["power_on"] = False
     assert plan_gate.policy_refusal(step, "t", record=False) is None
+
+
+# ── narrow review round 3, 2026-10-17 ────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_a_guest_command_deny_stops_the_with_output_variant(harness, monkeypatch):
+    _rules(harness, "run_vm_guest_command")
+    monkeypatch.setattr(guest_tools, "measure_guest_exec_output",
+                        lambda *a, **k: {"blockers": [], "unmeasured": []})
+    monkeypatch.setattr(guest_tools, "guest_exec_with_output", lambda *a, **k: pytest.fail("ran"))
+
+    out = guest_tools.run_vm_guest_command_with_output("web-01", "id", "root", "pw",
+                                                       confirm=True, target="t")
+
+    assert "error" in out
+
+
+@pytest.mark.unit
+def test_a_linked_clone_steps_source_snapshot_is_not_a_new_snapshot(harness):
+    """snapshot_name is the snapshot a linked clone clones FROM."""
+    from vmware_aiops.ops import plan_gate
+
+    _rules(harness, "create_vm_snapshot")
+    step = {"index": 0, "action": "linked_clone",
+            "params": {"source_vm_name": "s", "new_name": "v", "snapshot_name": "base"}}
+    assert plan_gate.policy_refusal(step, "t", record=False) is None
+    step["params"]["baseline_snapshot"] = "clean"
+    assert plan_gate.policy_refusal(step, "t", record=False)
