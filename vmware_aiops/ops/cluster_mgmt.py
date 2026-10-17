@@ -285,7 +285,10 @@ def configure_cluster(
 ) -> str:
     """Reconfigure cluster HA/DRS settings."""
     if ha_enabled is None and drs_enabled is None and drs_behavior is None:
-        return "Nothing to change. Specify --ha, --drs, or --drs-behavior."
+        raise ValueError(
+            "Nothing to change: pass ha, drs and/or drs_behavior "
+            "(CLI: --ha/--drs/--drs-behavior)."
+        )
 
     if drs_behavior is not None and drs_behavior not in _VALID_DRS_BEHAVIORS:
         raise ClusterError(

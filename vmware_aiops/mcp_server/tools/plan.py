@@ -1,5 +1,6 @@
 """Plan → Apply tools: create/apply/rollback multi-step plans, list plans."""
 
+import functools
 from typing import Any, Optional
 
 from vmware_policy import vmware_tool
@@ -39,7 +40,16 @@ def create_vm_plan(
     """
     si = _get_connection(target)
     # Guest steps carry a password; the plan file keeps it, the response does not.
-    return redact_plan(create_plan(si, operations, target=target))
+    result = redact_plan(create_plan(si, operations, target=target))
+    if result.get("errors") and not result.get("error"):
+        # The planner reports validation failures as a plural "errors" list,
+        # which neither the audit nor the MCP frame reads as a failure; the plan
+        # was not created, so say it in the family's own key (2026-10-17).
+        errors = result["errors"]
+        result = {**result, "error": (
+            f"Plan not created: {len(errors)} problem(s). First: {errors[0]}"
+        )}
+    return result
 
 
 # destructiveHint: a plan can delete VMs, power them off, revert snapshots and
@@ -69,8 +79,10 @@ def apply_vm_plan(
     creates or changes is marked check "deferred": it is measured immediately
     before it runs, and the plan stops there if it fails.
 
-    Refused: a target other than the one the plan was created against (no
-    target is a target of its own), a step its tool would refuse, anything it
+    Refused: a step that ~/.vmware/rules.yaml denies for the tool that does the
+    same thing (a plan step delete_vm is authorized as delete_vm, power_off as
+    power_off_vm, and so on, also just before it runs), a target other than the
+    one the plan was created against (no target is a target of its own), a step its tool would refuse, anything it
     could not read, a delete_vm step without its acknowledge_blast_radius
     (from a delete_vm preview), and any iscsi_* or storage_rescan step — those
     are gated in vmware-storage; run enable_iscsi, add_iscsi_target,
@@ -86,13 +98,30 @@ def apply_vm_plan(
         confirm: False (default) returns the blast radius and changes nothing. True applies it.
         target: The vCenter/ESXi target the plan was created against.
     """
-    radius = measure_apply(plan_id, target, lambda: _get_connection(target))
+    radius = measure_apply(plan_id, target, lambda: _get_connection(target), record=confirm)
     if not confirm:
         return preview(radius)
     refuse_on(radius, "apply_vm_plan")
     si = _get_connection(target)
-    result = apply_plan(si, plan_id, step_check=check_step)
-    return {**redact_plan(result), **_failure_hint(result), "blast_radius": radius}
+    step_check = functools.partial(check_step, target=target)
+    result = apply_plan(si, plan_id, step_check=step_check)
+    return {**redact_plan(result), **_failure_hint(result), **_failed_apply(result),
+            "blast_radius": radius}
+
+
+def _failed_apply(result: dict) -> dict:
+    """A plan that stopped part-way is a failed call, not a result about one.
+
+    ``status: "failed"`` alone was audited ``ok`` and reached the agent with
+    ``isError: false`` (2026-10-17): neither reads ``status``.
+    """
+    if result.get("status") != "failed" or result.get("error"):
+        return {}
+    failed = next((s for s in result.get("steps") or [] if s.get("status") == "failed"), {})
+    return {"error": (
+        f"Plan failed at step {failed.get('index')} ({failed.get('action')}); the steps "
+        "before it ran. See that step's result."
+    )}
 
 
 def _failure_hint(result: dict) -> dict:
@@ -139,20 +168,43 @@ def rollback_vm_plan(
     is measured as its own tool measures it, in the preview and again just
     before it runs; a refused check stops the rollback there and the plan
     stays 'failed'. Refused on a target other than the one the plan was
-    created against.
+    created against, and for any rollback step ~/.vmware/rules.yaml denies for
+    its own tool (deleting a VM the plan created is authorized as delete_vm).
 
     Args:
         plan_id: The plan ID of the failed plan.
         confirm: False (default) returns the blast radius and changes nothing. True applies it.
         target: The vCenter/ESXi target the plan was created against.
     """
-    radius = measure_rollback(plan_id, target, lambda: _get_connection(target))
+    radius = measure_rollback(plan_id, target, lambda: _get_connection(target),
+                              record=confirm)
     if not confirm:
         return preview(radius)
     refuse_on(radius, "rollback_vm_plan")
     si = _get_connection(target)
-    result = rollback_plan(si, plan_id, step_check=check_step)
-    return {**result, **_rollback_stop_hint(result), "blast_radius": radius}
+    step_check = functools.partial(check_step, target=target)
+    result = rollback_plan(si, plan_id, step_check=step_check)
+    return {**result, **_rollback_stop_hint(result), **_failed_rollback(result),
+            "blast_radius": radius}
+
+
+def _failed_rollback(result: dict) -> dict:
+    """A rollback that stopped, or left a step not undone, failed (2026-10-17).
+
+    The executor keeps going past a failed undo and still reports
+    ``rolled_back``, so the per-step statuses are what say it.
+    """
+    if result.get("error"):
+        return {}
+    bad = [r for r in result.get("rollback_results") or []
+           if r.get("rollback_status") in ("failed", "refused")]
+    if not bad:
+        return {}
+    steps = ", ".join(str(r.get("step_index")) for r in bad)
+    return {"error": (
+        f"Rollback did not undo step(s) {steps}; see rollback_results. Check those "
+        "objects in vCenter before running anything else on them."
+    )}
 
 
 def _rollback_stop_hint(result: dict) -> dict:

@@ -90,11 +90,16 @@ def test_migrate_vm_warns_when_target_host_cannot_see_source_datastore() -> None
     mock_vm.runtime.host.name = "esxi-office"
     mock_vm.datastore = [src_ds]
 
-    with patch.object(vm_lifecycle, "_require_vm", return_value=mock_vm), \
-         patch.object(vm_lifecycle, "find_host_by_name", return_value=mock_target_host):
-        result = vm_lifecycle.migrate_vm(mock_si, "vm1", "esxi-home")
+    # Raised since 2026-10-17: a returned refusal was audited as a success.
+    from vmware_aiops.ops.inventory import InventoryError
 
-    assert "no access" in result.lower() or "to-datastore" in result.lower(), \
+    with patch.object(vm_lifecycle, "_require_vm", return_value=mock_vm), \
+         patch.object(vm_lifecycle, "find_host_by_name", return_value=mock_target_host), \
+         pytest.raises(InventoryError) as info:
+        vm_lifecycle.migrate_vm(mock_si, "vm1", "esxi-home")
+
+    result = str(info.value)
+    assert "no access" in result.lower() and "to_datastore" in result.lower(), \
         f"expected teaching error about missing shared storage, got: {result}"
 
 

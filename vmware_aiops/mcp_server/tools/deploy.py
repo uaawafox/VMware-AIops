@@ -61,6 +61,7 @@ def deploy_vm_from_template(
     memory_mb: Optional[int] = None,
     power_on: bool = False,
     snapshot_name: Optional[str] = None,
+    target_host: Optional[str] = None,
     target: Optional[str] = None,
 ) -> str:
     """[WRITE] Deploy a new VM by cloning from a vSphere template.
@@ -77,13 +78,15 @@ def deploy_vm_from_template(
         memory_mb: Override memory in MB (optional).
         power_on: Power on after deployment.
         snapshot_name: Snapshot the new VM with this name.
+        target_host: ESXi host to place the VM on (list_esxi_hosts); omit to
+            use the template's host and its resource pool.
         target: Optional vCenter/ESXi target from config.
     """
     si = _get_connection(target)
     return vm_deploy.deploy_from_template(
         si, template_name=template_name, new_name=new_name,
         datastore_name=datastore_name, cpu=cpu, memory_mb=memory_mb,
-        power_on=power_on, snapshot_name=snapshot_name,
+        power_on=power_on, snapshot_name=snapshot_name, target_host=target_host,
     )
 
 

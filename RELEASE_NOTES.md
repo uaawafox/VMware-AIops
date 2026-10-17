@@ -1,3 +1,21 @@
+## Unreleased — fixes from the 2026-10-17 real-hardware read and write rounds
+
+* **Plan steps obey `rules.yaml`.** Each step of `apply_vm_plan` / `rollback_vm_plan` is authorized by vmware-policy
+  under the tool that does the same thing (a `delete_vm` step as `delete_vm`, `power_off` as `power_off_vm`, the
+  rollback that deletes a VM the plan created as `delete_vm`), at that tool's risk level — in the preview and again
+  just before the step runs, with a `denied` audit row. A deny on `delete_vm` used to stop the tool but not a plan step.
+* **Failures are failures.** Deploy, clone, linked clone, template conversion, ISO attach, `create_vm`, `migrate_vm`,
+  `reconfigure_vm` and `configure_cluster` with nothing to change returned their refusals as status strings, which
+  the MCP frame and the audit recorded as success; they now raise. A plan that stops part-way, a rollback that leaves
+  a step not undone, and a plan that fails validation now carry the family `error` key.
+* **`deploy_vm_from_template` works on a vCenter with standalone hosts**: the clone gets the template's resource
+  pool (it failed with `spec.location.pool`), and the tool now takes `target_host`.
+* **`browse_datastore` sees every file** (`.ova`, `.ovf`, `.vmx`, `.log` were filtered out), `ds_path` is well formed
+  for ESXi and vCenter folder paths, and a leading `/` is refused with the corrected path, as vmware-storage does.
+* Error text names MCP tools and parameters (CLI form in brackets); doctor is suggested only for connectivity errors;
+  a CPU-feature vMotion refusal leads with the remedy; `get_vm_task_status` no longer says an unknown id means the
+  task finished; powering off a VM that is already off is a plain `noop`.
+
 ## v2.4.0 — roles for network callers (HLD §18)
 
 * Declares the role metadata vmware-policy ≥ 1.24.0 needs to apply **roles** to this server over HTTPS

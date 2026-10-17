@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from pyVmomi import vim
+from pyVmomi import vim, vmodl
 
 from vmware_policy import sanitize
 
@@ -376,7 +376,9 @@ def reconfigure_vm(
     vm = _require_vm(si, vm_name)
 
     if cpu is None and memory_mb is None:
-        return "Nothing to change. Specify --cpu and/or --memory."
+        raise ValueError(
+            "Nothing to change: pass cpu and/or memory_mb (CLI: --cpu/--memory)."
+        )
 
     spec = vim.vm.ConfigSpec()
     changes = []
@@ -561,14 +563,18 @@ def get_task_status(si: ServiceInstance, task_id: str) -> dict:
     task = vim.Task(task_id, si._stub)
     try:
         info = task.info
-    except Exception:  # noqa: BLE001 — translated to a teaching status
+    except vmodl.fault.ManagedObjectNotFound:
+        # Only "vCenter has no such task" is 'gone'. Anything else (a dropped
+        # connection, an expired session) is a failed poll and raises; it used
+        # to be reported as 'gone ... expected' too (2026-10-17).
         return {
             "task_id": task_id,
             "state": "gone",
             "note": (
-                "vCenter no longer knows this task id. Completed tasks are "
-                "garbage-collected after a while — if the operation finished "
-                "successfully this is expected. Re-list the resource to confirm."
+                "vCenter does not know this task id: either the task finished and "
+                "was garbage-collected, or the id is wrong (ids look like task-123 "
+                "and come from the tool that started the task). 'gone' does not say "
+                "whether the operation succeeded; re-list the resource to check."
             ),
         }
 
@@ -611,25 +617,26 @@ def clone_vm(
     if target_host:
         host = find_host_by_name(si, target_host)
         if host is None:
-            return (
-                f"Target host '{target_host}' not found. "
-                f"List hosts: vmware-aiops cluster list-hosts"
+            raise InventoryError(
+                f"Target host '{target_host}' not found. Run list_esxi_hosts "
+                "(vmware-monitor skill) and copy an exact name."
             )
         relocate_spec.host = host
         if host.parent and getattr(host.parent, "resourcePool", None):
             relocate_spec.pool = host.parent.resourcePool
         else:
-            return (
-                f"Target host '{target_host}' has no resource pool "
-                "(standalone host outside cluster?). Cannot clone."
+            raise InventoryError(
+                f"Target host '{target_host}' has no resource pool, so the clone "
+                "cannot be placed there. Pick a host in a cluster or a standalone "
+                "compute resource."
             )
 
     if target_datastore:
         ds = find_datastore_by_name(si, target_datastore)
         if ds is None:
-            return (
-                f"Target datastore '{target_datastore}' not found. "
-                f"List: vmware-aiops datastore list"
+            raise InventoryError(
+                f"Target datastore '{target_datastore}' not found. Run "
+                "list_all_datastores (vmware-monitor skill) and copy an exact name."
             )
         relocate_spec.datastore = ds
 
@@ -670,17 +677,23 @@ def migrate_vm(
     vm = _require_vm(si, vm_name)
     target_host = find_host_by_name(si, target_host_name)
     if target_host is None:
-        return f"Target host '{target_host_name}' not found."
+        raise InventoryError(
+            f"Target host '{target_host_name}' not found. Run list_esxi_hosts "
+            "(vmware-monitor skill) and copy an exact name."
+        )
 
     if not vm.runtime.host:
-        return f"VM '{vm_name}' has no current host (may be provisioning). Cannot migrate."
+        raise InventoryError(
+            f"VM '{vm_name}' has no current host (may be provisioning). Cannot migrate; "
+            "retry once it is registered on a host."
+        )
 
     current_host = vm.runtime.host.name
     if current_host == target_host_name and target_datastore is None:
         return f"VM '{vm_name}' is already on host '{target_host_name}'."
 
     if target_host.parent is None or getattr(target_host.parent, "resourcePool", None) is None:
-        return (
+        raise InventoryError(
             f"Target host '{target_host_name}' has no resource pool "
             "(standalone host outside cluster?). Cannot migrate."
         )
@@ -691,17 +704,17 @@ def migrate_vm(
     if target_datastore:
         resolved_ds = find_datastore_by_name(si, target_datastore)
         if resolved_ds is None:
-            return (
-                f"Target datastore '{target_datastore}' not found. "
-                f"List: vmware-aiops datastore list"
+            raise InventoryError(
+                f"Target datastore '{target_datastore}' not found. Run "
+                "list_all_datastores (vmware-monitor skill) and copy an exact name."
             )
     # Datastore.host is HostMount[] — the HostSystem is in each mount's .key
     elif src_ds is not None and target_host not in [m.key for m in src_ds.host]:
-        return (
+        raise InventoryError(
             f"Target host '{target_host_name}' has no access to source datastore "
-            f"'{src_ds.name}'. Cross-host vMotion requires shared storage OR "
-            f"pass --to-datastore=<name> to also perform storage vMotion. "
-            f"List datastores: vmware-aiops datastore list"
+            f"'{src_ds.name}'. Cross-host vMotion requires shared storage, or pass "
+            "to_datastore (CLI: --to-datastore) to also move the storage; "
+            "list_all_datastores (vmware-monitor skill) lists the names."
         )
 
     relocate_spec = vim.vm.RelocateSpec(
@@ -712,10 +725,31 @@ def migrate_vm(
         relocate_spec.datastore = resolved_ds
 
     task = vm.Relocate(spec=relocate_spec)
-    _wait_for_task(task, timeout=600)
+    try:
+        _wait_for_task(task, timeout=600)
+    except TaskFailedError as exc:
+        raise _with_migration_remedy(exc) from exc
 
     ds_note = f" + datastore={target_datastore}" if target_datastore else ""
     return f"VM '{vm_name}' migrated from '{current_host}' to '{target_host_name}'{ds_note}."
+
+
+#: Faults vCenter raises when the target host's CPU cannot run the VM as it is
+#: running now (FeatureRequirementsNotMet for AVX-512 on the lab, 2026-10-17).
+_CPU_FAULTS = ("FeatureRequirementsNotMet", "CpuIncompatible", "CpuCompatibility")
+
+
+def _with_migration_remedy(exc: TaskFailedError) -> TaskFailedError:
+    """Put the next step first: the fault text is long and is cut at 500 chars."""
+    text = str(exc)
+    if not any(f in text for f in _CPU_FAULTS):
+        return exc
+    return TaskFailedError(
+        "vMotion refused: the target host's CPU lacks features this running VM uses. "
+        "Power the VM off and migrate again (a cold migration has no CPU check), "
+        "enable EVC on the cluster, or pick a host with the same CPU generation. "
+        f"vCenter said: {text}"
+    )
 
 
 # ─── Clean Slate ──────────────────────────────────────────────────────────────

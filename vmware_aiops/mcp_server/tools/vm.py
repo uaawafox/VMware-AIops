@@ -265,7 +265,7 @@ def migrate_vm(
     the preview yet.
 
     Refused: a target host that is not found, not connected, in maintenance mode
-    or outside a cluster; a target datastore that is not found; a target host
+    or has no resource pool; a target datastore that is not found; a target host
     that does not mount the VM's datastores when to_datastore is omitted (vCenter
     rejects cross-host vMotion without shared storage — pass to_datastore); and
     anything above that cannot be read. The VM's current host with no
@@ -502,7 +502,8 @@ def get_vm_task_status(task_id: str, target: Optional[str] = None) -> dict:
 
     Use after delete_vm_snapshot returns a task id, instead of re-running the delete.
     Returns state (queued/running/success/error/gone), progress percent, and the entity
-    name. 'gone' means vCenter already garbage-collected a completed task — re-list the
+    name. 'gone' means vCenter does not know the id: the task finished and was
+    garbage-collected, or the id is wrong. It says nothing about success — re-list the
     resource to confirm the final state. A failed task reports its fault under
     'task_error'; a top-level 'error' key would mean this poll itself failed.
 

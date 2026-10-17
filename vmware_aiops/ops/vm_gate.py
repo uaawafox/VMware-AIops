@@ -101,7 +101,12 @@ def power_off_radius(
         unmeasured.append("tools_status")
 
     blockers: list[str] = []
-    if not force and ident["power_state"] == str(_SUSPENDED):
+    already_off = ident["power_state"] == str(_OFF)
+    if already_off:
+        # Nothing would happen, so nothing can block it: a noop with a "Tools not
+        # running" blocker was two answers for one call (2026-10-17).
+        pass
+    elif not force and ident["power_state"] == str(_SUSPENDED):
         blockers.append(
             "The VM is suspended, so a guest shutdown cannot run. force=True powers it "
             "off and discards the suspended memory state — decide that with the user."
@@ -123,7 +128,7 @@ def power_off_radius(
             "data and in-flight writes can be lost." if force else
             "The guest OS is asked to shut down via VMware Tools; its services stop."
         ),
-        "noop": ident["power_state"] == str(_OFF),
+        "noop": already_off,
         "blockers": blockers,
         "unmeasured": unmeasured,
     }
@@ -180,8 +185,8 @@ def _target_host_checks(
         unmeasured.append("target_resource_pool")
     elif pool is None:
         blockers.append(
-            f"Target host '{sanitize(to_host, 200)}' has no resource pool (standalone "
-            "host outside a cluster?), so it cannot receive a migration."
+            f"Target host '{sanitize(to_host, 200)}' has no resource pool, so it "
+            "cannot receive a migration. Pick a host from get_cluster_info."
         )
     return {
         "name": _name(host),

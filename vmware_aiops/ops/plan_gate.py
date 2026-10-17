@@ -26,6 +26,13 @@ refused), or ``NON_DESTRUCTIVE_ACTIONS`` with the reason it needs no check.
 ``check_step`` fails closed: an action in none of them, or a gated action that
 has lost its measurement, is refused rather than run unchecked. Rollback steps
 go through the same check.
+
+Separately from the blast radius, every step -- forward or rollback, destructive
+or not -- is authorized by vmware-policy under the name and risk level of the
+tool that does the same thing (``ACTION_TOOLS``), at preview and again just
+before it runs. Without it a ``rules.yaml`` deny on ``delete_vm`` stopped the
+``delete_vm`` tool and not a plan step ``delete_vm`` (real hardware, 2026-10-17);
+the TTL daemon already asked the policy the same way.
 """
 
 from __future__ import annotations
@@ -36,9 +43,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from vmware_policy import sanitize
+from vmware_policy.guard import audit_call, guard
+from vmware_policy.policy import PolicyDenied
+from vmware_policy.skills import skill_name
 
 from vmware_aiops.ops.gate import GateRefusedError, refusal_message
 from vmware_aiops.ops.planner import _ACTION_SCHEMA, load_plan
+from vmware_aiops.policy_roles import ACTION_TOOLS
 
 if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
@@ -369,12 +380,76 @@ def _step_label(step: dict[str, Any]) -> str:
     return f"Step {step.get('index')} ({kind}{step.get('action')})"
 
 
+#: The risk level each step is authorized at: its tool's own ``@vmware_tool``
+#: risk, so a maintenance window that blocks high/critical work blocks the step
+#: too. ``tests/test_plan_steps_obey_policy.py`` compares it with the tools.
+_STEP_RISK: dict[str, str] = {
+    "attach_iso": "medium", "clone": "high", "cluster_add_host": "medium",
+    "cluster_remove_host": "medium", "configure_cluster": "medium",
+    "convert_to_template": "medium", "create_cluster": "medium",
+    "create_snapshot": "medium", "create_vm": "medium", "delete_cluster": "high",
+    "delete_snapshot": "high", "delete_vm": "critical", "deploy_ova": "medium",
+    "deploy_template": "medium", "guest_download": "high", "guest_exec": "critical",
+    "guest_upload": "high", "linked_clone": "medium", "migrate": "high",
+    "power_off": "medium", "power_on": "medium", "reconfigure": "medium",
+    "reset": "medium", "revert_snapshot": "high", "suspend": "medium",
+}
+
+_SKILL = skill_name(__name__)
+
+
+def step_risk_level(action: Any) -> str:
+    """The risk a step is authorized at; unknown actions at the highest."""
+    return _STEP_RISK.get(action, "critical")
+
+
+def policy_refusal(step: dict[str, Any], target: str | None, *, record: bool) -> str | None:
+    """Ask vmware-policy about one step as its own tool; the refusal, or ``None``.
+
+    ``record`` files a ``denied`` (or ``error``) audit row under the step's tool,
+    as the tool itself would: set when the plan is about to run, not on a
+    preview. A policy that cannot be read refuses -- an unreadable rule set must
+    not turn into an unchecked step (the daemon's rule).
+    """
+    action = step.get("action")
+    tool = ACTION_TOOLS.get(action)
+    if tool is None:
+        return None  # storage / unknown actions are refused by the gate itself
+    params = step.get("params") or {}
+    risk = step_risk_level(action)
+    try:
+        guard(_SKILL, tool, params, risk_level=risk, target=target or "")
+        return None
+    except PolicyDenied as exc:
+        rule = sanitize(exc.result.rule or "", 100)
+        reason = sanitize(exc.result.reason or "", 300).rstrip(". ")
+        message = (
+            f"{_step_label(step)} refused by policy: rule '{rule}' denies {tool}"
+            f"{f' -- {reason}' if reason else ''}. A plan step is authorized as its "
+            "own tool; remove the step, or run it outside the agent."
+        )
+        status, detail = "denied", {"error": message, "rule": rule}
+    except Exception as exc:  # noqa: BLE001 - refuse, never run unchecked
+        message = (
+            f"{_step_label(step)} refused: the policy check for {tool} failed "
+            f"({type(exc).__name__}), so the step is not run unchecked. Check "
+            "~/.vmware/rules.yaml, then retry."
+        )
+        status, detail = "error", {"error": message}
+    if record:
+        audit_call(_SKILL, tool, params=redact(params), result=detail,
+                   status=status, risk_level=risk)
+    return message
+
+
 #: A measurement whose action would change nothing (VM already off, already on
 #: that host) passes, as its MCP tool returns ``noop`` before any refusal.
 _NOOP_NOTE = "noop: nothing would change (as its tool reports), so this step is not refused."
 
 
-def check_step(si: ServiceInstance, step: dict[str, Any]) -> None:
+def check_step(
+    si: ServiceInstance, step: dict[str, Any], *, target: str | None = None,
+) -> None:
     """Run a step's check immediately before it runs; raise to stop the plan.
 
     Fails closed: only an action classified non-destructive runs unchecked.
@@ -384,6 +459,9 @@ def check_step(si: ServiceInstance, step: dict[str, Any]) -> None:
     against the instance UUID it recorded, not here.
     """
     action = step.get("action")
+    refused = policy_refusal(step, target, record=True)
+    if refused:
+        raise GateRefusedError(refused)
     if action in NON_DESTRUCTIVE_ACTIONS:
         return
     if step.get("rollback") and action == "delete_vm":
@@ -440,6 +518,7 @@ def _target_blocker(plan: dict[str, Any], target: str | None) -> list[str]:
 
 def _step_entry(
     step: dict[str, Any], steps: list[dict[str, Any]], position: int, si: Any,
+    target: str | None = None, record: bool = False,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
     """One step as the preview shows it, plus its blockers and unmeasured fields."""
     index, action, params = step.get("index"), step.get("action"), step.get("params") or {}
@@ -466,21 +545,26 @@ def _step_entry(
             "steps ran. Preview that VM with delete_vm, put its acknowledge_with into "
             "the step, and create the plan again."
         )
-    fields, gate_blockers, unmeasured = _gate(steps, position, si)
+    fields, gate_blockers, unmeasured = _gate(steps, position, si, target, record)
     return {**entry, **fields}, blockers + gate_blockers, unmeasured
 
 
 def _gate(
     steps: list[dict[str, Any]], position: int, si: Any,
+    target: str | None = None, record: bool = False,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
     """How one step (forward or rollback) is checked: preview fields, blockers, unmeasured.
 
-    The same rule as ``check_step``: non-destructive actions pass, refused and
-    unclassified ones block, gated ones are measured now or deferred.
+    The same rule as ``check_step``: the policy is asked first, then
+    non-destructive actions pass, refused and unclassified ones block, gated
+    ones are measured now or deferred.
     """
     step = steps[position]
     action, index = step.get("action"), step.get("index")
     prefix = f"{_step_label(step)}: "
+    refused = policy_refusal(step, target, record=record)
+    if refused:
+        return {"check": "refused by policy"}, [refused], []
     if action in NON_DESTRUCTIVE_ACTIONS or (step.get("rollback") and action == "delete_vm"):
         return {}, [], []
     if action in REFUSED_ACTIONS:
@@ -513,7 +597,7 @@ def _gate(
 
 
 def measure_apply(
-    plan_id: str, target: str | None, connect: Callable[[], Any],
+    plan_id: str, target: str | None, connect: Callable[[], Any], *, record: bool = False,
 ) -> dict[str, Any]:
     """Every step the plan would run, with its parameters and its tool's measurement.
 
@@ -530,7 +614,8 @@ def measure_apply(
     steps = [s for s in plan.get("steps") or [] if isinstance(s, dict)]
     entries, unmeasured = [], []
     for position, step in enumerate(steps):
-        entry, step_blockers, step_unmeasured = _step_entry(step, steps, position, si)
+        entry, step_blockers, step_unmeasured = _step_entry(
+            step, steps, position, si, target, record)
         entries.append(entry)
         blockers += step_blockers
         unmeasured += step_unmeasured
@@ -554,6 +639,7 @@ def measure_apply(
 
 def measure_rollback(
     plan_id: str, target: str | None, connect: Callable[[], Any] | None = None,
+    *, record: bool = False,
 ) -> dict[str, Any]:
     """The rollback steps that would run, in order, each checked as a forward step is.
 
@@ -595,7 +681,7 @@ def measure_rollback(
             "destructive": rb_action in DESTRUCTIVE_ACTIONS,
         }
         position = len(would_run)
-        fields, step_blockers, step_unmeasured = _gate(runs, position, si)
+        fields, step_blockers, step_unmeasured = _gate(runs, position, si, target, record)
         entry.update(fields)
         blockers += step_blockers
         unmeasured += step_unmeasured

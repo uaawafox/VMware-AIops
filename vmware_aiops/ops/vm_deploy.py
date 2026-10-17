@@ -433,6 +433,11 @@ def deploy_from_template(
             )
         relocate_spec.host = host
         relocate_spec.pool = host.parent.resourcePool
+    else:
+        # A template has no resource pool of its own, and vCenter refuses the
+        # clone without one ("A specified parameter was not correct:
+        # spec.location.pool", real vCenter with standalone hosts, 2026-10-17).
+        relocate_spec.pool = _template_pool(si, template)
     if datastore_name:
         ds = find_datastore_by_name(si, datastore_name)
         if ds is None:
@@ -470,6 +475,19 @@ def deploy_from_template(
         result_parts.append(msg)
 
     return " | ".join(result_parts)
+
+
+def _template_pool(si: ServiceInstance, template: vim.VirtualMachine) -> vim.ResourcePool:
+    """The resource pool of the compute resource the template's host is in.
+
+    Falls back to the datacenter's compute resource when the template's host
+    cannot be read; InventoryError (with its remedy) when there is none.
+    """
+    host = getattr(getattr(template, "runtime", None), "host", None)
+    pool = getattr(getattr(host, "parent", None), "resourcePool", None)
+    if pool is not None:
+        return pool
+    return find_compute_resource(resolve_datacenter(si)).resourcePool
 
 
 # ─── Batch Linked Clone ─────────────────────────────────────────────────────

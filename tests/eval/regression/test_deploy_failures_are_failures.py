@@ -16,6 +16,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from pyVmomi import vim
 from vmware_policy.budget import reset_budget
 from vmware_policy.policy import reset_policy_engine
 from vmware_policy.undo import reset_undo_store
@@ -66,6 +67,7 @@ def test_template_deploy_of_a_missing_template_raises(monkeypatch) -> None:
 def test_template_deploy_to_a_missing_datastore_raises(monkeypatch) -> None:
     tmpl = MagicMock()
     tmpl.config.template = True
+    tmpl.runtime.host.parent.resourcePool = vim.ResourcePool("resgroup-1", None)
     monkeypatch.setattr(vm_deploy, "find_vm_by_name", lambda si, n: tmpl)
     monkeypatch.setattr(vm_deploy, "find_datastore_by_name", lambda si, n: None)
     with pytest.raises(vm_deploy.DeployError, match="list_all_datastores"):
@@ -124,3 +126,80 @@ def test_create_vm_on_a_missing_datastore_raises(monkeypatch) -> None:
     monkeypatch.setattr(vm_lifecycle, "find_datastore_by_name", lambda si, n: None)
     with pytest.raises(inventory.InventoryError, match="list_all_datastores"):
         vm_lifecycle.create_vm(MagicMock(), "vm1", datastore_name="nope")
+
+
+# ── 2026-10-17 write tests on home-vcenter (second batch) ────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kwargs, says",
+    [
+        ({"target_host": "esx-gone"}, "list_esxi_hosts"),
+        ({"target_datastore": "ds-gone"}, "list_all_datastores"),
+    ],
+)
+def test_clone_to_a_missing_host_or_datastore_raises(monkeypatch, kwargs, says) -> None:
+    """Its hints also named CLI commands that do not exist
+    ('vmware-aiops cluster list-hosts', 'vmware-aiops datastore list')."""
+    from vmware_aiops.ops import inventory, vm_lifecycle
+
+    monkeypatch.setattr(vm_lifecycle, "_require_vm", lambda si, n: MagicMock())
+    monkeypatch.setattr(vm_lifecycle, "find_host_by_name", lambda si, n: None)
+    monkeypatch.setattr(vm_lifecycle, "find_datastore_by_name", lambda si, n: None)
+    with pytest.raises(inventory.InventoryError, match=says) as info:
+        vm_lifecycle.clone_vm(MagicMock(), "src", "new", **kwargs)
+    assert "list-hosts" not in str(info.value) and "datastore list" not in str(info.value)
+
+
+@pytest.mark.unit
+def test_reconfigure_with_nothing_to_change_raises(monkeypatch) -> None:
+    from vmware_aiops.ops import vm_lifecycle
+
+    monkeypatch.setattr(vm_lifecycle, "_require_vm", lambda si, n: MagicMock())
+    with pytest.raises(ValueError, match="memory_mb"):
+        vm_lifecycle.reconfigure_vm(MagicMock(), "vm1")
+
+
+def _template_on_standalone_host(monkeypatch):
+    pool = vim.ResourcePool("resgroup-standalone", None)
+    tmpl = MagicMock(name="template")
+    tmpl.config.template = True
+    tmpl.runtime.host.parent.resourcePool = pool
+    seen = {}
+
+    def clone(folder, name, spec):
+        seen["spec"] = spec
+        return MagicMock()
+
+    tmpl.Clone = clone
+    monkeypatch.setattr(vm_deploy, "find_vm_by_name", lambda si, n: tmpl)
+    monkeypatch.setattr(vm_deploy, "_wait_for_task", lambda *a, **k: None)
+    return pool, seen
+
+
+@pytest.mark.unit
+def test_template_deploy_without_a_host_names_the_templates_pool(monkeypatch) -> None:
+    """vCenter with standalone hosts: 'A specified parameter was not correct:
+    spec.location.pool' on every call, because the pool was only set when
+    target_host was passed and the MCP tool did not expose target_host."""
+    pool, seen = _template_on_standalone_host(monkeypatch)
+
+    vm_deploy.deploy_from_template(MagicMock(), "tmpl", "vm1")
+
+    assert seen["spec"].location.pool is pool
+
+
+@pytest.mark.unit
+def test_template_tool_exposes_target_host(monkeypatch) -> None:
+    import inspect
+
+    assert "target_host" in inspect.signature(deploy_tools.deploy_vm_from_template).parameters
+
+
+@pytest.mark.unit
+def test_configure_cluster_with_nothing_to_change_raises() -> None:
+    from vmware_aiops.ops import cluster_mgmt
+
+    with pytest.raises(ValueError, match="drs_behavior"):
+        cluster_mgmt.configure_cluster(MagicMock(), "c1")
