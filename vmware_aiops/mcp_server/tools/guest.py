@@ -19,6 +19,7 @@ from vmware_aiops.ops.guest_ops import (
     guest_provision,
     guest_upload,
 )
+from vmware_aiops.ops.step_policy import authorize_reached
 
 # The four tools below hand caller-supplied content to the guest OS — a program
 # to run, or a file to place at a chosen path — and every one of them advertised
@@ -287,5 +288,7 @@ def provision_vm_guest(
     if not confirm:
         return preview(radius, _HINT)
     refuse_on(radius, "provision_vm_guest")
+    # The password stays out of the policy check and its audit row.
+    authorize_reached("provision_vm_guest", {"vm_name": vm_name, "username": username}, target)
     result = guest_provision(si, vm_name, username, password, steps, timeout=timeout)
     return {**result, "action": "provisioned", "blast_radius": radius}

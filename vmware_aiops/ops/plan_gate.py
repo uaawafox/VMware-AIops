@@ -43,12 +43,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from vmware_policy import sanitize
-from vmware_policy.guard import audit_call, guard
-from vmware_policy.policy import PolicyDenied
-from vmware_policy.skills import skill_name
 
 from vmware_aiops.ops.gate import GateRefusedError, refusal_message
 from vmware_aiops.ops.planner import _ACTION_SCHEMA, load_plan
+from vmware_aiops.ops.step_policy import STEP_RISK, tool_refusal
 from vmware_aiops.policy_roles import ACTION_TOOLS
 
 if TYPE_CHECKING:
@@ -380,66 +378,29 @@ def _step_label(step: dict[str, Any]) -> str:
     return f"Step {step.get('index')} ({kind}{step.get('action')})"
 
 
-#: The risk level each step is authorized at: its tool's own ``@vmware_tool``
-#: risk, so a maintenance window that blocks high/critical work blocks the step
-#: too. ``tests/test_plan_steps_obey_policy.py`` compares it with the tools.
-_STEP_RISK: dict[str, str] = {
-    "attach_iso": "medium", "clone": "high", "cluster_add_host": "medium",
-    "cluster_remove_host": "medium", "configure_cluster": "medium",
-    "convert_to_template": "medium", "create_cluster": "medium",
-    "create_snapshot": "medium", "create_vm": "medium", "delete_cluster": "high",
-    "delete_snapshot": "high", "delete_vm": "critical", "deploy_ova": "medium",
-    "deploy_template": "medium", "guest_download": "high", "guest_exec": "critical",
-    "guest_upload": "high", "linked_clone": "medium", "migrate": "high",
-    "power_off": "medium", "power_on": "medium", "reconfigure": "medium",
-    "reset": "medium", "revert_snapshot": "high", "suspend": "medium",
-}
-
-_SKILL = skill_name(__name__)
-
-
 def step_risk_level(action: Any) -> str:
     """The risk a step is authorized at; unknown actions at the highest."""
-    return _STEP_RISK.get(action, "critical")
+    return STEP_RISK.get(action, "critical")
 
 
 def policy_refusal(step: dict[str, Any], target: str | None, *, record: bool) -> str | None:
     """Ask vmware-policy about one step as its own tool; the refusal, or ``None``.
 
-    ``record`` files a ``denied`` (or ``error``) audit row under the step's tool,
-    as the tool itself would: set when the plan is about to run, not on a
-    preview. A policy that cannot be read refuses -- an unreadable rule set must
-    not turn into an unchecked step (the daemon's rule).
+    ``record`` files the ``denied`` audit row: set when the plan is about to run,
+    not on a preview. An action with no tool of its own is refused here (fail
+    closed), except the storage actions, which the gate refuses with its own
+    message pointing at vmware-storage.
     """
     action = step.get("action")
     tool = ACTION_TOOLS.get(action)
     if tool is None:
-        return None  # storage / unknown actions are refused by the gate itself
+        if action in REFUSED_ACTIONS:
+            return None
+        return (f"{_step_label(step)} refused: no tool is known to authorize this "
+                "action under, so it is not run unchecked.")
     params = step.get("params") or {}
-    risk = step_risk_level(action)
-    try:
-        guard(_SKILL, tool, params, risk_level=risk, target=target or "")
-        return None
-    except PolicyDenied as exc:
-        rule = sanitize(exc.result.rule or "", 100)
-        reason = sanitize(exc.result.reason or "", 300).rstrip(". ")
-        message = (
-            f"{_step_label(step)} refused by policy: rule '{rule}' denies {tool}"
-            f"{f' -- {reason}' if reason else ''}. A plan step is authorized as its "
-            "own tool; remove the step, or run it outside the agent."
-        )
-        status, detail = "denied", {"error": message, "rule": rule}
-    except Exception as exc:  # noqa: BLE001 - refuse, never run unchecked
-        message = (
-            f"{_step_label(step)} refused: the policy check for {tool} failed "
-            f"({type(exc).__name__}), so the step is not run unchecked. Check "
-            "~/.vmware/rules.yaml, then retry."
-        )
-        status, detail = "error", {"error": message}
-    if record:
-        audit_call(_SKILL, tool, params=redact(params), result=detail,
-                   status=status, risk_level=risk)
-    return message
+    return tool_refusal(tool, params, target, label=_step_label(step), record=record,
+                        audit_params=redact(params))
 
 
 #: A measurement whose action would change nothing (VM already off, already on

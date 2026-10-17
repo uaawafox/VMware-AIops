@@ -7,6 +7,7 @@ from vmware_policy import vmware_tool
 
 from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops import vm_deploy
+from vmware_aiops.ops.step_policy import authorize_reached
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -203,6 +204,8 @@ def batch_clone_vms(
         power_on: Power on each clone after creation.
         target: Optional vCenter/ESXi target name from config.
     """
+    authorize_reached("batch_clone_vms",
+                      {"source_vm_name": source_vm_name, "vm_names": vm_names}, target)
     si = _get_connection(target)
     return vm_deploy.batch_clone(
         si, source_vm_name=source_vm_name, vm_names=vm_names,
@@ -239,6 +242,8 @@ def batch_linked_clone_vms(
         baseline_snapshot: Snapshot each clone with this name (optional).
         target: Optional vCenter/ESXi target from config.
     """
+    authorize_reached("batch_linked_clone_vms",
+                      {"source_vm_name": source_vm_name, "vm_names": vm_names}, target)
     si = _get_connection(target)
     return vm_deploy.batch_linked_clone(
         si, source_vm_name=source_vm_name, snapshot_name=snapshot_name,
@@ -271,5 +276,6 @@ def batch_deploy_from_spec(
     Returns:
         One dict per VM: name, status ("ok" or "error"), and messages with per-step results.
     """
+    authorize_reached("batch_deploy_from_spec", {"spec_path": spec_path}, target)
     si = _get_connection(target)
     return vm_deploy.batch_deploy(si, spec_path)

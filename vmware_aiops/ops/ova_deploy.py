@@ -404,8 +404,12 @@ def deploy_ova(
     start = time.time()
     while lease.state == vim.HttpNfcLease.State.initializing:
         if time.time() - start > timeout:
-            # Abort, or the half-created VM shell stays behind holding the lease.
-            lease.Abort()
+            # Abort, or the half-created VM shell stays behind holding the lease;
+            # a failed abort must not replace the error that explains the stop.
+            try:
+                lease.Abort()
+            except Exception:  # noqa: BLE001 - logged; the DeployError below is the answer
+                _log.warning("Aborting the import lease for %s failed", vm_name, exc_info=True)
             raise DeployError(
                 f"Import lease for '{vm_name}' did not become ready within {timeout}s; "
                 "the import was aborted. Check the target host is connected, then retry."

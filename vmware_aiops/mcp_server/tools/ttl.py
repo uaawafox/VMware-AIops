@@ -141,6 +141,9 @@ def restore_vm_clean_slate(
     if not confirm:
         return preview(radius)
     refuse_on(radius, "restore_vm_clean_slate")
+    from vmware_aiops.ops.step_policy import authorize_reached
+    authorize_reached("restore_vm_clean_slate",
+                      {"vm_name": vm_name, "snapshot_name": snapshot_name}, target)
     result = clean_slate(si, vm_name, snapshot_name=snapshot_name)
     if " reverted to snapshot " not in result:
         raise did_not_act("restore_vm_clean_slate", result)
