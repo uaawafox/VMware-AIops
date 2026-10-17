@@ -13,6 +13,8 @@ risk level, the way the TTL daemon already did for ``delete_vm``.
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Iterable
 from typing import Any
 
 from vmware_policy import sanitize
@@ -40,8 +42,15 @@ STEP_RISK: dict[str, str] = {
     "reset": "medium", "revert_snapshot": "high", "suspend": "medium",
 }
 
-#: The same risks keyed by tool name (every REACHES tool is a plan action's tool).
-TOOL_RISK: dict[str, str] = {ACTION_TOOLS[a]: r for a, r in STEP_RISK.items()}
+#: The same risks keyed by tool name, plus the one reached tool that is no plan
+#: action's (provision's exec steps).
+TOOL_RISK: dict[str, str] = {
+    **{ACTION_TOOLS[a]: r for a, r in STEP_RISK.items()},
+    "run_vm_guest_command_with_output": "critical",
+}
+
+#: audit_call takes role= only from vmware-policy 1.24.0; the floor is 1.23.1.
+_AUDIT_TAKES_ROLE = "role" in inspect.signature(audit_call).parameters
 
 
 def _role() -> str:
@@ -98,20 +107,48 @@ def tool_refusal(
         )
         status, detail = "error", {"error": message}
     if record:
+        extra = {"role": _role()} if _AUDIT_TAKES_ROLE else {}
         audit_call(SKILL, tool, params=audit_params if audit_params is not None else params,
-                   result=detail, status=status, risk_level=risk, role=_role())
+                   result=detail, status=status, risk_level=risk, **extra)
     return message
 
 
-def authorize_reached(tool: str, params: dict[str, Any], target: str | None) -> None:
-    """Refuse ``tool`` if the policy denies any tool it runs (``REACHES``).
+def authorize_reached(
+    tool: str,
+    params: dict[str, Any],
+    target: str | None,
+    used: Iterable[str] | None = None,
+) -> None:
+    """Refuse ``tool`` if the policy denies a tool it is about to run.
 
-    Every reached tool is checked, not only the ones these arguments use: fail
-    closed, and the same answer whatever the arguments say. Call it just before
-    the tool acts.
+    ``used`` names the tools these arguments make it run (a clone always clones;
+    it powers on only with ``power_on``), so a deny on ``power_on_vm`` refuses a
+    batch that powers on and not one that does not -- the same answer the single
+    tool gives. Without ``used`` (a spec read later, guest steps of every kind)
+    every tool in ``REACHES`` is checked: fail closed. Call it just before the
+    tool acts, on every surface (MCP and CLI).
     """
-    for inner in sorted(REACHES.get(tool, ())):
+    inner_tools = REACHES.get(tool, frozenset()) if used is None else frozenset(used)
+    for inner in sorted(inner_tools):
         refused = tool_refusal(inner, params, target, label=f"{tool} (runs {inner})",
                                record=True)
         if refused:
             raise GateRefusedError(refused)
+
+
+def used_by_options(
+    base: Iterable[str],
+    *,
+    reconfigure: bool = False,
+    snapshot: bool = False,
+    power_on: bool = False,
+) -> set[str]:
+    """The tools a deploy/clone call runs: its own plus the follow-ups it asked for."""
+    used = set(base)
+    if reconfigure:
+        used.add("reconfigure_vm")
+    if snapshot:
+        used.add("create_vm_snapshot")
+    if power_on:
+        used.add("power_on_vm")
+    return used

@@ -51,7 +51,9 @@ def _ops_refs(tree: ast.AST) -> tuple[dict[str, str], set[str]]:
     for n in ast.walk(tree):
         if isinstance(n, ast.ImportFrom) and n.module:
             parts = n.module.split(".")
-            if "ops" in parts:
+            # step_policy authorizes the operation; it is not the operation, and
+            # every composite command calls it (2026-10-17).
+            if "ops" in parts and parts[-1] != "step_policy":
                 if parts[-1] == "ops":
                     mods.update(a.asname or a.name for a in n.names)
                 else:

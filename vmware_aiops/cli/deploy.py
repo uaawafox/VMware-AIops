@@ -67,9 +67,10 @@ def ds_scan_images(
     """Scan all datastores for deployable images (OVA/ISO/OVF) and update local registry."""
     from vmware_aiops.ops.datastore_browser import update_registry
 
-    si, _ = _get_connection(target, config)
+    si, cfg = _get_connection(target, config)
     console.print("[bold]Scanning all datastores for images...[/]")
-    registry = update_registry(si)
+    name = (cfg.get_target(target) if target else cfg.default_target).name
+    registry = update_registry(si, target=name)
     images = registry.get("images", [])
     if not images:
         console.print("[yellow]No deployable images found.[/]")
@@ -118,6 +119,10 @@ def deploy_ova_cmd(
             parameters={"ova": ova_path, "datastore": datastore, "network": network},
         )
         return
+    from vmware_aiops.ops.step_policy import authorize_reached, used_by_options
+
+    authorize_reached("deploy_vm_from_ova", {"vm_name": name}, target, used=used_by_options(
+        (), snapshot=bool(snapshot), power_on=power_on))
     si, _ = _get_connection(target, config)
     _double_confirm("部署 OVA", name, _resolve_target(target))
     result = deploy_ova(
@@ -159,6 +164,11 @@ def deploy_template_cmd(
             parameters={"template": template_name, "datastore": datastore or "(template default)"},
         )
         return
+    from vmware_aiops.ops.step_policy import authorize_reached, used_by_options
+
+    authorize_reached("deploy_vm_from_template", {"vm_name": name}, target,
+                      used=used_by_options((), reconfigure=cpu is not None or memory is not None,
+                                           snapshot=bool(snapshot), power_on=power_on))
     si, _ = _get_connection(target, config)
     _double_confirm(f"从模板 '{template_name}' 部署", name, _resolve_target(target))
     result = deploy_from_template(
@@ -199,6 +209,11 @@ def deploy_linked_clone_cmd(
             parameters={"source": source, "snapshot": snap},
         )
         return
+    from vmware_aiops.ops.step_policy import authorize_reached, used_by_options
+
+    authorize_reached("deploy_linked_clone", {"vm_name": name}, target,
+                      used=used_by_options((), reconfigure=cpu is not None or memory is not None,
+                                           snapshot=bool(baseline), power_on=power_on))
     si, _ = _get_connection(target, config)
     _double_confirm(f"从 '{source}@{snap}' 创建链接克隆", name, _resolve_target(target))
     result = linked_clone(
@@ -236,6 +251,9 @@ def deploy_batch_cmd(
             parameters={"spec_file": spec, "vm_count": len(vm_names)},
         )
         return
+    from vmware_aiops.ops.step_policy import authorize_reached
+
+    authorize_reached("batch_deploy_from_spec", {"spec_path": spec}, target)
     si, _ = _get_connection(target, config)
     deploy_spec = load_deploy_spec(spec)
     vm_names = [v["name"] for v in deploy_spec["vms"]]
@@ -294,6 +312,12 @@ def deploy_batch_clone_cmd(
             parameters={"source": source, "count": count, "prefix": prefix},
         )
         return
+    from vmware_aiops.ops.step_policy import authorize_reached, used_by_options
+
+    authorize_reached("batch_clone_vms", {"source_vm_name": source, "vm_names": vm_names}, target,
+                      used=used_by_options({"clone_vm"},
+                                           reconfigure=cpu is not None or memory is not None,
+                                           snapshot=bool(snapshot), power_on=power_on))
     si, _ = _get_connection(target, config)
     console.print(f"[bold yellow]批量克隆 {count} 台: {', '.join(vm_names)}[/]")
     _double_confirm(f"从 '{source}' 批量克隆 {count} 台", source, _resolve_target(target))

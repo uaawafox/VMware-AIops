@@ -114,3 +114,76 @@ def test_every_reached_tool_has_a_known_risk():
             continue  # plans check per step; the TTL daemon checks delete_vm itself
         for name in inner:
             assert name in step_policy.TOOL_RISK, f"{tool} reaches {name} with no risk"
+
+
+# ── narrow review, 2026-10-17 ────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_a_follow_up_is_checked_only_when_asked_for(harness, monkeypatch):
+    """A deny on power_on_vm refuses a batch that powers on, not one that does not."""
+    _rules(harness, "power_on_vm")
+    monkeypatch.setattr(vm_deploy, "batch_clone", lambda *a, **k: [{"name": "a", "status": "ok"}])
+
+    quiet = deploy_tools.batch_clone_vms("gold", ["a"], target="t")
+    loud = deploy_tools.batch_clone_vms("gold", ["a"], power_on=True, target="t")
+
+    assert quiet == [{"name": "a", "status": "ok"}]
+    assert loud and loud[0].get("error")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("call", [
+    lambda: deploy_tools.deploy_vm_from_ova("/x.ova", "v", "ds", power_on=True, target="t"),
+    lambda: deploy_tools.deploy_vm_from_template("tmpl", "v", power_on=True, target="t"),
+    lambda: deploy_tools.deploy_linked_clone("src", "s", "v", power_on=True, target="t"),
+    lambda: deploy_tools.batch_linked_clone_vms("src", "s", ["v"], power_on=True, target="t"),
+])
+def test_every_deploy_path_checks_power_on(harness, monkeypatch, call):
+    _rules(harness, "power_on_vm")
+    for name in ("deploy_ova", "deploy_from_template", "linked_clone", "batch_linked_clone"):
+        monkeypatch.setattr(vm_deploy, name, lambda *a, **k: pytest.fail("ran despite the deny"))
+
+    out = call()
+
+    assert "Error" in str(out) or "error" in str(out)
+
+
+@pytest.mark.unit
+def test_provision_checks_the_exec_with_output_tool(harness, monkeypatch):
+    _rules(harness, "run_vm_guest_command_with_output")
+    monkeypatch.setattr(guest_tools, "measure_guest_provision",
+                        lambda *a, **k: {"blockers": [], "unmeasured": []})
+    monkeypatch.setattr(guest_tools, "guest_provision", lambda *a, **k: pytest.fail("ran"))
+
+    out = guest_tools.provision_vm_guest("web-01", "root", "pw", [{"run": "id"}],
+                                         confirm=True, target="t")
+
+    assert "error" in out
+
+
+@pytest.mark.unit
+def test_cli_clean_slate_is_refused_when_revert_is_denied(harness, monkeypatch):
+    from typer.testing import CliRunner
+
+    from vmware_aiops.cli import app
+
+    _rules(harness, "revert_vm_snapshot")
+    monkeypatch.setattr("vmware_aiops.cli.vm._get_connection",
+                        lambda *a, **k: pytest.fail("connected despite the deny"))
+    result = CliRunner().invoke(app, ["vm", "clean-slate", "web-01", "--target", "t"])
+
+    assert result.exit_code != 0
+    assert "revert_vm_snapshot" in result.output
+
+
+@pytest.mark.unit
+def test_a_plan_deploy_step_that_powers_on_is_checked_as_power_on(harness):
+    from vmware_aiops.ops import plan_gate
+
+    _rules(harness, "power_on_vm")
+    step = {"index": 0, "action": "deploy_template",
+            "params": {"template_name": "t", "new_name": "v", "power_on": True}}
+    assert plan_gate.policy_refusal(step, "t", record=False)
+    step["params"]["power_on"] = False
+    assert plan_gate.policy_refusal(step, "t", record=False) is None

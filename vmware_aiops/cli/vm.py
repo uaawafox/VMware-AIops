@@ -668,6 +668,10 @@ def restore_vm_clean_slate(
             parameters={"snapshot": snapshot},
         )
         return
+    from vmware_aiops.ops.step_policy import authorize_reached
+
+    authorize_reached("restore_vm_clean_slate",
+                      {"vm_name": vm_name, "snapshot_name": snapshot}, target)
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, vm_name)
     _show_state_preview(before, "Clean Slate (恢复基线快照)", vm_name)

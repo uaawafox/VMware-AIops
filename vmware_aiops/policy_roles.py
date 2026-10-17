@@ -58,7 +58,15 @@ REACHES: dict[str, frozenset[str]] = {
     "batch_clone_vms": frozenset(
         {"clone_vm", "reconfigure_vm", "create_vm_snapshot", "power_on_vm"}
     ),
-    "batch_linked_clone_vms": frozenset({"deploy_linked_clone"}),
+    "batch_linked_clone_vms": frozenset(
+        {"deploy_linked_clone", "reconfigure_vm", "create_vm_snapshot", "power_on_vm"}
+    ),
+    # Single deploys reconfigure, snapshot and power on when asked (review 2026-10-17).
+    "deploy_vm_from_ova": frozenset({"power_on_vm", "create_vm_snapshot"}),
+    "deploy_vm_from_template": frozenset(
+        {"reconfigure_vm", "create_vm_snapshot", "power_on_vm"}
+    ),
+    "deploy_linked_clone": frozenset({"reconfigure_vm", "create_vm_snapshot", "power_on_vm"}),
     "batch_deploy_from_spec": frozenset(
         {
             "deploy_vm_from_template",
@@ -73,7 +81,10 @@ REACHES: dict[str, frozenset[str]] = {
         }
     ),
     "restore_vm_clean_slate": frozenset({"power_off_vm", "revert_vm_snapshot"}),
-    "provision_vm_guest": frozenset({"run_vm_guest_command", "upload_vm_guest_file"}),
+    # Exec steps run through guest_exec_with_output (review 2026-10-17).
+    "provision_vm_guest": frozenset(
+        {"run_vm_guest_command", "run_vm_guest_command_with_output", "upload_vm_guest_file"}
+    ),
 }
 
 #: Tools that give their holder more than a role: code in a guest, files on the

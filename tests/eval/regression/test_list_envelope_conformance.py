@@ -59,7 +59,7 @@ class TestScannedImages:
         from vmware_aiops.mcp_server.tools import datastore as dt
 
         monkeypatch.setattr(dt, "_get_connection", lambda target: object())
-        monkeypatch.setattr(dt.datastore_browser, "update_registry", lambda si: registry)
+        monkeypatch.setattr(dt.datastore_browser, "update_registry", lambda si, **_k: registry)
         return dt.scan_all_datastore_images.__wrapped__(target=None)
 
     def test_returns_the_envelope_when_nothing_was_found(self, monkeypatch):

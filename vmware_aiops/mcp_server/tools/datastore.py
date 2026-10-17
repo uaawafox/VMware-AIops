@@ -59,8 +59,14 @@ def scan_all_datastore_images(target: Optional[str] = None) -> dict:
         hint} plus `last_scan`; each item is one image. `images` is kept as a
         deprecated alias for `items`.
     """
+    from vmware_aiops.policy_roles import _target_name
+
     si = _get_connection(target)
-    registry = datastore_browser.update_registry(si)
+    try:
+        name = _target_name(target)
+    except Exception:  # noqa: BLE001 - connect already resolved it; keep what was asked
+        name = target
+    registry = datastore_browser.update_registry(si, target=name)
     # The registry dict is also the ON-DISK format, so it is wrapped here rather
     # than changed at the source. It previously reached the agent as
     # {images, last_scan} with no count and no truncation flag — nothing a model

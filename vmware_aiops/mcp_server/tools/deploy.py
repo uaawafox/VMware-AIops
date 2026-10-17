@@ -7,7 +7,7 @@ from vmware_policy import vmware_tool
 
 from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops import vm_deploy
-from vmware_aiops.ops.step_policy import authorize_reached
+from vmware_aiops.ops.step_policy import authorize_reached, used_by_options
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -42,6 +42,8 @@ def deploy_vm_from_ova(
         snapshot_name: If set, snapshots the new VM with this name.
         target: vCenter/ESXi target from config.yaml; omit for the default.
     """
+    authorize_reached("deploy_vm_from_ova", {"vm_name": vm_name}, target, used=used_by_options(
+        (), snapshot=bool(snapshot_name), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.deploy_ova(
         si, ova_path=ova_path, vm_name=vm_name,
@@ -83,6 +85,9 @@ def deploy_vm_from_template(
             use the template's host and its resource pool.
         target: Optional vCenter/ESXi target from config.
     """
+    authorize_reached("deploy_vm_from_template", {"vm_name": new_name}, target,
+                      used=used_by_options((), reconfigure=cpu is not None or memory_mb is not None,
+                                           snapshot=bool(snapshot_name), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.deploy_from_template(
         si, template_name=template_name, new_name=new_name,
@@ -121,6 +126,9 @@ def deploy_linked_clone(
         baseline_snapshot: If set, snapshots the new clone with this name.
         target: vCenter/ESXi target from config.yaml; omit for the default.
     """
+    authorize_reached("deploy_linked_clone", {"vm_name": new_name}, target,
+                      used=used_by_options((), reconfigure=cpu is not None or memory_mb is not None,
+                                           snapshot=bool(baseline_snapshot), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.linked_clone(
         si, source_vm_name=source_vm_name, new_name=new_name,
@@ -205,7 +213,10 @@ def batch_clone_vms(
         target: Optional vCenter/ESXi target name from config.
     """
     authorize_reached("batch_clone_vms",
-                      {"source_vm_name": source_vm_name, "vm_names": vm_names}, target)
+                      {"source_vm_name": source_vm_name, "vm_names": vm_names}, target,
+                      used=used_by_options({"clone_vm"},
+                                           reconfigure=cpu is not None or memory_mb is not None,
+                                           snapshot=bool(snapshot_name), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.batch_clone(
         si, source_vm_name=source_vm_name, vm_names=vm_names,
@@ -243,7 +254,10 @@ def batch_linked_clone_vms(
         target: Optional vCenter/ESXi target from config.
     """
     authorize_reached("batch_linked_clone_vms",
-                      {"source_vm_name": source_vm_name, "vm_names": vm_names}, target)
+                      {"source_vm_name": source_vm_name, "vm_names": vm_names}, target,
+                      used=used_by_options({"deploy_linked_clone"},
+                                           reconfigure=cpu is not None or memory_mb is not None,
+                                           snapshot=bool(baseline_snapshot), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.batch_linked_clone(
         si, source_vm_name=source_vm_name, snapshot_name=snapshot_name,

@@ -46,7 +46,7 @@ from vmware_policy import sanitize
 
 from vmware_aiops.ops.gate import GateRefusedError, refusal_message
 from vmware_aiops.ops.planner import _ACTION_SCHEMA, load_plan
-from vmware_aiops.ops.step_policy import STEP_RISK, tool_refusal
+from vmware_aiops.ops.step_policy import STEP_RISK, tool_refusal, used_by_options
 from vmware_aiops.policy_roles import ACTION_TOOLS
 
 if TYPE_CHECKING:
@@ -399,8 +399,24 @@ def policy_refusal(step: dict[str, Any], target: str | None, *, record: bool) ->
         return (f"{_step_label(step)} refused: no tool is known to authorize this "
                 "action under, so it is not run unchecked.")
     params = step.get("params") or {}
-    return tool_refusal(tool, params, target, label=_step_label(step), record=record,
-                        audit_params=redact(params))
+    for inner in sorted({tool} | _follow_ups(action, params)):
+        refused = tool_refusal(inner, params, target, label=_step_label(step),
+                               record=record, audit_params=redact(params))
+        if refused:
+            return refused
+    return None
+
+
+def _follow_ups(action: Any, params: dict[str, Any]) -> set[str]:
+    """Tools a deploy step also runs when its parameters ask (as the tools check)."""
+    if action not in ("deploy_ova", "deploy_template", "linked_clone"):
+        return set()
+    return used_by_options(
+        (),
+        reconfigure=params.get("cpu") is not None or params.get("memory_mb") is not None,
+        snapshot=bool(params.get("snapshot_name") or params.get("baseline_snapshot")),
+        power_on=bool(params.get("power_on")),
+    )
 
 
 #: A measurement whose action would change nothing (VM already off, already on

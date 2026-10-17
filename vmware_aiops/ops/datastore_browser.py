@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -226,12 +227,25 @@ def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict]]:
 # ─── Image Registry (local cache) ────────────────────────────────────────────
 
 
+#: Serialises read-modify-write of the registry within this process.
+_REGISTRY_LOCK = threading.Lock()
+
+
 def _load_registry() -> dict:
-    """Load the local image registry from disk."""
+    """Load the local image registry, or refuse it with the way out."""
     if not IMAGE_REGISTRY_FILE.exists():
         return {"images": [], "last_scan": None}
-    with open(IMAGE_REGISTRY_FILE, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(IMAGE_REGISTRY_FILE, encoding="utf-8") as f:
+            registry = json.load(f)
+    except ValueError:  # JSONDecodeError, UnicodeDecodeError
+        registry = None
+    if not isinstance(registry, dict) or not isinstance(registry.get("images"), list):
+        raise DatastoreBrowseError(
+            f"The local image cache {IMAGE_REGISTRY_FILE} is unreadable. Delete it "
+            "and run scan_all_datastore_images again to rebuild it."
+        )
+    return registry
 
 
 def _save_registry(registry: dict) -> None:
@@ -243,17 +257,22 @@ def _save_registry(registry: dict) -> None:
     atomic_write_text(IMAGE_REGISTRY_FILE, json.dumps(registry, indent=2, ensure_ascii=False))
 
 
-def update_registry(si: ServiceInstance) -> dict:
-    """Scan all datastores and update the local image registry.
+def update_registry(si: ServiceInstance, target: str | None = None) -> dict:
+    """Scan all datastores of ``target`` and refresh its part of the image registry.
 
-    Returns:
-        The updated registry dict.
+    Entries carry ``target``: a scan replaces that target's entries and keeps the
+    others', so "datastore1" on two hosts stays apart (review 2026-10-17; the
+    whole file used to be replaced by each target's scan). Entries written before
+    targets were recorded are replaced too. An unreadable registry is rebuilt.
+
+    Returns ``{"images": <this scan's images>, "last_scan": ...}``.
     """
     scan_result = scan_all_datastores(si)
     images: list[dict] = []
     for ds_name, ds_images in scan_result.items():
         for img in ds_images:
             images.append({
+                "target": target,
                 "datastore": ds_name,
                 "name": img["name"],
                 "ds_path": img["ds_path"],
@@ -261,15 +280,19 @@ def update_registry(si: ServiceInstance) -> dict:
                 "type": img["type"],
                 "modified": img["modified"],
             })
-
-    registry = {
-        "images": images,
-        "last_scan": datetime.now(timezone.utc).isoformat(),
-    }
-    _save_registry(registry)
+    now = datetime.now(timezone.utc).isoformat()
+    with _REGISTRY_LOCK:
+        try:
+            existing = _load_registry()["images"]
+        except DatastoreBrowseError:
+            _log.warning("Image registry unreadable; rebuilding it from this scan")
+            existing = []
+        kept = [e for e in existing
+                if isinstance(e, dict) and "target" in e and e["target"] != target]
+        _save_registry({"images": kept + images, "last_scan": now})
     _log.info("Image registry updated: %d images across %d datastores",
               len(images), len(scan_result))
-    return registry
+    return {"images": images, "last_scan": now}
 
 
 def get_registry() -> dict:
