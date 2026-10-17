@@ -19,7 +19,7 @@ from vmware_aiops.ops.guest_ops import (
     guest_provision,
     guest_upload,
 )
-from vmware_aiops.ops.step_policy import authorize_reached
+from vmware_aiops.ops.step_policy import authorize_reached, with_policy_blockers
 
 # The four tools below hand caller-supplied content to the guest OS — a program
 # to run, or a file to place at a chosen path — and every one of them advertised
@@ -124,8 +124,9 @@ def run_vm_guest_command_with_output(
     through, VMware Tools status and any blockers; nothing runs. Show it to the
     user. Do not set confirm=True on your own because the user asked earlier:
     they have not seen the preview yet. Refused outright: VM not powered on,
-    VMware Tools not running, an unreadable identity or status, or a name that
-    matches more than one VM.
+    VMware Tools not running, an unreadable identity or status, a name that
+    matches more than one VM, or a rules.yaml deny on run_vm_guest_command or
+    download_vm_guest_file (the preview lists it as a blocker).
 
     Args:
         vm_name: Target VM name.
@@ -140,7 +141,9 @@ def run_vm_guest_command_with_output(
     si = _get_connection(target)
     radius = measure_guest_exec_output(si, vm_name, command, username, timeout)
     if not confirm:
-        return preview(radius, _HINT)
+        return preview(with_policy_blockers(radius, "run_vm_guest_command_with_output",
+                                            {"vm_name": vm_name, "username": username},
+                                            target), _HINT)
     refuse_on(radius, "run_vm_guest_command_with_output")
     authorize_reached("run_vm_guest_command_with_output",
                       {"vm_name": vm_name, "username": username}, target)
@@ -265,7 +268,10 @@ def provision_vm_guest(
     powered on, VMware Tools not running, an empty step list, a step with an
     unknown type or a missing key, an upload whose local file is missing or
     unreadable, a service step on a Windows guest, an unreadable identity or
-    status, or a name that matches more than one VM.
+    status, a name that matches more than one VM, or a rules.yaml deny on any
+    guest tool a provision can run -- run_vm_guest_command,
+    run_vm_guest_command_with_output or upload_vm_guest_file -- whichever
+    step types this call has (the preview lists it as a blocker).
 
     Step types:
       - exec:    {"type": "exec", "command": "apt-get install -y nginx"}
@@ -288,7 +294,9 @@ def provision_vm_guest(
     si = _get_connection(target)
     radius = measure_guest_provision(si, vm_name, username, steps, timeout)
     if not confirm:
-        return preview(radius, _HINT)
+        return preview(with_policy_blockers(radius, "provision_vm_guest",
+                                            {"vm_name": vm_name, "username": username},
+                                            target), _HINT)
     refuse_on(radius, "provision_vm_guest")
     # The password stays out of the policy check and its audit row.
     authorize_reached("provision_vm_guest", {"vm_name": vm_name, "username": username}, target)

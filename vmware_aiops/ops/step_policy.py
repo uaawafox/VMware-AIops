@@ -128,12 +128,39 @@ def authorize_reached(
     every tool in ``REACHES`` is checked: fail closed. Call it just before the
     tool acts, on every surface (MCP and CLI).
     """
-    inner_tools = REACHES.get(tool, frozenset()) if used is None else frozenset(used)
-    for inner in sorted(inner_tools):
+    for inner in _inner_tools(tool, used):
         refused = tool_refusal(inner, params, target, label=f"{tool} (runs {inner})",
                                record=True)
         if refused:
             raise GateRefusedError(refused)
+
+
+def _inner_tools(tool: str, used: Iterable[str] | None) -> list[str]:
+    return sorted(REACHES.get(tool, frozenset()) if used is None else frozenset(used))
+
+
+def with_policy_blockers(
+    radius: dict[str, Any],
+    tool: str,
+    params: dict[str, Any],
+    target: str | None,
+    used: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """``radius`` plus a blocker for each tool ``authorize_reached`` would refuse.
+
+    For a preview: the same question confirm=True will ask, so the user sees the
+    refusal before agreeing rather than after. Nothing is recorded, because
+    nothing was attempted.
+    """
+    refusals = [
+        message
+        for inner in _inner_tools(tool, used)
+        if (message := tool_refusal(inner, params, target, label=f"{tool} (runs {inner})",
+                                    record=False))
+    ]
+    if not refusals:
+        return radius
+    return {**radius, "blockers": [*(radius.get("blockers") or []), *refusals]}
 
 
 def used_by_options(

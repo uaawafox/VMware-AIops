@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim, vmodl
@@ -350,11 +351,23 @@ def create_vm(
     )
 
 
-def delete_vm(si: ServiceInstance, vm_name: str) -> str:
-    """Delete a VM. Powers off first if running."""
+def delete_vm(
+    si: ServiceInstance,
+    vm_name: str,
+    *,
+    before_power_off: Callable[[], None] | None = None,
+) -> str:
+    """Delete a VM. Powers off first if running.
+
+    ``before_power_off`` runs just before that power-off and raises to stop it:
+    the caller's check that power_off_vm is allowed, since the power-off is that
+    tool's work and a deny on it must hold here too.
+    """
     vm = _require_vm(si, vm_name)
 
     if vm.runtime.powerState == vim.VirtualMachine.PowerState.poweredOn:
+        if before_power_off is not None:
+            before_power_off()
         task = vm.PowerOff()
         _wait_for_task(task)
 

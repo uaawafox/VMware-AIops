@@ -1,3 +1,17 @@
+## Unreleased — follow-ups to the 2.4.1 review
+
+* **Previews show policy refusals.** `restore_vm_clean_slate`, `provision_vm_guest` and
+  `run_vm_guest_command_with_output` were refused by `rules.yaml` only at `confirm=True`; the preview now lists that
+  refusal in `blast_radius.blockers`, so the user sees it before agreeing.
+* **A delete that powers the VM off first is checked as `power_off_vm` too:** the CLI `vm delete`, the TTL daemon,
+  and a plan rollback deleting the VM it created (checked when the VM is running or its state cannot be read). The
+  TTL daemon records one `delete_vm` row per change of outcome, as for a deny on `delete_vm`, and keeps the entry.
+  **Behaviour change for custom network roles:** a role that allows `set_vm_ttl` must also allow `power_off_vm`.
+* **Image cache:** writes take a lock across processes (a CLI and an MCP scan at the same time lost one side's
+  rows); a scan keeps rows on datastores it failed to browse (its own or legacy ones) and drops this target's rows
+  on datastores that no longer exist. A cache that cannot be written no longer fails the scan: the images come back
+  with a `cache_note`, as in vmware-storage.
+
 ## v2.4.1 — fixes from the 2026-10-17 real-hardware read and write rounds
 
 * **Tools that run other tools' operations obey `rules.yaml` for those tools**, on the MCP and CLI surfaces.

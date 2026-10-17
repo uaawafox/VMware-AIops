@@ -53,7 +53,8 @@ _PLAN_REACHES = frozenset(ACTION_TOOLS.values()) | {"delete_vm"}
 REACHES: dict[str, frozenset[str]] = {
     "apply_vm_plan": _PLAN_REACHES,
     "rollback_vm_plan": _PLAN_REACHES,
-    "set_vm_ttl": frozenset({"delete_vm"}),  # the scheduler deletes later, with no caller
+    # The scheduler deletes later, with no caller, powering a running VM off first.
+    "set_vm_ttl": frozenset({"delete_vm", "power_off_vm"}),
     # The batch tools run the follow-up steps their arguments ask for (review M1).
     "batch_clone_vms": frozenset(
         {"clone_vm", "reconfigure_vm", "create_vm_snapshot", "power_on_vm"}

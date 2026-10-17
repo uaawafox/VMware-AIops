@@ -501,7 +501,7 @@ def test_daemon_refuses_to_delete_a_different_vm_with_the_same_name(served, monk
     removed, deleted, audited = [], [], []
     monkeypatch.setattr(scheduler, "get_expired_entries", lambda: [_expired("uuid-OLD")])
     monkeypatch.setattr(scheduler, "remove_entry", removed.append)
-    monkeypatch.setattr(scheduler, "delete_vm", lambda si, n: deleted.append(n))
+    monkeypatch.setattr(scheduler, "delete_vm", lambda si, n, **k: deleted.append(n))
     monkeypatch.setattr(scheduler, "_audit",
                         lambda tool, params, status, result, *a: audited.append((status, result)))
     scheduler._run_ttl_check(MagicMock())
@@ -517,7 +517,7 @@ def test_daemon_deletes_the_vm_whose_uuid_matches(served, monkeypatch):
     removed, deleted = [], []
     monkeypatch.setattr(scheduler, "get_expired_entries", lambda: [_expired("uuid-SAME")])
     monkeypatch.setattr(scheduler, "remove_entry", removed.append)
-    monkeypatch.setattr(scheduler, "delete_vm", lambda si, n: deleted.append(n) or "ok")
+    monkeypatch.setattr(scheduler, "delete_vm", lambda si, n, **k: deleted.append(n) or "ok")
     monkeypatch.setattr(scheduler, "_audit", lambda *a, **k: None)
     scheduler._run_ttl_check(MagicMock())
     assert deleted == ["ttl-vm"] and removed == ["ttl-vm"]

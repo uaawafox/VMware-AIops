@@ -407,6 +407,33 @@ def policy_refusal(step: dict[str, Any], target: str | None, *, record: bool) ->
     return None
 
 
+def _rollback_power_off_refusal(
+    si: Any, step: dict[str, Any], target: str | None, *, record: bool,
+) -> str | None:
+    """A rollback delete powers a running VM off first: that is power_off_vm's work.
+
+    Asked only when the VM is on, or its power state cannot be read (fail
+    closed); a VM that is off is deleted without a power-off, and a VM that is
+    gone fails the delete on its own.
+    """
+    from pyVmomi import vim
+
+    from vmware_aiops.ops.inventory import find_vm_by_name
+
+    params = step.get("params") or {}
+    try:
+        vm = find_vm_by_name(si, params.get("vm_name"))
+        if vm is None:
+            return None
+        running = vm.runtime.powerState == vim.VirtualMachine.PowerState.poweredOn
+    except Exception:  # noqa: BLE001 - unreadable: ask, never power off unchecked
+        running = True
+    if not running:
+        return None
+    return tool_refusal("power_off_vm", params, target, label=_step_label(step),
+                        record=record, audit_params=redact(params))
+
+
 def _follow_ups(action: Any, params: dict[str, Any]) -> set[str]:
     """Tools a deploy step also runs when its parameters ask (as the tools check)."""
     if action not in ("deploy_ova", "deploy_template", "linked_clone"):
@@ -445,6 +472,9 @@ def check_step(
     if action in NON_DESTRUCTIVE_ACTIONS:
         return
     if step.get("rollback") and action == "delete_vm":
+        refused = _rollback_power_off_refusal(si, step, target, record=True)
+        if refused:
+            raise GateRefusedError(refused)
         return
     label = f"{_step_label(step)}, checked just before it would run,"
     if action in REFUSED_ACTIONS:
@@ -545,7 +575,11 @@ def _gate(
     refused = policy_refusal(step, target, record=record)
     if refused:
         return {"check": "refused by policy"}, [refused], []
-    if action in NON_DESTRUCTIVE_ACTIONS or (step.get("rollback") and action == "delete_vm"):
+    if step.get("rollback") and action == "delete_vm":
+        refused = None if si is None else _rollback_power_off_refusal(
+            si, step, target, record=record)
+        return ({"check": "refused by policy"}, [refused], []) if refused else ({}, [], [])
+    if action in NON_DESTRUCTIVE_ACTIONS:
         return {}, [], []
     if action in REFUSED_ACTIONS:
         return {"check": "refused"}, [prefix + _refused_blocker(action)], []

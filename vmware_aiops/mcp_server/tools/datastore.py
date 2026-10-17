@@ -76,4 +76,6 @@ def scan_all_datastore_images(target: Optional[str] = None) -> dict:
     result = paginated(images, limit=None, total=len(images))
     result["images"] = result["items"]
     result["last_scan"] = registry.get("last_scan")
+    if registry.get("cache_note"):
+        result["cache_note"] = registry["cache_note"]
     return result

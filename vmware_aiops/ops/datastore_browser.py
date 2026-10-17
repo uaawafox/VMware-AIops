@@ -14,12 +14,15 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
 from vmware_policy import paginated, sanitize
 
+from vmware_aiops._filelock import FileLockTimeoutError, locked
 from vmware_aiops.config import CONFIG_DIR
 from vmware_aiops.ops.inventory import find_datastore_by_name
 
@@ -200,11 +203,15 @@ def scan_images(
     return sorted(all_images, key=lambda x: x["name"])
 
 
-def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict]]:
+def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict] | None]:
     """Scan all accessible datastores for deployable images.
 
     Returns:
-        Dict mapping datastore name to list of image files found.
+        Dict with every datastore the target lists. A datastore browsed
+        successfully maps to the image files found on it (an empty list when it
+        holds none); one that was skipped (inaccessible) or failed to browse
+        maps to ``None``. So callers can tell "looked and found nothing", "did
+        not look" and "no longer exists" (absent) apart.
     """
     from vmware_aiops.ops.inventory import list_datastores
 
@@ -213,13 +220,13 @@ def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict]]:
     for ds in datastores:
         if not ds["accessible"]:
             _log.info("Skipping inaccessible datastore: %s", ds["name"])
+            result[ds["name"]] = None
             continue
         try:
-            images = scan_images(si, ds["name"])
-            if images:
-                result[ds["name"]] = images
+            result[ds["name"]] = scan_images(si, ds["name"])
         except Exception as e:
             _log.warning("Failed to scan datastore %s: %s", ds["name"], e)
+            result[ds["name"]] = None
 
     return result
 
@@ -229,6 +236,25 @@ def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict]]:
 
 #: Serialises read-modify-write of the registry within this process.
 _REGISTRY_LOCK = threading.Lock()
+
+#: How long a writer waits for another process's registry write to finish.
+#: A write is one small JSON file, so this only expires if something is stuck.
+REGISTRY_LOCK_TIMEOUT_S = 10.0
+
+
+@contextmanager
+def _registry_file_lock() -> Iterator[None]:
+    """Serialise registry writes across processes (a sibling ``.lock`` file).
+
+    The CLI, the MCP server and the daemon are separate processes; the thread
+    lock alone let two of them read the old file and the last replace win.
+    """
+    lock_path = IMAGE_REGISTRY_FILE.with_name(IMAGE_REGISTRY_FILE.name + ".lock")
+    try:
+        with locked(lock_path, timeout=REGISTRY_LOCK_TIMEOUT_S):
+            yield
+    except FileLockTimeoutError as exc:
+        raise DatastoreBrowseError(str(exc)) from exc
 
 
 def _load_registry() -> dict:
@@ -262,15 +288,18 @@ def update_registry(si: ServiceInstance, target: str | None = None) -> dict:
 
     Entries carry ``target``: a scan replaces that target's entries and keeps the
     others', so "datastore1" on two hosts stays apart (review 2026-10-17; the
-    whole file used to be replaced by each target's scan). Entries written before
-    targets were recorded are replaced too. An unreadable registry is rebuilt.
+    whole file used to be replaced by each target's scan). An entry written
+    before targets were recorded is replaced only when this scan browsed its
+    datastore, as VMware-Storage's ``_record_scan`` does; one on a datastore this
+    scan skipped or failed to browse is kept, since nothing says it belongs to
+    ``target`` (review 2026-10-18). An unreadable registry is rebuilt.
 
     Returns ``{"images": <this scan's images>, "last_scan": ...}``.
     """
     scan_result = scan_all_datastores(si)
     images: list[dict] = []
     for ds_name, ds_images in scan_result.items():
-        for img in ds_images:
+        for img in ds_images or []:
             images.append({
                 "target": target,
                 "datastore": ds_name,
@@ -280,16 +309,39 @@ def update_registry(si: ServiceInstance, target: str | None = None) -> dict:
                 "type": img["type"],
                 "modified": img["modified"],
             })
+    browsed = {name for name, found in scan_result.items() if found is not None}
+    listed = set(scan_result)
+
+    def _keep(entry: object) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        datastore = entry.get("datastore")
+        if "target" not in entry:  # legacy row: nothing says it belongs to target
+            return datastore not in browsed
+        if entry["target"] != target:
+            return True
+        # This target's rows: replaced where this scan browsed, kept where the
+        # browse was skipped or failed, dropped where the datastore is gone
+        # (reviews 2026-10-18).
+        return datastore in listed and datastore not in browsed
+
     now = datetime.now(timezone.utc).isoformat()
-    with _REGISTRY_LOCK:
-        try:
-            existing = _load_registry()["images"]
-        except DatastoreBrowseError:
-            _log.warning("Image registry unreadable; rebuilding it from this scan")
-            existing = []
-        kept = [e for e in existing
-                if isinstance(e, dict) and "target" in e and e["target"] != target]
-        _save_registry({"images": kept + images, "last_scan": now})
+    try:
+        with _REGISTRY_LOCK, _registry_file_lock():
+            try:
+                existing = _load_registry()["images"]
+            except DatastoreBrowseError:
+                _log.warning("Image registry unreadable; rebuilding it from this scan")
+                existing = []
+            kept = [e for e in existing if _keep(e)]
+            _save_registry({"images": kept + images, "last_scan": now})
+    except (DatastoreBrowseError, OSError) as exc:
+        # The scan itself worked (it may have taken minutes); return it and say
+        # the cache was not updated, as vmware-storage does (review 2026-10-18).
+        _log.warning("Image registry not updated: %s", exc)
+        detail = str(exc) if isinstance(exc, DatastoreBrowseError) else type(exc).__name__
+        return {"images": images, "last_scan": now, "cache_note": sanitize(
+            f"The images were found but the local cache was not updated ({detail}).", 400)}
     _log.info("Image registry updated: %d images across %d datastores",
               len(images), len(scan_result))
     return {"images": images, "last_scan": now}

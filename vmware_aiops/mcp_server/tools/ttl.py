@@ -124,8 +124,10 @@ def restore_vm_clean_slate(
     With confirm=True: powers off the VM first if it is running, then reverts
     to the named snapshot. Use this to reset a lab/dev VM to a clean starting
     state after a task completes. Irreversible — everything written since the
-    snapshot is lost. Refused: no snapshot of that name, more than one, or a
-    VM whose state cannot be read. Returns a dict (action, blast_radius).
+    snapshot is lost. Refused: no snapshot of that name, more than one, a VM
+    whose state cannot be read, or a rules.yaml deny on power_off_vm or
+    revert_vm_snapshot (the preview lists it as a blocker). Returns a dict
+    (action, blast_radius).
 
     Args:
         vm_name: Name of the VM to revert.
@@ -137,13 +139,13 @@ def restore_vm_clean_slate(
     from vmware_aiops.ops.vm_gate import did_not_act
     from vmware_aiops.ops.vm_lifecycle import clean_slate
     si = _get_connection(target)
+    from vmware_aiops.ops.step_policy import authorize_reached, with_policy_blockers
     radius = measure_clean_slate(si, vm_name, snapshot_name)
+    params = {"vm_name": vm_name, "snapshot_name": snapshot_name}
     if not confirm:
-        return preview(radius)
+        return preview(with_policy_blockers(radius, "restore_vm_clean_slate", params, target))
     refuse_on(radius, "restore_vm_clean_slate")
-    from vmware_aiops.ops.step_policy import authorize_reached
-    authorize_reached("restore_vm_clean_slate",
-                      {"vm_name": vm_name, "snapshot_name": snapshot_name}, target)
+    authorize_reached("restore_vm_clean_slate", params, target)
     result = clean_slate(si, vm_name, snapshot_name=snapshot_name)
     if " reverted to snapshot " not in result:
         raise did_not_act("restore_vm_clean_slate", result)

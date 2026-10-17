@@ -127,7 +127,7 @@ def test_ttl_entry_kept_on_transient_failure(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(scheduler, "remove_entry", removed.append)
     monkeypatch.setattr(
         scheduler, "delete_vm",
-        lambda si, name: (_ for _ in ()).throw(RuntimeError("vCenter task timeout")),
+        lambda si, name, **k: (_ for _ in ()).throw(RuntimeError("vCenter task timeout")),
     )
 
     scheduler._run_ttl_check(MagicMock())
@@ -143,7 +143,7 @@ def test_ttl_entry_removed_when_vm_already_gone(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(scheduler, "remove_entry", removed.append)
     monkeypatch.setattr(
         scheduler, "delete_vm",
-        lambda si, name: (_ for _ in ()).throw(VMNotFoundError("VM 'ttl-vm' not found")),
+        lambda si, name, **k: (_ for _ in ()).throw(VMNotFoundError("VM 'ttl-vm' not found")),
     )
 
     scheduler._run_ttl_check(MagicMock())
@@ -156,7 +156,7 @@ def test_ttl_entry_removed_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     removed: list[str] = []
     monkeypatch.setattr(scheduler, "get_expired_entries", lambda: [_ttl_entry()])
     monkeypatch.setattr(scheduler, "remove_entry", removed.append)
-    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name: f"VM '{name}' deleted")
+    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name, **k: f"VM '{name}' deleted")
 
     scheduler._run_ttl_check(MagicMock())
     assert removed == ["ttl-vm"]

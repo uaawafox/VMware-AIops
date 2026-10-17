@@ -193,7 +193,10 @@ def delete_vm(
         return
     _show_state_preview(before, "删除", name)
     _double_confirm("删除", name, _resolve_target(target))
-    result = _ops_delete_vm(si, name)
+    from vmware_aiops.ops.step_policy import authorize_reached
+
+    result = _ops_delete_vm(si, name, before_power_off=lambda: authorize_reached(
+        "delete_vm", {"vm_name": name}, target, used={"power_off_vm"}))
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),

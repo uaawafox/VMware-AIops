@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import typer
+from rich.markup import escape
 from rich.table import Table
 from vmware_policy import audited, guarded
 
@@ -71,6 +72,8 @@ def ds_scan_images(
     console.print("[bold]Scanning all datastores for images...[/]")
     name = (cfg.get_target(target) if target else cfg.default_target).name
     registry = update_registry(si, target=name)
+    if registry.get("cache_note"):
+        console.print(f"[yellow]{escape(registry['cache_note'])}[/]")
     images = registry.get("images", [])
     if not images:
         console.print("[yellow]No deployable images found.[/]")
