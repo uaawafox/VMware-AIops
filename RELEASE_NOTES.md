@@ -1,5 +1,16 @@
-## Unreleased — fixes from the 2026-10-17 real-hardware read and write rounds
+## v2.4.1 — fixes from the 2026-10-17 real-hardware read and write rounds
 
+* **Tools that run other tools' operations obey `rules.yaml` for those tools**, on the MCP and CLI surfaces.
+  `restore_vm_clean_slate`, the batch tools, `provision_vm_guest`, and the deploy tools' `power_on` / snapshot /
+  CPU-memory follow-ups are refused, with a `denied` audit row, when the policy denies the tool that does that part
+  (a deny on `revert_vm_snapshot` used to leave clean slate working; a deny on `power_on_vm` did not stop
+  `batch_clone_vms(power_on=True)`). A follow-up is checked only when the call asks for it. `run_vm_guest_command_with_output` is
+  checked as `run_vm_guest_command` (and `download_vm_guest_file`) too.
+* **Behaviour change for custom network roles:** a role check reads no arguments, so a role that allows
+  `deploy_vm_from_template`, `deploy_vm_from_ova` or `deploy_linked_clone` must now also allow `power_on_vm`,
+  `create_vm_snapshot` and `reconfigure_vm` (and one allowing `run_vm_guest_command_with_output` must allow
+  `run_vm_guest_command` and `download_vm_guest_file`), or every call is refused. The built-in `reader` and `admin`
+  roles are unaffected.
 * **Plan steps obey `rules.yaml`.** Each step of `apply_vm_plan` / `rollback_vm_plan` is authorized by vmware-policy
   under the tool that does the same thing (a `delete_vm` step as `delete_vm`, `power_off` as `power_off_vm`, the
   rollback that deletes a VM the plan created as `delete_vm`), at that tool's risk level — in the preview and again
@@ -10,6 +21,9 @@
   a step not undone, and a plan that fails validation now carry the family `error` key.
 * **`deploy_vm_from_template` works on a vCenter with standalone hosts**: the clone gets the template's resource
   pool (it failed with `spec.location.pool`), and the tool now takes `target_host`.
+* **`scan_all_datastore_images` keeps each target's images**: the cache was one list replaced by every scan, so
+  scanning `datastore1` on an ESXi host erased what a vCenter scan had found. Entries now carry `target`; a corrupt
+  cache file is rebuilt by the next scan and explained by the error instead of a bare JSON error.
 * **`browse_datastore` sees every file** (`.ova`, `.ovf`, `.vmx`, `.log` were filtered out), `ds_path` is well formed
   for ESXi and vCenter folder paths, and a leading `/` is refused with the corrected path, as vmware-storage does.
 * Error text names MCP tools and parameters (CLI form in brackets); doctor is suggested only for connectivity errors;
