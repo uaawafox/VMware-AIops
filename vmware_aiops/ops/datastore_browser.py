@@ -66,18 +66,61 @@ def _wait_for_task(task, timeout: int = 120) -> object:
     )
 
 
+def _normalize_ds_path(path: str) -> str:
+    """Return a datastore-relative browse path, or refuse it with the fix.
+
+    The path is interpolated into a ``[datastore] <path>`` spec for the vSphere
+    DatastoreBrowser API. ``..`` traversal, absolute paths (leading ``/`` or
+    ``\\``) and null bytes are refused -- the rule vmware-storage adopted in its
+    1.5.35 security hardening. vmware-aiops used to pass ``/vcsa8`` straight
+    through while vmware-storage refused it; both now refuse it and say to drop
+    the leading slash, so an agent gets one answer from either skill.
+    """
+    if ".." in path or path.startswith(("/", "\\")) or "\x00" in path:
+        hint = (
+            f" Drop the leading slash: path={path.lstrip('/')!r}."
+            if path.startswith("/") and ".." not in path and "\x00" not in path
+            else ""
+        )
+        raise ValueError(
+            f"Invalid datastore path {path!r}: no '..', absolute paths, or null bytes. "
+            "Pass browse_datastore a datastore-relative sub-path such as 'templates' "
+            f"or 'iso/linux', or '' to browse the datastore root.{hint}"
+        )
+    return path
+
+
+def _join_ds_path(folder: str, name: str) -> str:
+    """Join a browse result's ``folderPath`` and a file name into a datastore path.
+
+    ESXi reports ``"[ds]"`` / ``"[ds] dir"`` with no trailing separator; vCenter
+    reports ``"[ds] "`` / ``"[ds] dir/"``. Both must yield ``"[ds] dir/name"``.
+    """
+    folder = folder.rstrip()
+    if folder.endswith("]"):
+        return f"{folder} {name}"
+    if folder.endswith("/"):
+        return f"{folder}{name}"
+    return f"{folder}/{name}"
+
+
 def browse_datastore(
     si: ServiceInstance,
     ds_name: str,
     path: str = "",
     pattern: str = "*",
 ) -> dict:
-    """Browse files in a datastore directory.
+    """Search a datastore directory and all of its subfolders.
+
+    The search is recursive (``SearchDatastoreSubFolders``): browsing the root
+    returns matches from every folder on the datastore. Folders themselves come
+    back as rows too. Each row's ``ds_path`` is ``"[ds] dir/file"``, ready to
+    pass to deploy/attach tools.
 
     Args:
         si: vSphere ServiceInstance
         ds_name: Datastore name
-        path: Subdirectory path (empty for root)
+        path: Folder to start from (empty for root)
         pattern: Glob pattern to filter files (e.g. "*.ova", "*")
 
     Returns:
@@ -102,13 +145,18 @@ def browse_datastore(
         fileSize=True,
         modification=True,
     )
-    # Include all file types in results
+    # A query list is a filter, not a hint: without the generic Query the
+    # browser returns only ISO/VMDK/folder entries, so .ova/.ovf/.vmx/.log are
+    # silently dropped (real vCenter, 2026-10-17: 0 of 2 OVAs found). Same
+    # list as the vmware-storage twin.
     search_spec.query = [
         vim.host.DatastoreBrowser.IsoImageQuery(),
         vim.host.DatastoreBrowser.VmDiskQuery(),
         vim.host.DatastoreBrowser.FolderQuery(),
+        vim.host.DatastoreBrowser.Query(),
     ]
 
+    path = _normalize_ds_path(path)
     ds_path = f"[{ds_name}] {path}".rstrip()
     task = browser.SearchDatastoreSubFolders_Task(
         datastorePath=ds_path,
@@ -127,7 +175,7 @@ def browse_datastore(
                 "size_mb": round(f.fileSize / (1024 * 1024), 1) if f.fileSize else 0,
                 "type": file_type,
                 "modified": str(f.modification) if f.modification else "",
-                "ds_path": sanitize(f"{folder}{f.path}"),
+                "ds_path": sanitize(_join_ds_path(folder, f.path)),
             })
 
     rows = sorted(files, key=lambda x: x["name"])

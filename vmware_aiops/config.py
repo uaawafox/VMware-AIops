@@ -227,7 +227,7 @@ class AppConfig:
         available = ", ".join(t.name for t in self.targets)
         raise KeyError(
             f"Target '{name}' not found. Available: {available}. "
-            f"Pass --target with one of those names, or add the target to "
+            f"Pass target=<one of those names> (CLI: --target), or add the target to "
             f"{CONFIG_FILE} and re-run."
         )
 

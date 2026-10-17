@@ -419,7 +419,8 @@ def resolve_datacenter(
     raise InventoryError(
         "No datacenter found in this vCenter's inventory — nothing can be deployed "
         "until one exists. Create a datacenter in the vSphere Client, or check that "
-        "--target points at the intended vCenter: run 'vmware-aiops doctor'."
+        "the target (CLI: --target) points at the intended vCenter: run "
+        "'vmware-aiops doctor'."
     )
 
 
@@ -455,7 +456,7 @@ def find_compute_resource(
         raise InventoryError(
             f"No compute resource (cluster or host) found in datacenter '{dc.name}' — "
             f"there is nowhere to place a VM. Add a host or cluster to that datacenter "
-            f"in the vSphere Client, or check --target/--datacenter point at the right "
-            f"place: run 'vmware-aiops doctor'."
+            f"in the vSphere Client, or check the target and datacenter (CLI: "
+            f"--target/--datacenter) point at the right place: run 'vmware-aiops doctor'."
         )
     return cr

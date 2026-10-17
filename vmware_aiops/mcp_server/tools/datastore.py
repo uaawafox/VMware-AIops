@@ -17,7 +17,7 @@ def browse_datastore(
     pattern: str = "*",
     target: Optional[str] = None,
 ) -> dict:
-    """[READ] Browse files in a vSphere datastore directory.
+    """[READ] Search a vSphere datastore folder and all its subfolders for files.
 
     Use this to find OVA/ISO/VMDK paths before calling deploy_vm_from_ova or
     attach_iso_to_vm; for an estate-wide image sweep use scan_all_datastore_images.
@@ -28,7 +28,11 @@ def browse_datastore(
 
     Args:
         datastore_name: Name of the datastore to browse.
-        path: Subdirectory path (empty string for root).
+        path: Datastore-relative folder to start from (empty string for
+            root); a leading '/' or '..' is refused. The search is
+            recursive, so the root returns matches from every folder; each
+            row's ds_path ("[ds] dir/file") can be passed as-is to
+            deploy_vm_from_ova or attach_iso_to_vm.
         pattern: Glob pattern to filter files (e.g. "*.ova", "*.iso", "*").
         target: Optional vCenter/ESXi target name from config.
     """

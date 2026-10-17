@@ -33,6 +33,16 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger("vmware-aiops.deploy")
 
+
+class DeployError(Exception):
+    """A deploy that did not happen, with the next step in the message.
+
+    Raised, never returned: these functions used to return the failure as a
+    status string, which ``@tool_errors`` cannot tell from a success, so the MCP
+    frame, the audit row, the plan executor and batch deploy all counted a
+    deploy that never ran as done (real hardware, 2026-10-17).
+    """
+
 _HTTP_TIMEOUT = 300  # seconds — VMDK upload urlopen must never hang the MCP server
 
 # Upload VMDKs in fixed-size chunks rather than slurping the whole disk into
@@ -319,14 +329,15 @@ def deploy_ova(
     # Find datastore
     ds = find_datastore_by_name(si, datastore_name)
     if ds is None:
-        return f"Datastore '{datastore_name}' not found."
+        raise DeployError(
+            f"Datastore '{datastore_name}' not found on this target. Run list_all_datastores "
+            "(vmware-monitor skill) and copy an exact, case-sensitive name."
+        )
 
     # Find datacenter, folder, resource pool
-    try:
-        datacenter = resolve_datacenter(si, datacenter_name)
-        compute_resource = find_compute_resource(datacenter, cluster)
-    except InventoryError as e:
-        return str(e)
+    # InventoryError carries its own remedy and reaches the agent unchanged.
+    datacenter = resolve_datacenter(si, datacenter_name)
+    compute_resource = find_compute_resource(datacenter, cluster)
     vm_folder = datacenter.vmFolder
     if folder_path:
         for part in folder_path.split("/"):
@@ -337,7 +348,10 @@ def deploy_ova(
                     found = True
                     break
             if not found:
-                return f"Folder '{folder_path}' not found."
+                raise DeployError(
+                    f"Folder '{folder_path}' not found under the datacenter's VM folder "
+                    f"(no child named '{part}'). Omit folder_path to deploy to the root."
+                )
 
     resource_pool = compute_resource.resourcePool
 
@@ -371,7 +385,9 @@ def deploy_ova(
 
     if import_spec_result.error:
         errors = "; ".join(str(e.msg) for e in import_spec_result.error)
-        return f"OVF validation failed: {errors}"
+        raise DeployError(
+            f"OVF validation failed, nothing was imported: {errors[:200]}"
+        )
 
     if import_spec_result.warning:
         for w in import_spec_result.warning:
@@ -388,11 +404,17 @@ def deploy_ova(
     start = time.time()
     while lease.state == vim.HttpNfcLease.State.initializing:
         if time.time() - start > timeout:
-            return "Import lease timed out during initialization."
+            # Abort, or the half-created VM shell stays behind holding the lease.
+            lease.Abort()
+            raise DeployError(
+                f"Import lease for '{vm_name}' did not become ready within {timeout}s; "
+                "the import was aborted. Check the target host is connected, then retry."
+            )
         time.sleep(2)
 
     if lease.state == vim.HttpNfcLease.State.error:
-        return f"Import lease error: {lease.error.msg if lease.error else 'Unknown'}"
+        detail = lease.error.msg if lease.error else "unknown"
+        raise DeployError(f"Import lease for '{vm_name}' failed: {str(detail)[:200]}")
 
     _ova_verify_ssl = get_verify_ssl(si)
 
@@ -431,7 +453,14 @@ def deploy_ova(
         lease.Complete()
     except Exception as e:
         lease.Abort()
-        return f"OVA deploy failed during upload: {e}"
+        # _upload_disk's own ValueErrors are authored and say what to fix; any
+        # other exception's text (an HTTP error quoting the NFC URL) is not.
+        cause = str(e)[:150] if isinstance(e, ValueError) else type(e).__name__
+        raise DeployError(
+            f"OVA deploy of '{vm_name}' failed during disk upload and was aborted "
+            f"({cause}). Check this server can reach the ESXi host over HTTPS "
+            "(port 443), then retry."
+        ) from e
 
     result_parts = [f"VM '{vm_name}' deployed from OVA successfully."]
 

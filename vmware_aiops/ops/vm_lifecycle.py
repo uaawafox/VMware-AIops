@@ -44,7 +44,8 @@ class TaskStillRunning(Exception):
             f"Task still running after {timeout}s — this is NOT a failure. "
             f"The vCenter task is still progressing (large snapshot consolidation "
             f"or clone can take many minutes). Task id: {task_id}. "
-            f"Poll with: vm task-status {task_id} --target <target>"
+            f"Poll with get_vm_task_status(task_id='{task_id}') "
+            f"(CLI: vm task-status {task_id} --target <target>)."
         )
 
 
@@ -250,13 +251,14 @@ def create_vm(
     datacenter_name: str | None = None,
     cluster: str | None = None,
 ) -> str:
-    """Create a new VM with basic configuration."""
-    # Find datacenter and folder
-    try:
-        datacenter = resolve_datacenter(si, datacenter_name)
-        compute_resource = find_compute_resource(datacenter, cluster)
-    except InventoryError as e:
-        return str(e)
+    """Create a new VM with basic configuration.
+
+    Failures raise (InventoryError) rather than return a status string: a
+    returned string was reported and audited as success (2026-10-17).
+    """
+    # Find datacenter and folder; InventoryError carries its own remedy.
+    datacenter = resolve_datacenter(si, datacenter_name)
+    compute_resource = find_compute_resource(datacenter, cluster)
     vm_folder = datacenter.vmFolder
     if folder_path:
         for part in folder_path.split("/"):
@@ -267,7 +269,10 @@ def create_vm(
                     found = True
                     break
             if not found:
-                return f"Folder '{folder_path}' not found."
+                raise InventoryError(
+                    f"Folder '{folder_path}' not found under the datacenter's VM folder "
+                    f"(no child named '{part}'). Omit folder_path to create at the root."
+                )
 
     # Find resource pool
     resource_pool = compute_resource.resourcePool
@@ -276,7 +281,10 @@ def create_vm(
     if datastore_name:
         ds = find_datastore_by_name(si, datastore_name)
         if ds is None:
-            return f"Datastore '{datastore_name}' not found."
+            raise InventoryError(
+                f"Datastore '{datastore_name}' not found on this target. Run "
+                "list_all_datastores (vmware-monitor skill) and copy an exact name."
+            )
         ds_path = f"[{datastore_name}] {vm_name}"
     else:
         ds_path = f"{vm_name}"

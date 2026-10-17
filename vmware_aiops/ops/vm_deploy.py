@@ -23,7 +23,6 @@ from pyVmomi import vim
 from vmware_policy.hostpaths import check_host_path
 
 from vmware_aiops.ops.inventory import (
-    InventoryError,
     find_compute_resource,
     find_datastore_by_name,
     find_vm_by_name,
@@ -32,7 +31,7 @@ from vmware_aiops.ops.inventory import (
 
 # OVA import lives in its own module; re-exported so existing
 # ``vm_deploy.deploy_ova`` call sites and ``batch_deploy`` keep working.
-from vmware_aiops.ops.ova_deploy import deploy_ova
+from vmware_aiops.ops.ova_deploy import DeployError, deploy_ova
 from vmware_aiops.ops.vm_lifecycle import (
     _wait_for_task,
     clone_vm,
@@ -48,6 +47,7 @@ if TYPE_CHECKING:
 _log = logging.getLogger("vmware-aiops.deploy")
 
 __all__ = [
+    "DeployError",
     "deploy_ova",
     "attach_iso",
     "batch_clone",
@@ -81,7 +81,10 @@ def attach_iso(
     """
     vm = find_vm_by_name(si, vm_name)
     if vm is None:
-        return f"VM '{vm_name}' not found."
+        raise DeployError(
+            f"VM '{vm_name}' not found."
+            " Run list_virtual_machines (vmware-monitor skill) for exact names."
+        )
 
     # Find existing CD-ROM or create one
     cdrom = None
@@ -114,7 +117,11 @@ def attach_iso(
     else:
         # Add new CD-ROM device
         if ide_controller is None:
-            return f"VM '{vm_name}' has no IDE controller for CD-ROM."
+            raise DeployError(
+                f"VM '{vm_name}' has no IDE controller for a CD-ROM drive."
+                " Add one in the vSphere Client (reconfigure_vm cannot add controllers),"
+                " then retry."
+            )
 
         cdrom_spec = vim.vm.device.VirtualDeviceSpec(
             operation=vim.vm.device.VirtualDeviceSpec.Operation.add,
@@ -238,14 +245,19 @@ def linked_clone(
 
     source = find_vm_by_name(si, source_vm_name)
     if source is None:
-        return f"Source VM '{source_vm_name}' not found."
+        raise DeployError(
+            f"Source VM '{source_vm_name}' not found."
+            " Run list_virtual_machines (vmware-monitor skill) for exact names."
+        )
 
     # Find the snapshot
     snaps = list_snapshots(si, source_vm_name)
     target_snap = next((s for s in snaps if s["name"] == snapshot_name), None)
     if target_snap is None:
         available = ", ".join(s["name"] for s in snaps) or "none"
-        return f"Snapshot '{snapshot_name}' not found. Available: {available}"
+        raise DeployError(
+            f"Snapshot '{snapshot_name}' not found on '{source_vm_name}'. Available: {available}"
+        )
 
     # Linked clone spec: use snapshot as disk move type
     relocate_spec = vim.vm.RelocateSpec(
@@ -256,9 +268,15 @@ def linked_clone(
 
         host = find_host_by_name(si, target_host)
         if host is None:
-            return f"Target host '{target_host}' not found."
+            raise DeployError(
+                f"Target host '{target_host}' not found."
+                " Run list_esxi_hosts (vmware-monitor skill) for exact names."
+            )
         if host.parent is None or getattr(host.parent, "resourcePool", None) is None:
-            return f"Target host '{target_host}' has no resource pool."
+            raise DeployError(
+                f"Target host '{target_host}' has no resource pool."
+                " Pick a host that is in a cluster or is a standalone compute resource."
+            )
         relocate_spec.host = host
         relocate_spec.pool = host.parent.resourcePool
     clone_spec = vim.vm.CloneSpec(
@@ -306,10 +324,16 @@ def convert_to_template(si: ServiceInstance, vm_name: str) -> str:
     """
     vm = find_vm_by_name(si, vm_name)
     if vm is None:
-        return f"VM '{vm_name}' not found."
+        raise DeployError(
+            f"VM '{vm_name}' not found."
+            " Run list_virtual_machines (vmware-monitor skill) for exact names."
+        )
 
     if vm.runtime.powerState != vim.VirtualMachine.PowerState.poweredOff:
-        return f"VM '{vm_name}' must be powered off before converting to template."
+        raise DeployError(
+            f"VM '{vm_name}' must be powered off before converting to template."
+            " Power it off with power_off_vm, then retry."
+        )
 
     vm.MarkAsTemplate()
     return f"VM '{vm_name}' converted to template."
@@ -325,23 +349,29 @@ def convert_to_vm(
 
     vm = find_vm_by_name(si, template_name)
     if vm is None:
-        return f"Template '{template_name}' not found."
+        raise DeployError(
+            f"Template '{template_name}' not found."
+            " Run list_virtual_machines (vmware-monitor skill) for exact names."
+        )
 
     if not vm.config.template:
-        return f"'{template_name}' is already a VM, not a template."
+        raise DeployError(
+            f"'{template_name}' is already a VM, not a template."
+        )
 
     # Need a resource pool — find from host or use first available
     if host_name:
         host = find_host_by_name(si, host_name)
         if host is None:
-            return f"Host '{host_name}' not found."
+            raise DeployError(
+                f"Host '{host_name}' not found."
+                " Run list_esxi_hosts (vmware-monitor skill) for exact names."
+            )
         pool = host.parent.resourcePool
     else:
-        try:
-            datacenter = resolve_datacenter(si)
-            pool = find_compute_resource(datacenter).resourcePool
-        except InventoryError as e:
-            return str(e)
+        # InventoryError carries its own remedy and reaches the agent unchanged.
+        datacenter = resolve_datacenter(si)
+        pool = find_compute_resource(datacenter).resourcePool
 
     vm.MarkAsVirtualMachine(pool=pool)
     return f"Template '{template_name}' converted back to VM."
@@ -377,24 +407,39 @@ def deploy_from_template(
 
     template = find_vm_by_name(si, template_name)
     if template is None:
-        return f"Template '{template_name}' not found."
+        raise DeployError(
+            f"Template '{template_name}' not found."
+            " Run list_virtual_machines (vmware-monitor skill) for exact names."
+        )
 
     if not template.config.template:
-        return f"'{template_name}' is not a template. Use 'clone' instead."
+        raise DeployError(
+            f"'{template_name}' is not a template."
+            " Use clone_vm to copy a regular VM."
+        )
 
     relocate_spec = vim.vm.RelocateSpec()
     if target_host:
         host = find_host_by_name(si, target_host)
         if host is None:
-            return f"Target host '{target_host}' not found."
+            raise DeployError(
+                f"Target host '{target_host}' not found."
+                " Run list_esxi_hosts (vmware-monitor skill) for exact names."
+            )
         if host.parent is None or getattr(host.parent, "resourcePool", None) is None:
-            return f"Target host '{target_host}' has no resource pool."
+            raise DeployError(
+                f"Target host '{target_host}' has no resource pool."
+                " Pick a host that is in a cluster or is a standalone compute resource."
+            )
         relocate_spec.host = host
         relocate_spec.pool = host.parent.resourcePool
     if datastore_name:
         ds = find_datastore_by_name(si, datastore_name)
         if ds is None:
-            return f"Datastore '{datastore_name}' not found."
+            raise DeployError(
+                f"Datastore '{datastore_name}' not found on this target."
+                " Run list_all_datastores (vmware-monitor skill) and copy an exact name."
+            )
         relocate_spec.datastore = ds
 
     clone_spec = vim.vm.CloneSpec(
