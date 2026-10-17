@@ -42,3 +42,18 @@ def test_unknown_target_names_the_mcp_parameter() -> None:
 @pytest.mark.unit
 def test_still_running_names_the_mcp_poll_tool() -> None:
     assert "get_vm_task_status" in str(TaskStillRunning("task-1", 60))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("make", [
+    lambda: __import__("vmware_aiops.ops.vm_lifecycle", fromlist=["x"]).TaskFailedError(
+        "Task failed: ... | fault=vim.fault.MemoryHotPlugNotSupported"),
+    lambda: __import__("vmware_aiops.ops.guest_ops", fromlist=["x"]).GuestOpsError(
+        "VMware Tools is not running in the guest"),
+    lambda: __import__("vmware_aiops.ops.gate", fromlist=["x"]).GateRefusedError(
+        "refused: VMware Tools is not running"),
+])
+def test_task_guest_and_gate_refusals_do_not_send_the_agent_to_doctor(make) -> None:
+    """Write round 2026-10-17: MemoryHotPlugNotSupported and Tools-not-running
+    errors said 'Run doctor to verify connectivity and credentials'."""
+    assert "doctor" not in _shared._hint_for(make())

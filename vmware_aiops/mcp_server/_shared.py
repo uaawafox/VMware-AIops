@@ -66,6 +66,15 @@ _REQUEST_ERRORS = (
     InventoryError,
     DatastoreBrowseError,
     DeployError,
+    # vCenter did answer: it refused or failed the operation itself
+    # (MemoryHotPlugNotSupported, Tools not running -- write round 2026-10-17).
+    TaskFailedError,
+    TaskStillRunning,
+    GuestOpsError,
+    GateRefusedError,
+    ClusterError,
+    HostNetworkError,
+    NetworkError,
 )
 
 
