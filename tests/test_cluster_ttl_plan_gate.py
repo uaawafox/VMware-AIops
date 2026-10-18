@@ -537,9 +537,9 @@ def dispatched(monkeypatch, vms):
     vms(web, web2, _full_vm("old-01", instance_uuid="x"))
     calls: list = []
     monkeypatch.setattr(plan_executor, "_dispatch",
-                        lambda _si, action, params: calls.append(("do", action, params)) or "ok")
+                        lambda _si, action, params, *_: calls.append(("do", action, params)) or "ok")
     monkeypatch.setattr(plan_executor, "_rollback_dispatch",
-                        lambda _si, action, params: calls.append(("undo", action, params)) or "ok")
+                        lambda _si, action, params, *_: calls.append(("undo", action, params)) or "ok")
     return calls
 
 

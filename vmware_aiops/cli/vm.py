@@ -540,12 +540,27 @@ def migrate_vm(
     dry_run: DryRunOption = False,
 ) -> None:
     """Migrate (vMotion) a VM to another host, optionally with storage vMotion."""
+    from rich.markup import escape
+
+    from vmware_aiops.ops.gate import GateRefusedError
+    from vmware_aiops.ops.vm_gate import compatibility_blockers, migration_compatibility_by_name
     from vmware_aiops.ops.vm_lifecycle import get_vm_info
     from vmware_aiops.ops.vm_lifecycle import migrate_vm as _ops_migrate_vm
 
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, name)
     params = {"to_host": to_host, "to_datastore": to_datastore}
+    # vCenter's own vMotion check (read-only): CPU features, networks, datastores.
+    compat = migration_compatibility_by_name(si, name, to_host, to_datastore)
+    if not compat["checked"]:
+        console.print(f"[yellow]  Compatibility: {escape(compat['reason'])}[/]")
+    for warning in compat.get("warnings", []):
+        console.print(f"[yellow]  Compatibility warning: {escape(warning)}[/]")
+    refusals = compatibility_blockers(compat)
+    if refusals and not dry_run:
+        raise GateRefusedError(f"migrate_vm refused: {refusals[0]}")
+    for blocker in refusals:
+        console.print(f"[red]  {escape(blocker)}[/]")
     if dry_run:
         _dry_run_print(
             target=_resolve_target(target), vm_name=name, operation="migrate_vm",
@@ -587,8 +602,20 @@ def set_vm_ttl(
     dry_run: DryRunOption = False,
 ) -> None:
     """Set a TTL for a VM. The daemon will auto-delete it when time expires (destructive!)."""
-    from vmware_aiops.ops.ttl import preview_ttl, set_ttl
+    from vmware_aiops.ops.step_policy import (
+        TTL_SET_IGNORES,
+        authorize_reached,
+        power_off_if_running,
+    )
+    from vmware_aiops.ops.ttl import measure_ttl, preview_ttl, set_ttl
 
+    si, _ = _get_connection(target, config)
+    radius = measure_ttl(si, vm_name, minutes)
+    # As the MCP tool: a TTL the daemon could never act on is refused now, and the
+    # instance UUID is recorded so expiry deletes only this VM (review 2026-10-18).
+    authorize_reached("set_vm_ttl", {"vm_name": vm_name}, target,
+                      used={"delete_vm"} | power_off_if_running(radius),
+                      ignore_rules=TTL_SET_IGNORES)
     if dry_run:
         _dry_run_print(
             target=_resolve_target(target), vm_name=vm_name, operation="set_vm_ttl",
@@ -600,7 +627,7 @@ def set_vm_ttl(
         )
         return
     _double_confirm(f"设置 TTL ({minutes} 分钟后自动删除)", vm_name, _resolve_target(target))
-    result = set_ttl(vm_name, minutes, target=target)
+    result = set_ttl(vm_name, minutes, target=target, instance_uuid=radius.get("instance_uuid"))
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),
@@ -673,14 +700,16 @@ def restore_vm_clean_slate(
         return
     from vmware_aiops.ops.step_policy import authorize_reached
 
-    authorize_reached("restore_vm_clean_slate",
-                      {"vm_name": vm_name, "snapshot_name": snapshot}, target)
+    params = {"vm_name": vm_name, "snapshot_name": snapshot}
+    authorize_reached("restore_vm_clean_slate", params, target, used={"revert_vm_snapshot"})
     si, _ = _get_connection(target, config)
     before = get_vm_info(si, vm_name)
     _show_state_preview(before, "Clean Slate (恢复基线快照)", vm_name)
     console.print(f"[bold yellow]  Snapshot: {snapshot}[/]")
     _double_confirm(f"恢复基线快照 '{snapshot}'", vm_name, _resolve_target(target))
-    result = clean_slate(si, vm_name, snapshot_name=snapshot)
+    result = clean_slate(si, vm_name, snapshot_name=snapshot,
+                         before_power_off=lambda: authorize_reached(
+                             "restore_vm_clean_slate", params, target, used={"power_off_vm"}))
     console.print(f"[green]{result}[/]")
     _audit.log(
         target=_resolve_target(target),

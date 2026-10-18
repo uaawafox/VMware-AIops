@@ -103,9 +103,9 @@ def world(monkeypatch):
 def dispatched(monkeypatch):
     calls: list = []
     monkeypatch.setattr(plan_executor, "_dispatch",
-                        lambda _si, a, p: calls.append(("do", a)) or "ok")
+                        lambda _si, a, p, *_: calls.append(("do", a)) or "ok")
     monkeypatch.setattr(plan_executor, "_rollback_dispatch",
-                        lambda _si, a, p: calls.append(("undo", a, p)) or "ok")
+                        lambda _si, a, p, *_: calls.append(("undo", a, p)) or "ok")
     return calls
 
 
@@ -282,7 +282,7 @@ def test_a_failed_check_during_rollback_stops_it_with_a_teaching_error(world, di
     """Clean at preview; the world moves; the check before the next step stops the rollback."""
     world["vms"] = [_vm("web-02"), _vm("web-03", snaps=[_snap("pre")])]
 
-    def undo(_si, action, params):
+    def undo(_si, action, params, *_):
         dispatched.append(("undo", action, params))
         world["vms"] = [v for v in world["vms"] if v.name != "web-03"]
         return "ok"

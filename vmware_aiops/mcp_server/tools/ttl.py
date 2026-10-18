@@ -54,13 +54,25 @@ def set_vm_ttl(
         confirm: False (default) returns the blast radius and changes nothing. True applies it.
         target: Optional vCenter/ESXi target name from config.
     """
+    from vmware_aiops.ops.step_policy import (
+        TTL_SET_IGNORES,
+        authorize_reached,
+        power_off_if_running,
+        with_policy_blockers,
+    )
     from vmware_aiops.ops.ttl import measure_ttl
     from vmware_aiops.ops.ttl import set_ttl as _set_ttl
     si = _get_connection(target)
     radius = measure_ttl(si, vm_name, minutes)
+    # What the daemon will be asked at expiry, asked now so a TTL that can never
+    # fire is not scheduled; the daemon asks again (review 2026-10-18).
+    params = {"vm_name": vm_name}
+    used = {"delete_vm"} | power_off_if_running(radius)
     if not confirm:
-        return preview(radius)
+        return preview(with_policy_blockers(radius, "set_vm_ttl", params, target, used=used,
+                                            ignore_rules=TTL_SET_IGNORES))
     refuse_on(radius, "set_vm_ttl")
+    authorize_reached("set_vm_ttl", params, target, used=used, ignore_rules=TTL_SET_IGNORES)
     result = _set_ttl(vm_name, minutes, target=target,
                       instance_uuid=radius["instance_uuid"])
     return {"action": "scheduled", "result": result, "blast_radius": radius}
@@ -139,14 +151,23 @@ def restore_vm_clean_slate(
     from vmware_aiops.ops.vm_gate import did_not_act
     from vmware_aiops.ops.vm_lifecycle import clean_slate
     si = _get_connection(target)
-    from vmware_aiops.ops.step_policy import authorize_reached, with_policy_blockers
+    from vmware_aiops.ops.step_policy import (
+        authorize_reached,
+        power_off_if_running,
+        with_policy_blockers,
+    )
     radius = measure_clean_slate(si, vm_name, snapshot_name)
     params = {"vm_name": vm_name, "snapshot_name": snapshot_name}
     if not confirm:
-        return preview(with_policy_blockers(radius, "restore_vm_clean_slate", params, target))
+        used = {"revert_vm_snapshot"} | power_off_if_running(radius)
+        return preview(with_policy_blockers(radius, "restore_vm_clean_slate", params, target,
+                                            used=used))
     refuse_on(radius, "restore_vm_clean_slate")
-    authorize_reached("restore_vm_clean_slate", params, target)
-    result = clean_slate(si, vm_name, snapshot_name=snapshot_name)
+    authorize_reached("restore_vm_clean_slate", params, target, used={"revert_vm_snapshot"})
+    # The power-off, only if the VM is running when it happens (review 2026-10-18).
+    result = clean_slate(si, vm_name, snapshot_name=snapshot_name,
+                         before_power_off=lambda: authorize_reached(
+                             "restore_vm_clean_slate", params, target, used={"power_off_vm"}))
     if " reverted to snapshot " not in result:
         raise did_not_act("restore_vm_clean_slate", result)
     return {"action": "reverted", "result": result, "blast_radius": radius}

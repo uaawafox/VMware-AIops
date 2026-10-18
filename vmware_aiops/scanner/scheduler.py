@@ -395,7 +395,12 @@ def _run_ttl_check(conn_mgr: ConnectionManager) -> None:
         else:
             _audit_ttl(vm_name, params, "ok",
                    {"result": sanitize(str(result), 500)}, started, "critical")
-        remove_entry(vm_name)
+        try:
+            remove_entry(vm_name)
+        except Exception as exc:  # noqa: BLE001 - one entry must not stop the batch
+            # The next cycle finds the VM gone (or a different VM) and removes it.
+            logger.warning("TTL entry for '%s' not removed this cycle: %s", vm_name, exc)
+            continue
         _last_ttl_outcome = {k: v for k, v in _last_ttl_outcome.items() if k != vm_name}
 
 

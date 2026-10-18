@@ -751,6 +751,12 @@ def migrate_vm(
 #: running now (FeatureRequirementsNotMet for AVX-512 on the lab, 2026-10-17).
 _CPU_FAULTS = ("FeatureRequirementsNotMet", "CpuIncompatible", "CpuCompatibility")
 
+#: What to do about a CPU fault; the migrate preview's compatibility check says it too.
+CPU_MIGRATION_REMEDY = (
+    "Power the VM off and migrate again (a cold migration has no CPU check), "
+    "enable EVC on the cluster, or pick a host with the same CPU generation."
+)
+
 
 def _with_migration_remedy(exc: TaskFailedError) -> TaskFailedError:
     """Put the next step first: the fault text is long and is cut at 500 chars."""
@@ -759,9 +765,7 @@ def _with_migration_remedy(exc: TaskFailedError) -> TaskFailedError:
         return exc
     return TaskFailedError(
         "vMotion refused: the target host's CPU lacks features this running VM uses. "
-        "Power the VM off and migrate again (a cold migration has no CPU check), "
-        "enable EVC on the cluster, or pick a host with the same CPU generation. "
-        f"vCenter said: {text}"
+        f"{CPU_MIGRATION_REMEDY} vCenter said: {text}"
     )
 
 
@@ -772,6 +776,8 @@ def clean_slate(
     si: ServiceInstance,
     vm_name: str,
     snapshot_name: str = "baseline",
+    *,
+    before_power_off: Callable[[], None] | None = None,
 ) -> str:
     """Revert VM to a baseline snapshot (Clean Slate).
 
@@ -783,6 +789,8 @@ def clean_slate(
         si: vSphere ServiceInstance.
         vm_name: Name of the VM to revert.
         snapshot_name: Snapshot to revert to (default: "baseline").
+        before_power_off: Runs just before the power-off and raises to stop it
+            (the caller's power_off_vm check), as in ``delete_vm``.
     """
     vm = _require_vm(si, vm_name)
     # Resolved before anything changes: a missing or ambiguous snapshot used to
@@ -793,6 +801,8 @@ def clean_slate(
 
     # Power off if running — revert is more predictable on a powered-off VM
     if vm.runtime.powerState == vim.VirtualMachine.PowerState.poweredOn:
+        if before_power_off is not None:
+            before_power_off()
         task = vm.PowerOff()
         _wait_for_task(task)
 

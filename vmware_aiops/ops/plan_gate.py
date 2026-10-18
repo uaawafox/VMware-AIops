@@ -423,8 +423,8 @@ def _rollback_power_off_refusal(
     params = step.get("params") or {}
     try:
         vm = find_vm_by_name(si, params.get("vm_name"))
-        if vm is None:
-            return None
+        if vm is None or vm.config.instanceUuid != params.get("instance_uuid"):
+            return None  # the executor refuses it as a different VM, with that reason
         running = vm.runtime.powerState == vim.VirtualMachine.PowerState.poweredOn
     except Exception:  # noqa: BLE001 - unreadable: ask, never power off unchecked
         running = True
@@ -432,6 +432,21 @@ def _rollback_power_off_refusal(
         return None
     return tool_refusal("power_off_vm", params, target, label=_step_label(step),
                         record=record, audit_params=redact(params))
+
+
+def rollback_power_off_check(target: str | None) -> Callable[[dict[str, Any]], None]:
+    """The ``power_off_check`` for ``rollback_plan``: power_off_vm, recorded.
+
+    Called by the executor after its identity check and just before it powers
+    off a VM the plan created, so nothing changes between the check and the act.
+    """
+    def check(params: dict[str, Any]) -> None:
+        step = {"action": "delete_vm", "rollback": True, "params": params}
+        refused = tool_refusal("power_off_vm", params, target, label=_step_label(step),
+                               record=True, audit_params=redact(params))
+        if refused:
+            raise GateRefusedError(refused)
+    return check
 
 
 def _follow_ups(action: Any, params: dict[str, Any]) -> set[str]:
@@ -472,10 +487,7 @@ def check_step(
     if action in NON_DESTRUCTIVE_ACTIONS:
         return
     if step.get("rollback") and action == "delete_vm":
-        refused = _rollback_power_off_refusal(si, step, target, record=True)
-        if refused:
-            raise GateRefusedError(refused)
-        return
+        return  # its power-off is checked by rollback_power_off_check, just before it
     label = f"{_step_label(step)}, checked just before it would run,"
     if action in REFUSED_ACTIONS:
         raise GateRefusedError(f"{label} refused: {_refused_blocker(action)}")

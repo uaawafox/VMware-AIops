@@ -8,7 +8,13 @@ from vmware_policy import vmware_tool
 from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops.gate import preview, refuse_on
 from vmware_aiops.ops.plan_executor import apply_plan, rollback_plan
-from vmware_aiops.ops.plan_gate import check_step, measure_apply, measure_rollback, redact_plan
+from vmware_aiops.ops.plan_gate import (
+    check_step,
+    measure_apply,
+    measure_rollback,
+    redact_plan,
+    rollback_power_off_check,
+)
 from vmware_aiops.ops.planner import create_plan, list_plans
 
 
@@ -183,7 +189,8 @@ def rollback_vm_plan(
     refuse_on(radius, "rollback_vm_plan")
     si = _get_connection(target)
     step_check = functools.partial(check_step, target=target)
-    result = rollback_plan(si, plan_id, step_check=step_check)
+    result = rollback_plan(si, plan_id, step_check=step_check,
+                           power_off_check=rollback_power_off_check(target))
     return {**result, **_rollback_stop_hint(result), **_failed_rollback(result),
             "blast_radius": radius}
 

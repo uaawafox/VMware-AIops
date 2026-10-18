@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +32,20 @@ _TTL_FILE = Path.home() / ".vmware-aiops" / "ttl.json"
 # drop each other's entries. The daemon is another process; the atomic write keeps
 # it from ever reading a half-written file.
 _STORE_LOCK = threading.Lock()
+
+
+@contextmanager
+def _store_locked() -> Iterator[None]:
+    """Serialise read-modify-write of the TTL store in this process and across processes.
+
+    set_vm_ttl runs in the MCP server or CLI, removal in the daemon: separate
+    processes, so the thread lock alone let one side's write drop the other's
+    entry (review 2026-10-18). Same lock file scheme as the image registry.
+    """
+    from vmware_aiops._filelock import locked
+
+    with _STORE_LOCK, locked(_TTL_FILE.with_name(_TTL_FILE.name + ".lock"), timeout=10.0):
+        yield
 
 
 @dataclass
@@ -104,7 +120,7 @@ def set_ttl(
         target=target,
         instance_uuid=instance_uuid,
     )
-    with _STORE_LOCK:
+    with _store_locked():
         store = _load_ttl_store()
         store[vm_name] = asdict(entry)
         _save_ttl_store(store)
@@ -138,7 +154,7 @@ def preview_ttl(vm_name: str, minutes: int, target: str | None = None) -> str:
 
 def cancel_ttl(vm_name: str) -> str:
     """Cancel a VM's TTL. Returns confirmation message."""
-    with _STORE_LOCK:
+    with _store_locked():
         store = _load_ttl_store()
         if vm_name not in store:
             return f"No TTL registered for VM '{vm_name}'."
@@ -216,7 +232,7 @@ def verify_ttl_identity(si: ServiceInstance, entry: TTLEntry) -> None:
 
 def remove_entry(vm_name: str) -> None:
     """Remove a TTL entry after deletion (called by scheduler)."""
-    with _STORE_LOCK:
+    with _store_locked():
         store = _load_ttl_store()
         if vm_name in store:
             del store[vm_name]

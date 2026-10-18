@@ -75,7 +75,11 @@ def _created_instance_uuid(si: ServiceInstance, vm_name: str) -> str | None:
     return uuid if isinstance(uuid, str) and uuid else None
 
 
-def _delete_created_vm(si: ServiceInstance, params: dict[str, Any]) -> str:
+def _delete_created_vm(
+    si: ServiceInstance,
+    params: dict[str, Any],
+    power_off_check: Callable[[dict[str, Any]], None] | None = None,
+) -> str:
     """Delete the VM a plan step created — only if it is still that VM.
 
     The name alone is not identity: the VM could have been deleted and another
@@ -102,12 +106,21 @@ def _delete_created_vm(si: ServiceInstance, params: dict[str, Any]) -> str:
             f"this plan created had {recorded}. It is a different VM; check it in vCenter."
         )
     if vm.runtime.powerState == vim.VirtualMachine.PowerState.poweredOn:
+        # The power-off is power_off_vm's work; asked here, after the identity
+        # check and just before it happens (reviews 2026-10-18).
+        if power_off_check is not None:
+            power_off_check(params)
         _wait_for_task(vm.PowerOff())
     _wait_for_task(vm.Destroy_Task())
     return f"VM '{name}' (instance UUID {recorded}) deleted."
 
 
-def _rollback_dispatch(si: ServiceInstance, action: str, params: dict[str, Any]) -> str:
+def _rollback_dispatch(
+    si: ServiceInstance,
+    action: str,
+    params: dict[str, Any],
+    power_off_check: Callable[[dict[str, Any]], None] | None = None,
+) -> str:
     """Rollback of a step this plan itself executed.
 
     Undoing a ``create_vm`` / clone / deploy deletes the VM that step created,
@@ -116,7 +129,7 @@ def _rollback_dispatch(si: ServiceInstance, action: str, params: dict[str, Any])
     action goes through ``_dispatch``.
     """
     if action == "delete_vm":
-        return _delete_created_vm(si, params)
+        return _delete_created_vm(si, params, power_off_check)
     return _dispatch(si, action, params)
 
 
@@ -454,18 +467,27 @@ def rollback_plan(
     si: ServiceInstance,
     plan_id: str,
     step_check: Callable[[ServiceInstance, dict[str, Any]], None] | None = None,
+    *,
+    power_off_check: Callable[[dict[str, Any]], None],
 ) -> dict:
-    """Roll back a failed plan; refused while another call applies or rolls it back."""
+    """Roll back a failed plan; refused while another call applies or rolls it back.
+
+    ``power_off_check`` runs just before a rollback powers off a VM it is about
+    to delete, given that step's params; it raises ``GateRefusedError`` to stop.
+    Required: ``check_step`` does not cover that power-off, so a caller that
+    forgot it would power VMs off unchecked (review 2026-10-18).
+    """
     with _plan_claimed(plan_id) as claimed:
         if not claimed:
             return _busy(plan_id)
-        return _rollback_plan(si, plan_id, step_check)
+        return _rollback_plan(si, plan_id, step_check, power_off_check)
 
 
 def _rollback_plan(
     si: ServiceInstance,
     plan_id: str,
     step_check: Callable[[ServiceInstance, dict[str, Any]], None] | None = None,
+    power_off_check: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict:
     """Rollback already-executed steps of a failed plan in reverse order.
 
@@ -527,7 +549,7 @@ def _rollback_plan(
                 return _stop_refused(plan, step, rollback_results, exc)
 
         try:
-            result = _rollback_dispatch(si, rollback_action, rollback_params)
+            result = _rollback_dispatch(si, rollback_action, rollback_params, power_off_check)
             step["status"] = "rolled_back"
             entry = {
                 "step_index": step["index"],

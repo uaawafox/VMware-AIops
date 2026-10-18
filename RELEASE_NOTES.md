@@ -11,6 +11,20 @@
   rows); a scan keeps rows on datastores it failed to browse (its own or legacy ones) and drops this target's rows
   on datastores that no longer exist. A cache that cannot be written no longer fails the scan: the images come back
   with a `cache_note`, as in vmware-storage.
+* **Each call is checked for what it will do, at the moment it does it.** `restore_vm_clean_slate` asks about
+  `power_off_vm` only when it actually powers the VM off; `provision_vm_guest` asks about the guest tools its step
+  types use (an exec-only provision is not refused by a deny on `upload_vm_guest_file`); a plan rollback asks about
+  the power-off after confirming it is the VM the plan created, just before powering it off.
+* **`set_vm_ttl` is checked as the deletion it schedules:** the preview lists a deny on `delete_vm` (and on
+  `power_off_vm` for a running VM), and `confirm=True` refuses it, instead of scheduling a TTL the daemon can never
+  act on. The daemon still asks again at expiry.
+* **`migrate_vm` previews run vCenter's own vMotion compatibility check** (`CheckMigrate_Task`, read-only): its
+  errors (CPU features, devices, networks, datastores) become blockers, with the CPU-feature remedy where it applies,
+  so a move vCenter would refuse is refused in the preview and before the CLI asks for confirmation; warnings are
+  shown and do not block. On a standalone ESXi host, or when the check cannot run, the preview says "not checked"
+  and does not block (vCenter checks again when the move starts). Plan migrate steps get the same check.
+* The TTL store takes the same cross-process lock as the image cache (`set_vm_ttl` and the daemon run in separate
+  processes).
 
 ## v2.4.1 — fixes from the 2026-10-17 real-hardware read and write rounds
 

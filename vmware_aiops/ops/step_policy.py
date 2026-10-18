@@ -73,8 +73,12 @@ def tool_refusal(
     label: str,
     record: bool,
     audit_params: dict[str, Any] | None = None,
+    ignore_rules: frozenset[str] = frozenset(),
 ) -> str | None:
     """Ask vmware-policy about ``tool``; the refusal message, or ``None``.
+
+    ``ignore_rules`` names rules that do not apply to this question, e.g. the
+    maintenance window when asking now about work that runs later.
 
     ``record`` files a ``denied`` (or ``error``) row under ``tool``, as the tool
     itself would: set when the work is about to run, not on a preview. A policy
@@ -87,6 +91,8 @@ def tool_refusal(
         guard(SKILL, tool, params, risk_level=risk, target=target or "")
         return None
     except PolicyDenied as exc:
+        if (exc.result.rule or "") in ignore_rules:
+            return None
         rule = sanitize(exc.result.rule or "", 100)
         reason = sanitize(exc.result.reason or "", 300).rstrip(". ")
         if rule == "maintenance_window":
@@ -118,6 +124,8 @@ def authorize_reached(
     params: dict[str, Any],
     target: str | None,
     used: Iterable[str] | None = None,
+    *,
+    ignore_rules: frozenset[str] = frozenset(),
 ) -> None:
     """Refuse ``tool`` if the policy denies a tool it is about to run.
 
@@ -130,7 +138,7 @@ def authorize_reached(
     """
     for inner in _inner_tools(tool, used):
         refused = tool_refusal(inner, params, target, label=f"{tool} (runs {inner})",
-                               record=True)
+                               record=True, ignore_rules=ignore_rules)
         if refused:
             raise GateRefusedError(refused)
 
@@ -145,6 +153,8 @@ def with_policy_blockers(
     params: dict[str, Any],
     target: str | None,
     used: Iterable[str] | None = None,
+    *,
+    ignore_rules: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """``radius`` plus a blocker for each tool ``authorize_reached`` would refuse.
 
@@ -156,11 +166,45 @@ def with_policy_blockers(
         message
         for inner in _inner_tools(tool, used)
         if (message := tool_refusal(inner, params, target, label=f"{tool} (runs {inner})",
-                                    record=False))
+                                    record=False, ignore_rules=ignore_rules))
     ]
     if not refusals:
         return radius
     return {**radius, "blockers": [*(radius.get("blockers") or []), *refusals]}
+
+
+#: Asked when a TTL is set: the deletion runs later, so the maintenance window is
+#: the daemon's question at expiry, not this one (review 2026-10-18).
+TTL_SET_IGNORES = frozenset({"maintenance_window"})
+
+
+def power_off_if_running(radius: dict[str, Any]) -> set[str]:
+    """``{"power_off_vm"}`` when a measured VM is running or its state is unread."""
+    state = radius.get("power_state")
+    return {"power_off_vm"} if state is None or state == "poweredOn" else set()
+
+
+#: Which guest tools each provision step type runs (exec and service steps run
+#: through guest_exec_with_output).
+_PROVISION_STEP_TOOLS: dict[str, frozenset[str]] = {
+    "exec": frozenset({"run_vm_guest_command", "run_vm_guest_command_with_output"}),
+    "service": frozenset({"run_vm_guest_command", "run_vm_guest_command_with_output"}),
+    "upload": frozenset({"upload_vm_guest_file"}),
+}
+
+
+def used_by_provision(steps: Any) -> set[str] | None:
+    """The guest tools these provision steps run; ``None`` (check all) if unclear."""
+    if not isinstance(steps, list) or not steps:
+        return None
+    used: set[str] = set()
+    for step in steps:
+        kind = step.get("type") if isinstance(step, dict) else None
+        tools = _PROVISION_STEP_TOOLS.get(kind) if isinstance(kind, str) else None
+        if tools is None:
+            return None  # an unknown step: fail closed (the measurement refuses it too)
+        used |= tools
+    return used
 
 
 def used_by_options(
