@@ -23,7 +23,7 @@ dependencies = [
     # Read-only cluster-health triage (summary + HTML snapshot) is owned by
     # vmware-monitor; AIops delegates to it so a conversation with the AIops
     # entry point can produce the same report without duplicating the code.
-    "vmware-monitor>=2.3.1,<3.0",  # attention status floor + role-less login (AIops#47)
+    "vmware-monitor>=2.4.2,<3.0",  # unreadable host != down, login refused -> role error
 ]
 
 
