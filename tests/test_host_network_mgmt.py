@@ -663,3 +663,13 @@ def test_set_service_preview_reports_refusals(monkeypatch):
     out = hnm.set_vmk_service(object(), host.name, "vmk3", "vmotion", True)
     assert out["blast_radius"]["unmeasured"] == ["service_map"]
     assert mgr.calls == []
+
+
+def test_unreadable_state_is_not_called_unreachable():
+    # Lab 2026-10-18: an account with Read-only on one VM sees the host with no
+    # connectionState; "vCenter cannot reach this host ... reconnect" was wrong.
+    from vmware_aiops.ops.host_network_mgmt import _unread_note
+
+    note = _unread_note("unknown")
+    assert "cannot read" in note and "reconnect" not in note.lower()
+    assert "reconnect" in _unread_note("notResponding").lower()

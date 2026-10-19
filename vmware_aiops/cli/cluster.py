@@ -41,7 +41,13 @@ def cluster_info_cmd(
         if k == "hosts":
             console.print(f"  [cyan]hosts:[/]")
             for h in v:
-                state_style = "green" if h["connection_state"] == "connected" else "red"
+                # Red only for a host vCenter reports as down; an unreadable
+                # state is unknown, not an outage.
+                state_style = {
+                    "connected": "green",
+                    "disconnected": "red",
+                    "notResponding": "red",
+                }.get(str(h["connection_state"]), "yellow")
                 maint = " [yellow](maintenance)[/]" if h["maintenance_mode"] else ""
                 console.print(
                     f"    - {h['name']} [{state_style}]{h['connection_state']}[/]{maint}"

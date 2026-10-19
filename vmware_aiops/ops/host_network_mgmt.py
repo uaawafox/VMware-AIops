@@ -100,6 +100,13 @@ def _require_host_network(host: vim.HostSystem, host_name: str):
     """
     net = getattr(getattr(host, "config", None), "network", None)
     if net is None:
+        if _connection_state(host) == "unknown":
+            raise HostNetworkError(
+                f"This account cannot read host '{host_name}' (its state is not "
+                f"readable), so its VMkernel adapters could not be read - this is "
+                f"not a report that it has none. Grant Read-only on the host, or "
+                f"use an account that can read it, then retry."
+            )
         raise HostNetworkError(
             f"vCenter has no network configuration for host '{host_name}' "
             f"(connectionState={sanitize(_connection_state(host), 40)}), so its "
@@ -182,6 +189,15 @@ _LIST_PROPS = ["name", "runtime.connectionState", "config.network.vnic"]
 
 def _unread_note(state: str) -> str:
     """Why this host's adapters are not a measurement, in the row that says so."""
+    if state == "unknown":
+        # connectionState itself was unreadable: the account cannot read this
+        # host (e.g. Read-only on one VM only, lab 2026-10-18). Not "unreachable".
+        return (
+            "This account cannot read this host's state, so its VMkernel adapters "
+            "were not read (reachable=false here means not read, not that vCenter "
+            "lost the host). An empty list is NOT a report that it has none - "
+            "grant Read-only on the host and re-run."
+        )
     if state != _CONNECTED:
         return (
             f"vCenter cannot reach this host (connectionState={sanitize(state, 40)}), "
