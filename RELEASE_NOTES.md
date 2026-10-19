@@ -1,3 +1,22 @@
+## v2.4.2 — a login refused for lack of a role says so; an unreadable host is not called unreachable (2026-10-19)
+
+Needs vmware-monitor 2.4.2 (now the floor). Found on a vCenter 8.0.3 lab with two restricted SSO accounts
+(follow-up to AIops#47).
+
+* **A login vCenter refuses with `NoPermission` gets the role error, not the raw fault.** For an account with no
+  permission anywhere, vCenter refuses the login itself (`System.View` on the root folder), so the post-login
+  no-role check never ran and `doctor` and every tool showed the raw fault with a connectivity hint. It now raises
+  the no-role error: the "no vSphere role / Global Permissions" remedy only for a vCenter target and `System.View`;
+  an ESXi target or another privilege gets a neutral text naming the (sanitized) privilege. A wrong password
+  (`InvalidLogin`) is unchanged. Same text as vmware-monitor.
+* **vmk tools and `cluster info` no longer call an unreadable host unreachable.** When the account cannot read a
+  host's connection state, `list_host_vmks` rows and the vmk write tools' refusal say the account cannot read the
+  host (`reachable: false` means "not read"), instead of advising a reconnect. `cluster info` colours the state
+  yellow, not red.
+* **From vmware-monitor 2.4.2 (through `get_cluster_health_summary` / `get_cross_vcenter_attention`):** a host this
+  account cannot read is counted `hosts_unreadable` with a warning issue `host_unreadable`, not ranked as a
+  critical `host_down`.
+
 ## Unreleased — follow-ups to the 2.4.1 review
 
 * **Previews show policy refusals.** `restore_vm_clean_slate`, `provision_vm_guest` and
