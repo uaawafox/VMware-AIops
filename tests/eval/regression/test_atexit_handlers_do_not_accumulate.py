@@ -20,8 +20,9 @@ that registered its own handler would pass with the production one deleted.
 from __future__ import annotations
 
 import gc
+import itertools
 import weakref
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -44,9 +45,13 @@ def _target(name: str = "vcenter-prod") -> TargetConfig:
 
 
 def _dead_si(*_a, **_kw):
-    """An SI whose liveness probe says dead, so the next connect() evicts it."""
+    """An SI that is alive at login and dead from then on, so the next connect()
+    evicts it. Dead from the start would be refused at login as a role-less
+    account (AIops#47), which is a different path."""
     si = MagicMock()
-    si.content.sessionManager.currentSession = None
+    type(si.content.sessionManager).currentSession = PropertyMock(
+        side_effect=itertools.chain([object()], itertools.repeat(None))
+    )
     return si
 
 
@@ -91,11 +96,7 @@ def test_repeated_eviction_does_not_pin_every_session() -> None:
          patch("pyVim.connect.Disconnect"):
         for _ in range(20):
             seen.append(weakref.ref(mgr.connect("vcenter-prod")))
-
-    live = mgr._connections.pop("vcenter-prod", None)
-    if live is not None:
-        _release_si(live)
-        del live
+        mgr.disconnect("vcenter-prod")  # the last one is still cached
     gc.collect()
 
     pinned = sum(1 for r in seen if r() is not None)

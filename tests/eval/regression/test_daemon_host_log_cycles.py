@@ -178,7 +178,7 @@ def test_the_scheduler_shares_one_cursor_store_across_every_cycle(monkeypatch, t
 
     class _Scheduler:
         def add_job(self, func, **kw):
-            if func is scheduler._run_scan:
+            if kw["id"] == "vmware_scan":  # the job runs _run_scan in its own session scope
                 jobs.append(kw["args"])
 
         def start(self):

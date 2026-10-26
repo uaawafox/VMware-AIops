@@ -6,23 +6,23 @@
         "broken_chains": [],
         "entry_points": [
           "list_vcenter_alarms",
-          "cluster_create",
-          "cluster_add_host",
-          "scan_datastore_images",
+          "create_cluster",
+          "add_cluster_host",
+          "scan_all_datastore_images",
           "deploy_vm_from_template",
           "batch_deploy_from_spec",
-          "vm_guest_provision",
+          "provision_vm_guest",
           "list_dvs_portgroups",
           "create_dvs_portgroup",
           "list_host_vmks",
-          "vm_create_plan",
-          "vm_list_plans",
-          "cluster_health_summary",
-          "cross_vcenter_attention",
-          "vm_list_ttl",
-          "vm_create",
-          "vm_create_snapshot",
-          "vm_task_status"
+          "create_vm_plan",
+          "list_vm_plans",
+          "get_cluster_health_summary",
+          "get_cross_vcenter_attention",
+          "list_vm_ttls",
+          "create_vm",
+          "create_vm_snapshot",
+          "get_vm_task_status"
         ],
         "reachable_on_surface": 52,
         "reachable_only_via_description": 2,
@@ -40,12 +40,12 @@
         "broken_chains": [],
         "entry_points": [
           "list_vcenter_alarms",
-          "scan_datastore_images",
-          "vm_list_plans",
-          "cluster_health_summary",
-          "cross_vcenter_attention",
-          "vm_list_ttl",
-          "vm_task_status"
+          "scan_all_datastore_images",
+          "list_vm_plans",
+          "get_cluster_health_summary",
+          "get_cross_vcenter_attention",
+          "list_vm_ttls",
+          "get_vm_task_status"
         ],
         "reachable_on_surface": 5,
         "reachable_only_via_description": 1,
@@ -215,7 +215,7 @@
           "deploy_linked_clone": 422,
           "deploy_vm_from_ova": 402,
           "list_host_vmks": 422,
-          "vmk_ping": 461
+          "ping_from_vmk": 461
         },
         "manifest_tokens": 15778,
         "mean_tokens_per_tool": 263.0,
@@ -230,13 +230,13 @@
     "parameter_documentation_coverage": {
       "detail": {
         "undocumented_by_tool": {
-          "vm_create_snapshot": [
+          "create_vm_snapshot": [
             "description",
             "snapshot_name"
           ]
         },
         "value_set_candidates": {
-          "cluster_configure.drs_behavior": [
+          "configure_cluster.drs_behavior": [
             "fullyAutomated",
             "manual",
             "partiallyAutomated"
@@ -263,11 +263,11 @@
           "list_host_vmks": 422,
           "remove_host_vmk": 372,
           "set_vmk_service": 400,
-          "vm_create": 402,
-          "vm_guest_download": 351,
-          "vm_guest_exec": 355,
-          "vm_guest_provision": 359,
-          "vmk_ping": 461
+          "create_vm": 402,
+          "download_vm_guest_file": 351,
+          "run_vm_guest_command": 355,
+          "provision_vm_guest": 359,
+          "ping_from_vmk": 461
         }
       },
       "maximum": 60,
@@ -287,37 +287,37 @@
           "batch_clone_vms",
           "batch_deploy_from_spec",
           "batch_linked_clone_vms",
-          "cluster_add_host",
-          "cluster_configure",
-          "cluster_create",
-          "cluster_delete",
-          "cluster_remove_host",
+          "add_cluster_host",
+          "configure_cluster",
+          "create_cluster",
+          "delete_cluster",
+          "remove_cluster_host",
           "convert_vm_to_template",
           "deploy_linked_clone",
           "deploy_vm_from_ova",
           "deploy_vm_from_template",
           "reset_vcenter_alarm",
-          "vm_apply_plan",
-          "vm_cancel_ttl",
-          "vm_clean_slate",
-          "vm_clone",
-          "vm_create",
-          "vm_create_plan",
-          "vm_create_snapshot",
-          "vm_delete",
-          "vm_delete_snapshot",
-          "vm_guest_download",
-          "vm_guest_exec",
-          "vm_guest_exec_output",
-          "vm_guest_provision",
-          "vm_guest_upload",
-          "vm_migrate",
-          "vm_power_off",
-          "vm_power_on",
-          "vm_reconfigure",
-          "vm_revert_snapshot",
-          "vm_rollback_plan",
-          "vm_set_ttl"
+          "apply_vm_plan",
+          "cancel_vm_ttl",
+          "restore_vm_clean_slate",
+          "clone_vm",
+          "create_vm",
+          "create_vm_plan",
+          "create_vm_snapshot",
+          "delete_vm",
+          "delete_vm_snapshot",
+          "download_vm_guest_file",
+          "run_vm_guest_command",
+          "run_vm_guest_command_with_output",
+          "provision_vm_guest",
+          "upload_vm_guest_file",
+          "migrate_vm",
+          "power_off_vm",
+          "power_on_vm",
+          "reconfigure_vm",
+          "revert_vm_snapshot",
+          "rollback_vm_plan",
+          "set_vm_ttl"
         ]
       },
       "maximum": 10891,
@@ -383,14 +383,14 @@
           "create_drs_rule": [
             "when"
           ],
-          "datastore_investigation_bundle": [
+          "investigate_datastore": [
             "what"
           ],
           "delete_drs_rule": [
             "next_hop",
             "when"
           ],
-          "host_investigation_bundle": [
+          "investigate_host": [
             "what"
           ],
           "list_drs_rules": [
@@ -400,7 +400,7 @@
           "list_dvs_portgroups": [
             "gotcha"
           ],
-          "vmk_ping": [
+          "ping_from_vmk": [
             "gotcha",
             "next_hop"
           ]

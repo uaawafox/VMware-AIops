@@ -1,7 +1,7 @@
 """The confirmation gate (HLD §7, revised 2026-09-16) on six more destructive tools.
 
-``cluster_delete``, ``cluster_remove_host``, ``vm_set_ttl``, ``vm_clean_slate``,
-``vm_apply_plan`` and ``vm_rollback_plan`` each take ``confirm: bool = False``:
+``delete_cluster``, ``remove_cluster_host``, ``set_vm_ttl``, ``restore_vm_clean_slate``,
+``apply_vm_plan`` and ``rollback_vm_plan`` each take ``confirm: bool = False``:
 
 * L2 — a bare call previews and calls no write API.
 * L1 — the preview and the acting response both carry ``blast_radius``.
@@ -32,8 +32,8 @@ from vmware_aiops.ops import cluster_mgmt, inventory, plan_executor, planner, tt
 ON = vim.VirtualMachine.PowerState.poweredOn
 OFF = vim.VirtualMachine.PowerState.poweredOff
 GATED = (
-    "cluster_delete", "cluster_remove_host", "vm_set_ttl",
-    "vm_clean_slate", "vm_apply_plan", "vm_rollback_plan",
+    "delete_cluster", "remove_cluster_host", "set_vm_ttl",
+    "restore_vm_clean_slate", "apply_vm_plan", "rollback_vm_plan",
 )
 
 
@@ -77,9 +77,9 @@ def test_schema_defaults_confirm_to_false(name):
 
 
 _MODULES = {
-    "cluster_delete": cluster_tools, "cluster_remove_host": cluster_tools,
-    "vm_set_ttl": ttl_tools, "vm_clean_slate": ttl_tools,
-    "vm_apply_plan": plan_tools, "vm_rollback_plan": plan_tools,
+    "delete_cluster": cluster_tools, "remove_cluster_host": cluster_tools,
+    "set_vm_ttl": ttl_tools, "restore_vm_clean_slate": ttl_tools,
+    "apply_vm_plan": plan_tools, "rollback_vm_plan": plan_tools,
 }
 
 
@@ -151,12 +151,12 @@ def world(monkeypatch):
     return World()
 
 
-# ─── cluster_delete ───────────────────────────────────────────────────────────
+# ─── delete_cluster ───────────────────────────────────────────────────────────
 
 
 def test_cluster_delete_bare_call_previews_and_destroys_nothing(world):
     c = world.install(_cluster())
-    out = cluster_tools.cluster_delete("lab")
+    out = cluster_tools.delete_cluster("lab")
     c.Destroy_Task.assert_not_called()
     assert out["action"] == "preview"
 
@@ -164,7 +164,7 @@ def test_cluster_delete_bare_call_previews_and_destroys_nothing(world):
 def test_cluster_delete_preview_states_the_blast_radius(world):
     world.install(_cluster(hosts=[_host("esx-01", vms=[_vm("a", ON), _vm("b")]),
                                   _host("esx-02", vms=[_vm("c")])]))
-    br = cluster_tools.cluster_delete("lab")["blast_radius"]
+    br = cluster_tools.delete_cluster("lab")["blast_radius"]
     assert br["cluster"] == "lab" and br["cluster_id"] == "domain-c7"
     assert br["host_count"] == 2 and br["hosts"] == ["esx-01", "esx-02"]
     assert br["vm_count"] == 3 and br["vms"] == ["a", "b", "c"]
@@ -174,7 +174,7 @@ def test_cluster_delete_preview_states_the_blast_radius(world):
 
 def test_cluster_delete_confirm_destroys_once_and_reports(world):
     c = world.install(_cluster())
-    out = cluster_tools.cluster_delete("lab", confirm=True)
+    out = cluster_tools.delete_cluster("lab", confirm=True)
     c.Destroy_Task.assert_called_once()
     assert out["action"] == "deleted"
     assert out["blast_radius"]["host_count"] == 0
@@ -182,25 +182,25 @@ def test_cluster_delete_confirm_destroys_once_and_reports(world):
 
 def test_cluster_delete_with_hosts_is_a_blocker_and_refuses(world):
     c = world.install(_cluster(hosts=[_host("esx-01")]))
-    br = cluster_tools.cluster_delete("lab")["blast_radius"]
-    assert any("cluster_remove_host" in b for b in br["blockers"])
-    out = cluster_tools.cluster_delete("lab", confirm=True)
+    br = cluster_tools.delete_cluster("lab")["blast_radius"]
+    assert any("remove_cluster_host" in b for b in br["blockers"])
+    out = cluster_tools.delete_cluster("lab", confirm=True)
     c.Destroy_Task.assert_not_called()
-    assert "esx-01" in out["error"] and "cluster_remove_host" in out["error"]
+    assert "esx-01" in out["error"] and "remove_cluster_host" in out["error"]
 
 
 def test_cluster_delete_with_vms_is_a_blocker(world):
     world.install(_cluster(hosts=[_host("esx-01", vms=[_vm("a")])]))
-    br = cluster_tools.cluster_delete("lab")["blast_radius"]
+    br = cluster_tools.delete_cluster("lab")["blast_radius"]
     assert any("1 VM" in b for b in br["blockers"])
 
 
 def test_cluster_delete_unreadable_hosts_refuses(world):
     c = world.install(_cluster())
     type(c).host = property(_unreadable)
-    preview = cluster_tools.cluster_delete("lab")
+    preview = cluster_tools.delete_cluster("lab")
     assert "hosts" in preview["blast_radius"]["unmeasured"]
-    out = cluster_tools.cluster_delete("lab", confirm=True)
+    out = cluster_tools.delete_cluster("lab", confirm=True)
     c.Destroy_Task.assert_not_called()
     assert "could not read hosts" in out["error"]
 
@@ -209,30 +209,30 @@ def test_cluster_delete_unreadable_vm_list_refuses(world):
     h = _host("esx-01")
     type(h).vm = property(_unreadable)
     c = world.install(_cluster(hosts=[h]))
-    out = cluster_tools.cluster_delete("lab", confirm=True)
+    out = cluster_tools.delete_cluster("lab", confirm=True)
     c.Destroy_Task.assert_not_called()
     assert "error" in out
 
 
 def test_cluster_delete_unknown_cluster_teaches(world):
     world.install(_cluster())
-    out = cluster_tools.cluster_delete("nope")
+    out = cluster_tools.delete_cluster("nope")
     assert "not found" in out["error"]
 
 
-# ─── cluster_remove_host ──────────────────────────────────────────────────────
+# ─── remove_cluster_host ──────────────────────────────────────────────────────
 
 
 def test_remove_host_bare_call_previews_and_moves_nothing(world):
     c = world.install(_cluster(hosts=[_host()]))
-    out = cluster_tools.cluster_remove_host("lab", "esx-01")
+    out = cluster_tools.remove_cluster_host("lab", "esx-01")
     c.parent.hostFolder.MoveIntoFolder_Task.assert_not_called()
     assert out["action"] == "preview"
 
 
 def test_remove_host_preview_states_the_blast_radius(world):
     world.install(_cluster(hosts=[_host(vms=[_vm("a"), _vm("b")])]))
-    br = cluster_tools.cluster_remove_host("lab", "esx-01")["blast_radius"]
+    br = cluster_tools.remove_cluster_host("lab", "esx-01")["blast_radius"]
     assert br["host"] == "esx-01" and br["host_id"] == "host-esx-01"
     assert br["cluster"] == "lab"
     assert br["maintenance_mode"] is True
@@ -243,7 +243,7 @@ def test_remove_host_preview_states_the_blast_radius(world):
 
 def test_remove_host_confirm_moves_once_and_reports(world):
     c = world.install(_cluster(hosts=[_host()]))
-    out = cluster_tools.cluster_remove_host("lab", "esx-01", confirm=True)
+    out = cluster_tools.remove_cluster_host("lab", "esx-01", confirm=True)
     c.parent.hostFolder.MoveIntoFolder_Task.assert_called_once()
     assert out["action"] == "removed"
     assert out["blast_radius"]["host"] == "esx-01"
@@ -251,17 +251,17 @@ def test_remove_host_confirm_moves_once_and_reports(world):
 
 def test_remove_host_not_in_maintenance_is_a_blocker(world):
     c = world.install(_cluster(hosts=[_host(maintenance=False)]))
-    assert cluster_tools.cluster_remove_host("lab", "esx-01")["blast_radius"]["blockers"]
-    out = cluster_tools.cluster_remove_host("lab", "esx-01", confirm=True)
+    assert cluster_tools.remove_cluster_host("lab", "esx-01")["blast_radius"]["blockers"]
+    out = cluster_tools.remove_cluster_host("lab", "esx-01", confirm=True)
     c.parent.hostFolder.MoveIntoFolder_Task.assert_not_called()
     assert "maintenance mode" in out["error"]
 
 
 def test_remove_host_with_powered_on_vms_is_a_blocker(world):
     c = world.install(_cluster(hosts=[_host(vms=[_vm("a", ON), _vm("b")])]))
-    br = cluster_tools.cluster_remove_host("lab", "esx-01")["blast_radius"]
+    br = cluster_tools.remove_cluster_host("lab", "esx-01")["blast_radius"]
     assert br["powered_on_vm_count"] == 1
-    out = cluster_tools.cluster_remove_host("lab", "esx-01", confirm=True)
+    out = cluster_tools.remove_cluster_host("lab", "esx-01", confirm=True)
     c.parent.hostFolder.MoveIntoFolder_Task.assert_not_called()
     assert "powered on" in out["error"]
 
@@ -270,7 +270,7 @@ def test_remove_host_unreadable_maintenance_mode_refuses(world):
     h = _host()
     type(h.runtime).inMaintenanceMode = property(_unreadable)
     c = world.install(_cluster(hosts=[h]))
-    out = cluster_tools.cluster_remove_host("lab", "esx-01", confirm=True)
+    out = cluster_tools.remove_cluster_host("lab", "esx-01", confirm=True)
     c.parent.hostFolder.MoveIntoFolder_Task.assert_not_called()
     assert "maintenance_mode" in out["error"]
 
@@ -279,21 +279,21 @@ def test_remove_host_unreadable_vm_power_refuses(world):
     vm = _vm("a")
     type(vm.runtime).powerState = property(_unreadable)
     c = world.install(_cluster(hosts=[_host(vms=[vm])]))
-    out = cluster_tools.cluster_remove_host("lab", "esx-01", confirm=True)
+    out = cluster_tools.remove_cluster_host("lab", "esx-01", confirm=True)
     c.parent.hostFolder.MoveIntoFolder_Task.assert_not_called()
     assert "vm_power_states" in out["error"]
 
 
 def test_remove_host_not_a_member_keeps_its_refusal(world):
     world.install(_cluster(hosts=[_host()]), extra_hosts=[_host("esx-09")])
-    out = cluster_tools.cluster_remove_host("lab", "esx-09")
+    out = cluster_tools.remove_cluster_host("lab", "esx-09")
     assert "is not in cluster 'lab'" in out["error"]
 
 
 def test_remove_host_caps_the_vm_list(world):
     vms = [_vm(f"vm-{i:02d}") for i in range(20)]
     world.install(_cluster(hosts=[_host(vms=vms)]))
-    br = cluster_tools.cluster_remove_host("lab", "esx-01")["blast_radius"]
+    br = cluster_tools.remove_cluster_host("lab", "esx-01")["blast_radius"]
     assert br["vm_count"] == 20 and len(br["vms"]) == 16
 
 
@@ -342,19 +342,19 @@ def vms(monkeypatch):
     return install
 
 
-# ─── vm_set_ttl ───────────────────────────────────────────────────────────────
+# ─── set_vm_ttl ───────────────────────────────────────────────────────────────
 
 
 def test_ttl_bare_call_previews_and_schedules_nothing(vms):
     vms(_full_vm())
-    out = ttl_tools.vm_set_ttl("lab-01", 30)
+    out = ttl_tools.set_vm_ttl("lab-01", 30)
     assert out["action"] == "preview"
     assert ttl.list_ttl()["items"] == []
 
 
 def test_ttl_preview_states_the_vm_to_be_deleted_and_when(vms):
     vms(_full_vm(power=ON, snaps=[_snap("a"), _snap("b")]))
-    br = ttl_tools.vm_set_ttl("lab-01", 30)["blast_radius"]
+    br = ttl_tools.set_vm_ttl("lab-01", 30)["blast_radius"]
     assert br["vm"] == "lab-01" and br["instance_uuid"] == "5012-aaaa"
     assert br["snapshot_count"] == 2
     assert br["minutes"] == 30
@@ -369,13 +369,13 @@ def test_ttl_preview_states_the_vm_to_be_deleted_and_when(vms):
 def test_ttl_preview_shows_the_ttl_it_would_replace(vms):
     vms(_full_vm())
     ttl.set_ttl("lab-01", 600)
-    br = ttl_tools.vm_set_ttl("lab-01", 30)["blast_radius"]
+    br = ttl_tools.set_vm_ttl("lab-01", 30)["blast_radius"]
     assert br["replaces_expires_at"] is not None
 
 
 def test_ttl_confirm_schedules_once_and_reports(vms):
     vms(_full_vm())
-    out = ttl_tools.vm_set_ttl("lab-01", 30, confirm=True)
+    out = ttl_tools.set_vm_ttl("lab-01", 30, confirm=True)
     assert out["action"] == "scheduled"
     assert [e["vm_name"] for e in ttl.list_ttl()["items"]] == ["lab-01"]
     assert out["blast_radius"]["vm"] == "lab-01"
@@ -385,31 +385,31 @@ def test_ttl_unreadable_identity_refuses(vms):
     vm = _full_vm()
     vm.config = None
     vms(vm)
-    out = ttl_tools.vm_set_ttl("lab-01", 30, confirm=True)
+    out = ttl_tools.set_vm_ttl("lab-01", 30, confirm=True)
     assert "instance_uuid" in out["error"]
     assert ttl.list_ttl()["items"] == []
 
 
 def test_ttl_missing_vm_teaches_and_schedules_nothing(vms):
     vms()
-    out = ttl_tools.vm_set_ttl("ghost", 30, confirm=True)
+    out = ttl_tools.set_vm_ttl("ghost", 30, confirm=True)
     assert "not found" in out["error"]
     assert ttl.list_ttl()["items"] == []
 
 
 def test_ttl_minutes_below_one_is_an_error(vms):
     vms(_full_vm())
-    out = ttl_tools.vm_set_ttl("lab-01", 0, confirm=True)
+    out = ttl_tools.set_vm_ttl("lab-01", 0, confirm=True)
     assert "at least 1 minute" in out["error"]
     assert ttl.list_ttl()["items"] == []
 
 
 def test_ttl_preview_records_no_undo_token_and_confirm_records_one(vms):
     vms(_full_vm())
-    preview = ttl_tools.vm_set_ttl("lab-01", 30)
+    preview = ttl_tools.set_vm_ttl("lab-01", 30)
     assert "_undo_id" not in preview
     assert get_undo_store().list() == []
-    done = ttl_tools.vm_set_ttl("lab-01", 30, confirm=True)
+    done = ttl_tools.set_vm_ttl("lab-01", 30, confirm=True)
     assert "_undo_id" in done
     assert len(get_undo_store().list()) == 1
 
@@ -418,17 +418,17 @@ def test_ttl_refusal_records_no_undo_token(vms):
     vm = _full_vm()
     vm.config = None
     vms(vm)
-    ttl_tools.vm_set_ttl("lab-01", 30, confirm=True)
+    ttl_tools.set_vm_ttl("lab-01", 30, confirm=True)
     assert get_undo_store().list() == []
 
 
-# ─── vm_clean_slate ───────────────────────────────────────────────────────────
+# ─── restore_vm_clean_slate ───────────────────────────────────────────────────────────
 
 
 def test_clean_slate_bare_call_previews_and_changes_nothing(vms):
     base = _snap("baseline")
     (vm,) = vms(_full_vm(power=ON, snaps=[base]))
-    out = ttl_tools.vm_clean_slate("lab-01")
+    out = ttl_tools.restore_vm_clean_slate("lab-01")
     assert out["action"] == "preview"
     vm.PowerOff.assert_not_called()
     base.snapshot.RevertToSnapshot_Task.assert_not_called()
@@ -436,7 +436,7 @@ def test_clean_slate_bare_call_previews_and_changes_nothing(vms):
 
 def test_clean_slate_preview_states_the_blast_radius(vms):
     vms(_full_vm(power=ON, snaps=[_snap("baseline", children=[_snap("later")])]))
-    br = ttl_tools.vm_clean_slate("lab-01")["blast_radius"]
+    br = ttl_tools.restore_vm_clean_slate("lab-01")["blast_radius"]
     assert br["vm"] == "lab-01" and br["instance_uuid"] == "5012-aaaa"
     assert br["snapshot"] == "baseline"
     assert br["snapshot_created"] == "2026-09-01 10:00:00+00:00"
@@ -448,7 +448,7 @@ def test_clean_slate_preview_states_the_blast_radius(vms):
 def test_clean_slate_confirm_reverts_once_and_reports(vms):
     base = _snap("baseline")
     (vm,) = vms(_full_vm(power=ON, snaps=[base]))
-    out = ttl_tools.vm_clean_slate("lab-01", confirm=True)
+    out = ttl_tools.restore_vm_clean_slate("lab-01", confirm=True)
     vm.PowerOff.assert_called_once()
     base.snapshot.RevertToSnapshot_Task.assert_called_once()
     assert out["action"] == "reverted"
@@ -458,15 +458,15 @@ def test_clean_slate_confirm_reverts_once_and_reports(vms):
 def test_clean_slate_missing_baseline_refuses_without_powering_off(vms):
     """The ops function powers the VM off before finding out the snapshot is missing."""
     (vm,) = vms(_full_vm(power=ON, snaps=[_snap("other")]))
-    assert ttl_tools.vm_clean_slate("lab-01")["blast_radius"]["blockers"]
-    out = ttl_tools.vm_clean_slate("lab-01", confirm=True)
+    assert ttl_tools.restore_vm_clean_slate("lab-01")["blast_radius"]["blockers"]
+    out = ttl_tools.restore_vm_clean_slate("lab-01", confirm=True)
     vm.PowerOff.assert_not_called()
     assert "No snapshot named 'baseline'" in out["error"] and "other" in out["error"]
 
 
 def test_clean_slate_no_snapshots_at_all_refuses(vms):
     (vm,) = vms(_full_vm(power=ON))
-    out = ttl_tools.vm_clean_slate("lab-01", confirm=True)
+    out = ttl_tools.restore_vm_clean_slate("lab-01", confirm=True)
     vm.PowerOff.assert_not_called()
     assert "No snapshot named 'baseline'" in out["error"]
 
@@ -474,9 +474,9 @@ def test_clean_slate_no_snapshots_at_all_refuses(vms):
 def test_clean_slate_ambiguous_baseline_refuses(vms):
     first, second = _snap("baseline"), _snap("baseline")
     vms(_full_vm(snaps=[first, _snap("x", children=[second])]))
-    br = ttl_tools.vm_clean_slate("lab-01")["blast_radius"]
+    br = ttl_tools.restore_vm_clean_slate("lab-01")["blast_radius"]
     assert br["snapshot_matches"] == 2
-    out = ttl_tools.vm_clean_slate("lab-01", confirm=True)
+    out = ttl_tools.restore_vm_clean_slate("lab-01", confirm=True)
     first.snapshot.RevertToSnapshot_Task.assert_not_called()
     second.snapshot.RevertToSnapshot_Task.assert_not_called()
     assert "2 snapshots match 'baseline'" in out["error"]
@@ -487,7 +487,7 @@ def test_clean_slate_unreadable_power_state_refuses(vms):
     vm = _full_vm(snaps=[base])
     type(vm.runtime).powerState = property(_unreadable)
     vms(vm)
-    out = ttl_tools.vm_clean_slate("lab-01", confirm=True)
+    out = ttl_tools.restore_vm_clean_slate("lab-01", confirm=True)
     base.snapshot.RevertToSnapshot_Task.assert_not_called()
     assert "power_state" in out["error"]
 
@@ -496,7 +496,7 @@ def test_clean_slate_unreadable_snapshot_tree_refuses(vms):
     vm = _full_vm()
     type(vm).snapshot = property(_unreadable)
     vms(vm)
-    out = ttl_tools.vm_clean_slate("lab-01", confirm=True)
+    out = ttl_tools.restore_vm_clean_slate("lab-01", confirm=True)
     vm.PowerOff.assert_not_called()
     assert "snapshots" in out["error"]
 
@@ -537,9 +537,9 @@ def dispatched(monkeypatch, vms):
     vms(web, web2, _full_vm("old-01", instance_uuid="x"))
     calls: list = []
     monkeypatch.setattr(plan_executor, "_dispatch",
-                        lambda _si, action, params: calls.append(("do", action, params)) or "ok")
+                        lambda _si, action, params, *_: calls.append(("do", action, params)) or "ok")
     monkeypatch.setattr(plan_executor, "_rollback_dispatch",
-                        lambda _si, action, params: calls.append(("undo", action, params)) or "ok")
+                        lambda _si, action, params, *_: calls.append(("undo", action, params)) or "ok")
     return calls
 
 
@@ -555,13 +555,13 @@ def _mixed_plan():
     ]
 
 
-# ─── vm_apply_plan ────────────────────────────────────────────────────────────
+# ─── apply_vm_plan ────────────────────────────────────────────────────────────
 
 
 def test_apply_bare_call_previews_and_runs_nothing(dispatched):
     pid = _write_plan(_mixed_plan())
     before = (planner._PLANS_DIR / f"{pid}.json").read_text(encoding="utf-8")
-    out = plan_tools.vm_apply_plan(pid, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, target="vc01")
     assert out["action"] == "preview"
     assert dispatched == []
     assert (planner._PLANS_DIR / f"{pid}.json").read_text(encoding="utf-8") == before
@@ -569,7 +569,7 @@ def test_apply_bare_call_previews_and_runs_nothing(dispatched):
 
 def test_apply_preview_lists_every_step_and_counts_destructive(dispatched):
     pid = _write_plan(_mixed_plan())
-    br = plan_tools.vm_apply_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.apply_vm_plan(pid, target="vc01")["blast_radius"]
     assert [(s["index"], s["action"]) for s in br["steps"]] == [
         (0, "create_vm"), (1, "power_off"), (2, "guest_exec"), (3, "delete_vm"),
     ]
@@ -583,19 +583,19 @@ def test_apply_preview_lists_every_step_and_counts_destructive(dispatched):
 
 def test_apply_preview_never_carries_step_credentials(dispatched):
     pid = _write_plan(_mixed_plan())
-    out = plan_tools.vm_apply_plan(pid, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, target="vc01")
     assert "s3cret-pw" not in repr(out)
 
 
 def test_apply_preview_lists_every_step_past_sixteen(dispatched):
     pid = _write_plan([_step(i, "power_on", {"vm_name": f"vm-{i}"}) for i in range(20)])
-    br = plan_tools.vm_apply_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.apply_vm_plan(pid, target="vc01")["blast_radius"]
     assert len(br["steps"]) == 20 and br["destructive_step_count"] == 0
 
 
 def test_apply_confirm_runs_every_step_once_and_reports(dispatched):
     pid = _write_plan(_mixed_plan())
-    out = plan_tools.vm_apply_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, confirm=True, target="vc01")
     assert [c[1] for c in dispatched] == ["create_vm", "power_off", "guest_exec", "delete_vm"]
     assert out["status"] == "completed"
     assert out["blast_radius"]["destructive_step_count"] == 3
@@ -606,37 +606,37 @@ def test_apply_delete_step_without_acknowledgement_is_a_blocker(dispatched):
     steps = _mixed_plan()
     steps[3]["params"].pop("acknowledge_blast_radius")
     pid = _write_plan(steps)
-    assert plan_tools.vm_apply_plan(pid, target="vc01")["blast_radius"]["blockers"]
-    out = plan_tools.vm_apply_plan(pid, confirm=True, target="vc01")
+    assert plan_tools.apply_vm_plan(pid, target="vc01")["blast_radius"]["blockers"]
+    out = plan_tools.apply_vm_plan(pid, confirm=True, target="vc01")
     assert dispatched == []
-    assert "Step 3" in out["error"] and "vm_delete" in out["error"]
+    assert "Step 3" in out["error"] and "delete_vm" in out["error"]
 
 
 def test_apply_on_a_different_target_than_the_plan_was_checked_on_refuses(dispatched):
     pid = _write_plan(_mixed_plan(), target="vc01")
-    out = plan_tools.vm_apply_plan(pid, confirm=True, target="vc02")
+    out = plan_tools.apply_vm_plan(pid, confirm=True, target="vc02")
     assert dispatched == []
     assert "target='vc01'" in out["error"]
-    out = plan_tools.vm_apply_plan(pid, confirm=True)
+    out = plan_tools.apply_vm_plan(pid, confirm=True)
     assert dispatched == []
     assert "target='vc01'" in out["error"]
 
 
 def test_apply_unknown_step_action_refuses(dispatched):
     pid = _write_plan([_step(0, "power_on", {"vm_name": "a"}) | {"action": "format_disk"}])
-    out = plan_tools.vm_apply_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, confirm=True, target="vc01")
     assert dispatched == []
     assert "format_disk" in out["error"]
 
 
 def test_apply_unknown_plan_is_an_error_on_both_paths(dispatched):
-    assert "no-such-plan" in plan_tools.vm_apply_plan("no-such-plan")["error"]
-    assert "no-such-plan" in plan_tools.vm_apply_plan("no-such-plan", confirm=True)["error"]
+    assert "no-such-plan" in plan_tools.apply_vm_plan("no-such-plan")["error"]
+    assert "no-such-plan" in plan_tools.apply_vm_plan("no-such-plan", confirm=True)["error"]
 
 
 def test_apply_non_pending_plan_is_an_error(dispatched):
     pid = _write_plan(_mixed_plan(), status="failed")
-    out = plan_tools.vm_apply_plan(pid, target="vc01")
+    out = plan_tools.apply_vm_plan(pid, target="vc01")
     assert "expected 'pending'" in out["error"]
 
 
@@ -653,7 +653,7 @@ def test_every_plan_action_is_classified():
     assert GATED_ACTIONS | set(NON_DESTRUCTIVE_ACTIONS) == set(planner._ACTION_SCHEMA)
 
 
-# ─── vm_rollback_plan ─────────────────────────────────────────────────────────
+# ─── rollback_vm_plan ─────────────────────────────────────────────────────────
 
 
 def _failed_plan():
@@ -668,7 +668,7 @@ def _failed_plan():
 def test_rollback_bare_call_previews_and_runs_nothing(dispatched):
     pid = _write_plan(_failed_plan(), status="failed")
     before = (planner._PLANS_DIR / f"{pid}.json").read_text(encoding="utf-8")
-    out = plan_tools.vm_rollback_plan(pid, target="vc01")
+    out = plan_tools.rollback_vm_plan(pid, target="vc01")
     assert out["action"] == "preview"
     assert dispatched == []
     assert (planner._PLANS_DIR / f"{pid}.json").read_text(encoding="utf-8") == before
@@ -676,7 +676,7 @@ def test_rollback_bare_call_previews_and_runs_nothing(dispatched):
 
 def test_rollback_preview_lists_what_runs_and_what_is_skipped(dispatched):
     pid = _write_plan(_failed_plan(), status="failed")
-    br = plan_tools.vm_rollback_plan(pid, target="vc01")["blast_radius"]
+    br = plan_tools.rollback_vm_plan(pid, target="vc01")["blast_radius"]
     assert [(s["step_index"], s["rollback_action"]) for s in br["would_run"]] == [
         (2, "power_off"), (0, "delete_vm"),
     ]
@@ -691,7 +691,7 @@ def test_rollback_preview_lists_what_runs_and_what_is_skipped(dispatched):
 
 def test_rollback_confirm_runs_once_and_reports(dispatched):
     pid = _write_plan(_failed_plan(), status="failed")
-    out = plan_tools.vm_rollback_plan(pid, confirm=True, target="vc01")
+    out = plan_tools.rollback_vm_plan(pid, confirm=True, target="vc01")
     assert [c[1] for c in dispatched] == ["power_off", "delete_vm"]
     assert out["status"] == "rolled_back"
     assert out["blast_radius"]["would_run_count"] == 2
@@ -699,14 +699,14 @@ def test_rollback_confirm_runs_once_and_reports(dispatched):
 
 def test_rollback_on_a_different_target_refuses(dispatched):
     pid = _write_plan(_failed_plan(), status="failed", target="vc01")
-    out = plan_tools.vm_rollback_plan(pid, confirm=True, target="vc02")
+    out = plan_tools.rollback_vm_plan(pid, confirm=True, target="vc02")
     assert dispatched == []
     assert "target='vc01'" in out["error"]
 
 
 def test_rollback_of_a_pending_plan_is_an_error(dispatched):
     pid = _write_plan(_failed_plan(), status="pending")
-    out = plan_tools.vm_rollback_plan(pid, target="vc01")
+    out = plan_tools.rollback_vm_plan(pid, target="vc01")
     assert "rollback only available for 'failed' plans" in out["error"]
 
 
@@ -727,12 +727,12 @@ def audit_rows(monkeypatch):
 
 def test_refusal_is_audited_as_a_failure(world, audit_rows):
     world.install(_cluster(hosts=[_host("esx-01")]))
-    cluster_tools.cluster_delete("lab", confirm=True)
+    cluster_tools.delete_cluster("lab", confirm=True)
     assert audit_rows and audit_rows[0]["status"] == "error"
 
 
 def test_preview_is_audited_as_dry_run(world, audit_rows):
     world.install(_cluster())
-    cluster_tools.cluster_delete("lab")
+    cluster_tools.delete_cluster("lab")
     # vmware-policy >= 1.17.0 records a confirm=False preview as "dry_run".
     assert audit_rows and audit_rows[0]["status"] == "dry_run"

@@ -1,6 +1,6 @@
 """Two more annotations that claimed less than the tool does.
 
-From the same 2026-08-30 audit that found ``vm_guest_download`` advertising
+From the same 2026-08-30 audit that found ``download_vm_guest_file`` advertising
 ``readOnlyHint: true`` while writing the caller's disk. The instruction with
 that finding was not to assume the report had found them all, so every one of
 the 60 tools was re-read against its body rather than its docstring. These two
@@ -8,7 +8,7 @@ did not survive it. Both are cases where this repo's *own* artifacts already
 contradicted the annotation, which is why they are fixed here rather than
 merely noted.
 
-``vm_set_ttl`` — ``destructiveHint: false``. It schedules an unattended
+``set_vm_ttl`` — ``destructiveHint: false``. It schedules an unattended
 auto-delete of the VM; the daemon does the deleting later. Issue #25 already
 settled that this is a destructive operation *for the CLI*: `vm set-ttl` gained
 double-confirmation and ``--dry-run`` because of it, and SKILL.md lists it among
@@ -18,7 +18,7 @@ it is the place an agent reads. Deferred destruction is destruction — the fiel
 asks whether the tool "may perform destructive updates", not whether they land
 before it returns.
 
-``vm_create_snapshot`` — ``idempotentHint: true``. The body calls
+``create_vm_snapshot`` — ``idempotentHint: true``. The body calls
 ``CreateSnapshot_Task`` unconditionally; there is no check for an existing
 snapshot of that name, and vSphere is happy to hold siblings with identical
 names. Calling it twice therefore leaves two snapshots, which is the definition
@@ -51,7 +51,7 @@ def _annotations(name: str):
 
 
 def test_scheduling_an_unattended_delete_is_advertised_destructive() -> None:
-    assert _annotations("vm_set_ttl").destructiveHint is True
+    assert _annotations("set_vm_ttl").destructiveHint is True
 
 
 def test_cancelling_a_ttl_is_the_one_that_destroys_nothing() -> None:
@@ -61,11 +61,11 @@ def test_cancelling_a_ttl_is_the_one_that_destroys_nothing() -> None:
     above and tell an agent that calling off a deletion is as risky as
     arranging one.
     """
-    assert _annotations("vm_cancel_ttl").readOnlyHint is False
+    assert _annotations("cancel_vm_ttl").readOnlyHint is False
 
 
 def test_snapshot_creation_is_not_advertised_idempotent() -> None:
-    assert _annotations("vm_create_snapshot").idempotentHint is False
+    assert _annotations("create_vm_snapshot").idempotentHint is False
 
 
 def test_snapshot_creation_really_is_not_idempotent() -> None:
@@ -132,7 +132,7 @@ def test_the_tools_that_do_claim_idempotence_earn_it() -> None:
     ``noop`` when the requested state already holds, so re-applying them really
     has no further effect. They stay true.
     """
-    for name in ("set_drs_rule_enabled", "set_vmk_service", "vm_power_on"):
+    for name in ("set_drs_rule_enabled", "set_vmk_service", "power_on_vm"):
         assert _annotations(name).idempotentHint is True, name
 
 
@@ -207,15 +207,15 @@ def _tools_calling(ops_names: frozenset[str]) -> dict[str, set[str]]:
 
 
 def test_pushing_anything_into_a_guest_is_advertised_destructive() -> None:
-    """``vm_guest_exec`` ran arbitrary commands as root and said ``destructive: false``.
+    """``run_vm_guest_command`` ran arbitrary commands as root and said ``destructive: false``.
 
     The annotation is what a client consults before deciding whether to ask its
     user, and this is the tool with the widest blast radius in the skill: the
     command string is caller-supplied and runs with the credentials handed to
     it, which the docstring's own example makes ``root``. Nothing in the skill
     bounds what it may be — ``rm -rf /`` is a well-formed argument. The same
-    label was on ``vm_guest_exec_output`` and ``vm_guest_provision``, which
-    execute the same way, and on ``vm_guest_upload``, which replaces whatever
+    label was on ``run_vm_guest_command_with_output`` and ``provision_vm_guest``, which
+    execute the same way, and on ``upload_vm_guest_file``, which replaces whatever
     already sits at the caller's chosen guest path (its CLI mirror has carried a
     comment calling that destructive since it was written).
 
@@ -242,16 +242,16 @@ def test_pushing_anything_into_a_guest_is_advertised_destructive() -> None:
 def test_reading_a_file_out_of_a_guest_stays_non_destructive() -> None:
     """Control: the fix must not become "every guest tool is destructive".
 
-    ``vm_guest_download`` writes the *caller's* disk, which is why it is a write
+    ``download_vm_guest_file`` writes the *caller's* disk, which is why it is a write
     tool, and it refuses an occupied destination. It changes nothing inside the
     VM, so the guest-side destructive label would be false — and a label applied
     to everything tells a client nothing.
     """
-    assert _annotations("vm_guest_download").destructiveHint is False
-    assert _annotations("vm_guest_download").readOnlyHint is False
+    assert _annotations("download_vm_guest_file").destructiveHint is False
+    assert _annotations("download_vm_guest_file").readOnlyHint is False
 
 
 def test_additive_writes_stay_non_destructive() -> None:
     """Control over the rest of the write surface, not just the guest corner."""
-    for name in ("vm_power_on", "vm_create", "vm_create_snapshot", "vm_clone"):
+    for name in ("power_on_vm", "create_vm", "create_vm_snapshot", "clone_vm"):
         assert _annotations(name).destructiveHint is False, name

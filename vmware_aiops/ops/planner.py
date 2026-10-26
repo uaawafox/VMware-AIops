@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -56,7 +57,7 @@ _ACTION_SCHEMA: dict[str, dict[str, Any]] = {
     },
     "delete_vm": {
         "required": ["vm_name"],
-        # The same gate as the vm_delete tool: without the preview's
+        # The same gate as the delete_vm tool: without the preview's
         # acknowledge_with the step is refused at apply time.
         "optional": ["acknowledge_blast_radius"],
         "rollback": None,
@@ -225,6 +226,20 @@ class Plan:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+#: What _generate_plan_id produces (and older ids): no dot, no slash, so a plan
+#: id can never name a path outside the plans directory (HLD §18 step 0 review).
+_PLAN_ID = re.compile(r"^plan-[0-9A-Za-z-]{1,64}$")
+
+
+def _plan_path(plan_id: str) -> Path:
+    if not isinstance(plan_id, str) or not _PLAN_ID.fullmatch(plan_id):
+        raise ValueError(
+            f"Not a valid plan id: {str(plan_id)[:80]!r}. Use the plan_id that create_vm_plan "
+            "returned (list_vm_plans shows them)."
+        )
+    return _PLANS_DIR / f"{plan_id}.json"
 
 
 def _generate_plan_id() -> str:
@@ -452,12 +467,12 @@ def create_plan(
     )
 
     # 4. Persist (owner-only — plans carry VM names + operations)
-    from vmware_aiops._fsutil import secure_chmod_file, secure_mkdir
+    from vmware_aiops._fsutil import atomic_write_text, secure_mkdir
 
     secure_mkdir(_PLANS_DIR)
-    plan_path = _PLANS_DIR / f"{plan_id}.json"
-    plan_path.write_text(json.dumps(plan.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
-    secure_chmod_file(plan_path)
+    plan_path = _plan_path(plan_id)
+    # Atomic: other calls read plans while one is written (HLD §16 D-13(2)).
+    atomic_write_text(plan_path, json.dumps(plan.to_dict(), indent=2, ensure_ascii=False))
     logger.info("Plan created: %s (%d steps)", plan_id, len(steps))
 
     return plan.to_dict()
@@ -465,24 +480,29 @@ def create_plan(
 
 def load_plan(plan_id: str) -> dict | None:
     """Load a plan from disk. Returns None if not found."""
-    plan_path = _PLANS_DIR / f"{plan_id}.json"
+    plan_path = _plan_path(plan_id)
     if not plan_path.exists():
         return None
-    return json.loads(plan_path.read_text(encoding="utf-8"))
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    if plan.get("plan_id") != plan_id:
+        raise ValueError(
+            f"Plan file for plan id {plan_id!r} names a different plan id; refusing to use it. "
+            "Recreate the plan with create_vm_plan."
+        )
+    return plan
 
 
 def save_plan(plan: dict) -> None:
     """Write updated plan back to disk (owner-only)."""
-    from vmware_aiops._fsutil import secure_chmod_file
+    from vmware_aiops._fsutil import atomic_write_text
 
-    plan_path = _PLANS_DIR / f"{plan['plan_id']}.json"
-    plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
-    secure_chmod_file(plan_path)
+    plan_path = _plan_path(plan["plan_id"])
+    atomic_write_text(plan_path, json.dumps(plan, indent=2, ensure_ascii=False))
 
 
 def delete_plan(plan_id: str) -> None:
     """Delete a plan file."""
-    plan_path = _PLANS_DIR / f"{plan_id}.json"
+    plan_path = _plan_path(plan_id)
     plan_path.unlink(missing_ok=True)
 
 

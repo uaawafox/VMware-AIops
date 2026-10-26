@@ -287,7 +287,7 @@ def set_vmk_service(
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("dict")
-def vmk_ping(
+def ping_from_vmk(
     host_name: str,
     source_vmk: str,
     dest_ip: str,

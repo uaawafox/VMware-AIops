@@ -1,4 +1,4 @@
-"""`vm_list_plans` claims [READ] — it must not delete anything.
+"""`list_vm_plans` claims [READ] — it must not delete anything.
 
 From the 2026-07-19 pre-release review. The tool carried `[READ]` plus
 `readOnlyHint: True, destructiveHint: False`, so the read-only gate let it
@@ -8,8 +8,8 @@ plan file older than 24h.
 The damage is specific to read-only mode. A failed apply leaves `plan-*.json` as
 the only on-disk record of which steps landed. Open a read-only server the next
 day to review the incident, ask the model to list plans, and the record is gone
-— unrecoverable in that session by construction, because `vm_create_plan`,
-`vm_apply_plan` and `vm_rollback_plan` were all withheld by the gate. The one
+— unrecoverable in that session by construction, because `create_vm_plan`,
+`apply_vm_plan` and `rollback_vm_plan` were all withheld by the gate. The one
 plan tool still visible was the one that deletes.
 
 Expiry now runs only on the write path (`create_plan`), so plans are still swept

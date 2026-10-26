@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyVmomi import vim
+from pyVmomi import vim, vmodl
 from vmware_policy import paginated, sanitize
 
 from vmware_aiops.ops.health import get_active_alarms
-from vmware_aiops.ops.inventory import _collect
+from vmware_aiops.ops.inventory import _collect, _collect_object
 
 if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
@@ -148,6 +148,114 @@ def acknowledge_alarm(
 # reset_alarm
 # ---------------------------------------------------------------------------
 
+#: How many of the alarms a reset would clear the preview lists by name.
+RESET_PREVIEW_LIMIT = 50
+
+_READ_ERRORS = (vmodl.MethodFault, AttributeError, TypeError)
+
+
+def _clear_filter(entity: Any, alarm_state: Any) -> tuple[str, Any]:
+    """The filter ClearTriggeredAlarms gets for this alarm: its entity type + status."""
+    entity_types = vim.alarm.AlarmFilterSpec.AlarmTypeByEntity
+    if isinstance(entity, vim.HostSystem):
+        type_entity = entity_types.entityTypeHost
+    elif isinstance(entity, vim.VirtualMachine):
+        type_entity = entity_types.entityTypeVm
+    else:
+        type_entity = entity_types.entityTypeAll
+    filter_spec = vim.alarm.AlarmFilterSpec(
+        status=[alarm_state.overallStatus],
+        typeEntity=type_entity,
+        typeTrigger=vim.alarm.AlarmFilterSpec.AlarmTypeByTrigger.triggerTypeAll,
+    )
+    return type_entity, filter_spec
+
+
+def _matches_filter(state: Any, status: str, type_entity: str) -> bool:
+    if str(state.overallStatus) != status:
+        return False
+    if type_entity == "entityTypeHost":
+        return isinstance(state.entity, vim.HostSystem)
+    if type_entity == "entityTypeVm":
+        return isinstance(state.entity, vim.VirtualMachine)
+    return True
+
+
+def _read_name(read: Any) -> str:
+    """``read()`` → a name; every lazy SOAP read happens inside the guard."""
+    try:
+        return sanitize(read())
+    except _READ_ERRORS:
+        return "<unreadable>"
+
+
+def measure_reset(
+    si: ServiceInstance, entity_name: str, alarm_name: str
+) -> tuple[dict[str, Any], Any]:
+    """What reset_alarm would clear, and the exact filter that clears it.
+
+    vSphere has no per-alarm clear, so this is usually more than the named
+    alarm. The root folder's triggeredAlarmState aggregates every descendant
+    alarm; it is read once, filtered the way ClearTriggeredAlarms filters, and
+    de-duplicated by alarm-state key. If it cannot be read, the alarms are
+    reported unmeasured and a confirmed call refuses. The returned filter is
+    the one the radius was measured with: a confirmed call must clear with it,
+    not rebuild one from a second lookup.
+    """
+    entity, alarm_state = _find_triggered_alarm(si, entity_name, alarm_name)
+    type_entity, filter_spec = _clear_filter(entity, alarm_state)
+    status = str(alarm_state.overallStatus)
+    radius: dict[str, Any] = {
+        "entity": sanitize(entity_name),
+        "alarm": sanitize(alarm_name),
+        "status": status,
+        "entity_type_filter": str(type_entity),
+        "effect": (
+            "vSphere has no per-alarm clear: this clears EVERY triggered alarm with "
+            f"status={status} on {type_entity} entities, not only the named one."
+        ),
+        "blockers": [],
+        "unmeasured": [],
+    }
+    try:
+        root = _collect_object(
+            si, si.RetrieveContent().rootFolder, vim.Folder, ["triggeredAlarmState"]
+        )
+        states = root.get("triggeredAlarmState")
+    except _READ_ERRORS:
+        states = None
+    if states is None:
+        radius["unmeasured"].append("alarms_that_would_be_cleared")
+        return radius, filter_spec
+
+    seen: set[str] = set()
+    matched: list[Any] = []
+    for state in states:
+        key = str(getattr(state, "key", "")) or str(id(state))
+        if key in seen or not _matches_filter(state, status, str(type_entity)):
+            continue
+        seen.add(key)
+        matched.append(state)
+    # Names cost a round-trip each, so only the ones the preview lists are read.
+    radius["will_clear"] = [
+        {
+            "entity_name": _read_name(lambda st=st: st.entity.name),
+            "alarm_name": _read_name(lambda st=st: st.alarm.info.name),
+            "entity_type": type(st.entity).__name__,
+        }
+        for st in matched[:RESET_PREVIEW_LIMIT]
+    ]
+    radius["will_clear_count"] = len(matched)
+    radius["will_clear_truncated"] = len(matched) > RESET_PREVIEW_LIMIT
+    return radius, filter_spec
+
+
+def reset_alarm_radius(
+    si: ServiceInstance, entity_name: str, alarm_name: str
+) -> dict[str, Any]:
+    """The blast radius alone (see :func:`measure_reset`)."""
+    return measure_reset(si, entity_name, alarm_name)[0]
+
 
 def reset_alarm(
     si: ServiceInstance,
@@ -155,6 +263,7 @@ def reset_alarm(
     alarm_name: str,
     audit_logger: AuditLogger | None = None,
     target_name: str = "default",
+    filter_spec: Any = None,
 ) -> dict:
     """Clear triggered vCenter alarms back to normal state.
 
@@ -171,27 +280,19 @@ def reset_alarm(
         alarm_name: Exact alarm definition name.
         audit_logger: Optional audit logger.
         target_name: Target name for audit log.
+        filter_spec: The filter :func:`measure_reset` measured with. Given, the
+            clear uses exactly it; omitted, the alarm is looked up here.
 
     Returns:
         Dict with entity_name, alarm_name, action, status, scope.
     """
-    entity, alarm_state = _find_triggered_alarm(si, entity_name, alarm_name)
+    if filter_spec is None:
+        entity, alarm_state = _find_triggered_alarm(si, entity_name, alarm_name)
+        _, filter_spec = _clear_filter(entity, alarm_state)
     content = si.RetrieveContent()
-
-    entity_types = vim.alarm.AlarmFilterSpec.AlarmTypeByEntity
-    if isinstance(entity, vim.HostSystem):
-        type_entity = entity_types.entityTypeHost
-    elif isinstance(entity, vim.VirtualMachine):
-        type_entity = entity_types.entityTypeVm
-    else:
-        type_entity = entity_types.entityTypeAll
-
-    filter_spec = vim.alarm.AlarmFilterSpec(
-        status=[alarm_state.overallStatus],
-        typeEntity=type_entity,
-        typeTrigger=vim.alarm.AlarmFilterSpec.AlarmTypeByTrigger.triggerTypeAll,
-    )
     content.alarmManager.ClearTriggeredAlarms(filter=filter_spec)
+    type_entity = filter_spec.typeEntity
+    cleared_status = str(filter_spec.status[0])
 
     result = {
         "entity_name": sanitize(entity_name),
@@ -199,7 +300,7 @@ def reset_alarm(
         "action": "reset",
         "status": "cleared",
         "scope": (
-            f"all triggered alarms with status={alarm_state.overallStatus} "
+            f"all triggered alarms with status={cleared_status} "
             f"on {type_entity} entities (vSphere has no per-alarm clear)"
         ),
     }

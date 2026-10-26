@@ -13,19 +13,27 @@ tool signature — on Python 3.10 with older mcp/pydantic the union is eval'd to
 import contextvars
 import functools
 import inspect
+import json
 import logging
 import ssl
+import threading
 from typing import Any, Callable, Optional
 
 from mcp import types as mcp_types
 from mcp.server.fastmcp import FastMCP
+from pyVmomi import vim
 from vmware_policy import report_tool_failure, sanitize
 
 from vmware_aiops import __version__
-from vmware_aiops.config import ConfigError, load_config
-from vmware_aiops.connection import ConnectionManager
+from vmware_aiops.config import ConfigError, UnknownTargetError, load_config
+from vmware_aiops.connection import (
+    NOT_AUTHENTICATED_HINT,
+    ConnectionManager,
+    NoVSphereRoleError,
+)
 from vmware_aiops.ops.cluster_mgmt import ClusterError, ClusterNotFoundError
 from vmware_aiops.ops.datastore_browser import DatastoreBrowseError
+from vmware_aiops.ops.ova_deploy import DeployError
 from vmware_aiops.ops.guest_ops import GuestOpsError
 from vmware_aiops.ops.host_network_mgmt import HostNetworkError
 from vmware_aiops.ops.inventory import InventoryError
@@ -37,6 +45,55 @@ from vmware_aiops.ops.vm_lifecycle import TaskFailedError, TaskStillRunning, VMN
 logger = logging.getLogger(__name__)
 
 _DOCTOR_HINT = "Run 'vmware-aiops doctor' to verify connectivity and credentials."
+#: For the two failures where connectivity and credentials are fine (AIops#47).
+_ROLE_HINT = (
+    "Run 'vmware-aiops doctor': it checks every target's login and whether "
+    "vCenter gives the account a session."
+)
+
+
+#: For an error this skill authored that is not about reaching the endpoint:
+#: the message already names the fix, and doctor would report green (2026-10-17).
+_FIX_IN_MESSAGE_HINT = "The error message says what to change; connectivity is not the problem."
+
+#: Authored errors whose cause is the request, not the connection. ssl.SSLError
+#: subclasses ValueError and is excluded explicitly below.
+_REQUEST_ERRORS = (
+    ValueError,
+    UnknownTargetError,
+    VMNotFoundError,
+    ClusterNotFoundError,
+    HostNotFoundError,
+    InventoryError,
+    DatastoreBrowseError,
+    DeployError,
+    # vCenter did answer: it refused or failed the operation itself
+    # (MemoryHotPlugNotSupported, Tools not running -- write round 2026-10-17).
+    TaskFailedError,
+    TaskStillRunning,
+    GuestOpsError,
+    GateRefusedError,
+    ClusterError,
+    HostNetworkError,
+    NetworkError,
+)
+
+#: ValueErrors whose text was not authored as a remedy: a body that was not
+#: JSON (a reverse proxy answering HTML, AIops#47) or not UTF-8. Review
+#: 2026-10-17: these got "connectivity is not the problem", the opposite of true.
+_UNAUTHORED_VALUE_ERRORS = (ssl.SSLError, json.JSONDecodeError, UnicodeError)
+
+
+def _is_request_error(exc: Exception) -> bool:
+    return isinstance(exc, _REQUEST_ERRORS) and not isinstance(exc, _UNAUTHORED_VALUE_ERRORS)
+
+
+def _hint_for(exc: Exception) -> str:
+    if isinstance(exc, (NoVSphereRoleError, vim.fault.NotAuthenticated)):
+        return _ROLE_HINT
+    if _is_request_error(exc):
+        return _FIX_IN_MESSAGE_HINT
+    return _DOCTOR_HINT
 
 
 #: Cap for messages this skill authored. 500 is sanitize's own default; it was
@@ -90,6 +147,10 @@ def _safe_error(exc: Exception, tool: str) -> str:
     # allowlist already reduces it. Adding it here would guard nothing.)
     if isinstance(exc, ssl.SSLError):
         return f"{type(exc).__name__}: operation failed."
+    # A vmodl fault would be reduced to its class name, and the hint would then
+    # point at credentials; for this one both are wrong (AIops#47).
+    if isinstance(exc, vim.fault.NotAuthenticated):
+        return f"NotAuthenticated: {NOT_AUTHENTICATED_HINT}"
     _passthrough = (
         ValueError,
         FileNotFoundError,
@@ -110,6 +171,7 @@ def _safe_error(exc: Exception, tool: str) -> str:
         HostNetworkError,
         ISCSIError,
         DatastoreBrowseError,
+        DeployError,
         NetworkError,
     )
     if isinstance(exc, _passthrough):
@@ -282,11 +344,12 @@ def tool_errors(shape: str = "str") -> Callable:
                 # the audit row. Both have to hear it: the audit trail is for
                 # the operator afterwards, ``isError`` is for the agent now.
                 _mark_call_failed()
+                hint = _hint_for(e)
                 if shape == "dict":
-                    return {"error": msg, "hint": _DOCTOR_HINT}
+                    return {"error": msg, "hint": hint}
                 if shape == "list":
-                    return [{"error": msg, "hint": _DOCTOR_HINT}]
-                return f"Error: {msg} {_DOCTOR_HINT}"
+                    return [{"error": msg, "hint": hint}]
+                return f"Error: {msg} {hint}"
             # A tool can also fail by *returning* the family's error envelope
             # without ever raising — the plan guards do exactly that. Policy
             # already reads that envelope when it audits; the frame agrees.
@@ -480,19 +543,25 @@ mcp._mcp_server.version = __version__
 # ---------------------------------------------------------------------------
 
 _conn_mgr: Optional[ConnectionManager] = None
+# Calls run in worker threads side by side (HLD §16 D-13(2)); without the lock two
+# first calls could each build a manager, and so a second pool of sessions.
+_conn_mgr_lock = threading.Lock()
 
 
 def _ensure_conn_mgr() -> ConnectionManager:
     """Lazily build the shared ConnectionManager (does not connect anything)."""
     global _conn_mgr  # noqa: PLW0603
-    if _conn_mgr is None:
-        # No env-var read here: load_config resolves the path (explicit arg,
-        # then the environment, then the default). This copy was the reason the
-        # server and the CLI opened different files — load_config did not look
-        # at the variable at all, so only this path honoured it (形态 #6).
-        config = load_config()
-        _conn_mgr = ConnectionManager(config)
-    return _conn_mgr
+    if _conn_mgr is not None:
+        return _conn_mgr
+    with _conn_mgr_lock:
+        if _conn_mgr is None:
+            # No env-var read here: load_config resolves the path (explicit arg,
+            # then the environment, then the default). This copy was the reason the
+            # server and the CLI opened different files — load_config did not look
+            # at the variable at all, so only this path honoured it (形态 #6).
+            config = load_config()
+            _conn_mgr = ConnectionManager(config)
+        return _conn_mgr
 
 
 def _get_connection(target: Optional[str] = None) -> Any:

@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from pyVmomi import vim
 from vmware_policy import paginated, sanitize
 
+from vmware_aiops._filelock import FileLockTimeoutError, locked
 from vmware_aiops.config import CONFIG_DIR
 from vmware_aiops.ops.inventory import find_datastore_by_name
 
@@ -66,18 +70,61 @@ def _wait_for_task(task, timeout: int = 120) -> object:
     )
 
 
+def _normalize_ds_path(path: str) -> str:
+    """Return a datastore-relative browse path, or refuse it with the fix.
+
+    The path is interpolated into a ``[datastore] <path>`` spec for the vSphere
+    DatastoreBrowser API. ``..`` traversal, absolute paths (leading ``/`` or
+    ``\\``) and null bytes are refused -- the rule vmware-storage adopted in its
+    1.5.35 security hardening. vmware-aiops used to pass ``/vcsa8`` straight
+    through while vmware-storage refused it; both now refuse it and say to drop
+    the leading slash, so an agent gets one answer from either skill.
+    """
+    if ".." in path or path.startswith(("/", "\\")) or "\x00" in path:
+        hint = (
+            f" Drop the leading slash: path={path.lstrip('/')!r}."
+            if path.startswith("/") and ".." not in path and "\x00" not in path
+            else ""
+        )
+        raise ValueError(
+            f"Invalid datastore path {path!r}: no '..', absolute paths, or null bytes. "
+            "Pass browse_datastore a datastore-relative sub-path such as 'templates' "
+            f"or 'iso/linux', or '' to browse the datastore root.{hint}"
+        )
+    return path
+
+
+def _join_ds_path(folder: str, name: str) -> str:
+    """Join a browse result's ``folderPath`` and a file name into a datastore path.
+
+    ESXi reports ``"[ds]"`` / ``"[ds] dir"`` with no trailing separator; vCenter
+    reports ``"[ds] "`` / ``"[ds] dir/"``. Both must yield ``"[ds] dir/name"``.
+    """
+    folder = folder.rstrip()
+    if folder.endswith("]"):
+        return f"{folder} {name}"
+    if folder.endswith("/"):
+        return f"{folder}{name}"
+    return f"{folder}/{name}"
+
+
 def browse_datastore(
     si: ServiceInstance,
     ds_name: str,
     path: str = "",
     pattern: str = "*",
 ) -> dict:
-    """Browse files in a datastore directory.
+    """Search a datastore directory and all of its subfolders.
+
+    The search is recursive (``SearchDatastoreSubFolders``): browsing the root
+    returns matches from every folder on the datastore. Folders themselves come
+    back as rows too. Each row's ``ds_path`` is ``"[ds] dir/file"``, ready to
+    pass to deploy/attach tools.
 
     Args:
         si: vSphere ServiceInstance
         ds_name: Datastore name
-        path: Subdirectory path (empty for root)
+        path: Folder to start from (empty for root)
         pattern: Glob pattern to filter files (e.g. "*.ova", "*")
 
     Returns:
@@ -102,13 +149,18 @@ def browse_datastore(
         fileSize=True,
         modification=True,
     )
-    # Include all file types in results
+    # A query list is a filter, not a hint: without the generic Query the
+    # browser returns only ISO/VMDK/folder entries, so .ova/.ovf/.vmx/.log are
+    # silently dropped (real vCenter, 2026-10-17: 0 of 2 OVAs found). Same
+    # list as the vmware-storage twin.
     search_spec.query = [
         vim.host.DatastoreBrowser.IsoImageQuery(),
         vim.host.DatastoreBrowser.VmDiskQuery(),
         vim.host.DatastoreBrowser.FolderQuery(),
+        vim.host.DatastoreBrowser.Query(),
     ]
 
+    path = _normalize_ds_path(path)
     ds_path = f"[{ds_name}] {path}".rstrip()
     task = browser.SearchDatastoreSubFolders_Task(
         datastorePath=ds_path,
@@ -127,7 +179,7 @@ def browse_datastore(
                 "size_mb": round(f.fileSize / (1024 * 1024), 1) if f.fileSize else 0,
                 "type": file_type,
                 "modified": str(f.modification) if f.modification else "",
-                "ds_path": sanitize(f"{folder}{f.path}"),
+                "ds_path": sanitize(_join_ds_path(folder, f.path)),
             })
 
     rows = sorted(files, key=lambda x: x["name"])
@@ -151,11 +203,15 @@ def scan_images(
     return sorted(all_images, key=lambda x: x["name"])
 
 
-def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict]]:
+def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict] | None]:
     """Scan all accessible datastores for deployable images.
 
     Returns:
-        Dict mapping datastore name to list of image files found.
+        Dict with every datastore the target lists. A datastore browsed
+        successfully maps to the image files found on it (an empty list when it
+        holds none); one that was skipped (inaccessible) or failed to browse
+        maps to ``None``. So callers can tell "looked and found nothing", "did
+        not look" and "no longer exists" (absent) apart.
     """
     from vmware_aiops.ops.inventory import list_datastores
 
@@ -164,13 +220,13 @@ def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict]]:
     for ds in datastores:
         if not ds["accessible"]:
             _log.info("Skipping inaccessible datastore: %s", ds["name"])
+            result[ds["name"]] = None
             continue
         try:
-            images = scan_images(si, ds["name"])
-            if images:
-                result[ds["name"]] = images
+            result[ds["name"]] = scan_images(si, ds["name"])
         except Exception as e:
             _log.warning("Failed to scan datastore %s: %s", ds["name"], e)
+            result[ds["name"]] = None
 
     return result
 
@@ -178,35 +234,74 @@ def scan_all_datastores(si: ServiceInstance) -> dict[str, list[dict]]:
 # ─── Image Registry (local cache) ────────────────────────────────────────────
 
 
+#: Serialises read-modify-write of the registry within this process.
+_REGISTRY_LOCK = threading.Lock()
+
+#: How long a writer waits for another process's registry write to finish.
+#: A write is one small JSON file, so this only expires if something is stuck.
+REGISTRY_LOCK_TIMEOUT_S = 10.0
+
+
+@contextmanager
+def _registry_file_lock() -> Iterator[None]:
+    """Serialise registry writes across processes (a sibling ``.lock`` file).
+
+    The CLI, the MCP server and the daemon are separate processes; the thread
+    lock alone let two of them read the old file and the last replace win.
+    """
+    lock_path = IMAGE_REGISTRY_FILE.with_name(IMAGE_REGISTRY_FILE.name + ".lock")
+    try:
+        with locked(lock_path, timeout=REGISTRY_LOCK_TIMEOUT_S):
+            yield
+    except FileLockTimeoutError as exc:
+        raise DatastoreBrowseError(str(exc)) from exc
+
+
 def _load_registry() -> dict:
-    """Load the local image registry from disk."""
+    """Load the local image registry, or refuse it with the way out."""
     if not IMAGE_REGISTRY_FILE.exists():
         return {"images": [], "last_scan": None}
-    with open(IMAGE_REGISTRY_FILE, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(IMAGE_REGISTRY_FILE, encoding="utf-8") as f:
+            registry = json.load(f)
+    except ValueError:  # JSONDecodeError, UnicodeDecodeError
+        registry = None
+    if not isinstance(registry, dict) or not isinstance(registry.get("images"), list):
+        raise DatastoreBrowseError(
+            f"The local image cache {IMAGE_REGISTRY_FILE} is unreadable. Delete it "
+            "and run scan_all_datastore_images again to rebuild it."
+        )
+    return registry
 
 
 def _save_registry(registry: dict) -> None:
     """Save the image registry to disk (owner-only — infra topology metadata)."""
-    from vmware_aiops._fsutil import secure_chmod_file, secure_mkdir
+    from vmware_aiops._fsutil import atomic_write_text, secure_mkdir
 
     secure_mkdir(CONFIG_DIR)
-    with open(IMAGE_REGISTRY_FILE, "w", encoding="utf-8") as f:
-        json.dump(registry, f, indent=2, ensure_ascii=False)
-    secure_chmod_file(IMAGE_REGISTRY_FILE)
+    # Atomic: two scans at once, or a read during a scan, never see half a file.
+    atomic_write_text(IMAGE_REGISTRY_FILE, json.dumps(registry, indent=2, ensure_ascii=False))
 
 
-def update_registry(si: ServiceInstance) -> dict:
-    """Scan all datastores and update the local image registry.
+def update_registry(si: ServiceInstance, target: str | None = None) -> dict:
+    """Scan all datastores of ``target`` and refresh its part of the image registry.
 
-    Returns:
-        The updated registry dict.
+    Entries carry ``target``: a scan replaces that target's entries and keeps the
+    others', so "datastore1" on two hosts stays apart (review 2026-10-17; the
+    whole file used to be replaced by each target's scan). An entry written
+    before targets were recorded is replaced only when this scan browsed its
+    datastore, as VMware-Storage's ``_record_scan`` does; one on a datastore this
+    scan skipped or failed to browse is kept, since nothing says it belongs to
+    ``target`` (review 2026-10-18). An unreadable registry is rebuilt.
+
+    Returns ``{"images": <this scan's images>, "last_scan": ...}``.
     """
     scan_result = scan_all_datastores(si)
     images: list[dict] = []
     for ds_name, ds_images in scan_result.items():
-        for img in ds_images:
+        for img in ds_images or []:
             images.append({
+                "target": target,
                 "datastore": ds_name,
                 "name": img["name"],
                 "ds_path": img["ds_path"],
@@ -214,15 +309,42 @@ def update_registry(si: ServiceInstance) -> dict:
                 "type": img["type"],
                 "modified": img["modified"],
             })
+    browsed = {name for name, found in scan_result.items() if found is not None}
+    listed = set(scan_result)
 
-    registry = {
-        "images": images,
-        "last_scan": datetime.now(timezone.utc).isoformat(),
-    }
-    _save_registry(registry)
+    def _keep(entry: object) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        datastore = entry.get("datastore")
+        if "target" not in entry:  # legacy row: nothing says it belongs to target
+            return datastore not in browsed
+        if entry["target"] != target:
+            return True
+        # This target's rows: replaced where this scan browsed, kept where the
+        # browse was skipped or failed, dropped where the datastore is gone
+        # (reviews 2026-10-18).
+        return datastore in listed and datastore not in browsed
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _REGISTRY_LOCK, _registry_file_lock():
+            try:
+                existing = _load_registry()["images"]
+            except DatastoreBrowseError:
+                _log.warning("Image registry unreadable; rebuilding it from this scan")
+                existing = []
+            kept = [e for e in existing if _keep(e)]
+            _save_registry({"images": kept + images, "last_scan": now})
+    except (DatastoreBrowseError, OSError) as exc:
+        # The scan itself worked (it may have taken minutes); return it and say
+        # the cache was not updated, as vmware-storage does (review 2026-10-18).
+        _log.warning("Image registry not updated: %s", exc)
+        detail = str(exc) if isinstance(exc, DatastoreBrowseError) else type(exc).__name__
+        return {"images": images, "last_scan": now, "cache_note": sanitize(
+            f"The images were found but the local cache was not updated ({detail}).", 400)}
     _log.info("Image registry updated: %d images across %d datastores",
               len(images), len(scan_result))
-    return registry
+    return {"images": images, "last_scan": now}
 
 
 def get_registry() -> dict:

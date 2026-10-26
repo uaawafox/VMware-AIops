@@ -6,13 +6,13 @@ All install methods fetch from the same source: [github.com/vmware-skills/VMware
 
 ```bash
 # Via PyPI (recommended for version pinning)
-uv tool install vmware-aiops==1.12.0
+uv tool install vmware-aiops==2.4.2
 
 # Via Skills.sh (fetches from GitHub)
-npx skills add vmware-skills/VMware-AIops#v1.12.0
+npx skills add vmware-skills/VMware-AIops#v2.4.2
 
 # Via ClawHub (fetches from ClawHub registry snapshot of GitHub)
-clawhub install @zw008/vmware-aiops --version 1.12.0
+clawhub install @zw008/vmware-aiops --version 2.4.2
 ```
 
 ### Claude Code
@@ -35,7 +35,7 @@ claude mcp add vmware-aiops -- vmware-aiops mcp
 
 ```bash
 # 1. Install from PyPI (source: github.com/vmware-skills/VMware-AIops)
-uv tool install vmware-aiops==1.12.0
+uv tool install vmware-aiops==2.4.2
 
 # 2. Verify installation source
 vmware-aiops --version  # confirms installed version
@@ -73,7 +73,7 @@ The `vmware-aiops` package installs a Python CLI binary and its dependencies (py
 ## Development Install
 
 ```bash
-git clone --branch v1.12.0 https://github.com/vmware-skills/VMware-AIops.git
+git clone --branch v2.4.2 https://github.com/vmware-skills/VMware-AIops.git
 cd VMware-AIops
 uv venv && source .venv/bin/activate
 # --no-sources: pyproject's [tool.uv.sources] points vmware-monitor at a sibling
@@ -117,8 +117,8 @@ whitespace are handled correctly).
 - **Webhook Data Scope**: Webhook notifications are **disabled by default**. When enabled, the daemon posts to **user-configured URLs only** (Slack, Discord, or any HTTP endpoint you control); no data is sent to any other service. Each payload carries critical/warning counts plus every critical issue and every alarm/event warning from that scan — host-log warnings go to `scan.log` only, and `info` rows (unreadable or partly-read host logs) are never sent. Each issue carries the entity name and one of: the alarm name, vCenter event message (sanitized, ≤500 chars), ESXi log line matching critical/panic/corrupt (sanitized, ≤200 chars), or the error text for a target the daemon could not connect to. Event, log, and error text can contain host names, IP addresses, and user names — treat the webhook destination as receiving operational data. No credentials from the skill's config or `.env` are included.
 - **Daemon host-log reads**: the scanner daemon reads the ESXi `hostd`, `vmkernel` and `vpxa` logs, which needs the `Global.Diagnostics` privilege — vCenter's built-in Read-Only role does not include it. Without it each log is recorded in `scan.log` as an `info` row with the reason instead of being scanned; grant it only if you want host-log scanning.
 - **Prompt Injection Protection**: All vSphere-sourced content (event messages, host logs) is truncated, stripped of control characters, and wrapped in boundary markers (`[VSPHERE_EVENT]`/`[VSPHERE_HOST_LOG]`) before output to prevent prompt injection when consumed by LLM agents.
-- **Least Privilege**: 22 of the 43 MCP write tools — every destructive one — return a no-write blast-radius preview unless called with `confirm=True`, which is refused on a blocker or an unreadable measurement; `vm_delete` also requires the preview's acknowledgement echoed back. The other 21 (create, clone, deploy, power-on, reconfigure) act on the first call. A preview is not authorization. The enforcement boundary is the RBAC of the vCenter/ESXi account in `.env`, so use a dedicated service account scoped to what the agent may change. For monitoring-only use cases, prefer the read-only [VMware-Monitor](https://github.com/vmware-skills/VMware-Monitor) skill which has zero destructive code paths. The CLI's double confirmation and `--dry-run` do not apply to MCP calls.
-- **Guest Credentials**: Guest operations run with whatever guest account is passed to them — the `username` is required (there is no default account) and over MCP the password is a tool argument the agent sees (the audit row redacts it). A read-only vCenter role does not limit what they do inside a VM. Pass a least-privilege guest account; avoid root unless the task needs it. `vm_guest_upload` reads any local file the server process can read.
+- **Least Privilege**: 23 of the 43 MCP write tools — every destructive one — return a no-write blast-radius preview unless called with `confirm=True`, which is refused on a blocker or an unreadable measurement; `delete_vm` also requires the preview's acknowledgement echoed back. The other 20 (create, clone, deploy, power-on, reconfigure) act on the first call. A preview is not authorization. The enforcement boundary is the RBAC of the vCenter/ESXi account in `.env`, so use a dedicated service account scoped to what the agent may change. For monitoring-only use cases, prefer the read-only [VMware-Monitor](https://github.com/vmware-skills/VMware-Monitor) skill which has zero destructive code paths. The CLI's double confirmation and `--dry-run` do not apply to MCP calls.
+- **Guest Credentials**: Guest operations run with whatever guest account is passed to them — the `username` is required (there is no default account) and over MCP the password is a tool argument the agent sees (the audit row redacts it). A read-only vCenter role does not limit what they do inside a VM. Pass a least-privilege guest account; avoid root unless the task needs it. `upload_vm_guest_file` reads any local file the server process can read.
 - **Policy & Audit**: Optional `deny` rules in `~/.vmware/rules.yaml` refuse matching operations before every MCP call and every CLI command that reaches vCenter (see `environment:` above); they run in-process and are a guardrail, not a substitute for RBAC. Every such call is recorded in `~/.vmware/audit.db` with credentials redacted (best-effort: an audit write failure warns and does not block).
 
 To run the agent read-only, give it a read-only vCenter/ESXi service account (RBAC) — enforced at the platform.
@@ -179,4 +179,71 @@ For Claude Code / Cursor users who prefer structured tool calls, add to `~/.clau
 > PyPI on each launch and breaks behind corporate TLS proxies. The legacy
 > `vmware-aiops-mcp` entry point is also kept for backward compatibility.
 
-MCP exposes 60 tools across 10 categories. All accept optional `target` parameter.
+MCP exposes 61 tools across 11 categories. All accept optional `target` parameter.
+
+## Limiting which tools are offered
+
+By default the MCP server offers every tool. To offer only read tools, start it with `--expose read`, or set
+`VMWARE_AIOPS_MCP_EXPOSE=read` in the MCP client's `env` block (useful when the client launches `vmware-aiops mcp` itself). To offer
+chosen write tools as well, add `--allow-write` with a comma-separated list (or `VMWARE_AIOPS_MCP_ALLOW_WRITE`):
+
+```bash
+vmware-aiops mcp --expose read --allow-write acknowledge_vcenter_alarm
+```
+
+- A read tool is one annotated `readOnlyHint: true`; every other tool counts as a write.
+- An unknown setting, or a name that is not a write tool of this server, stops the server before it serves (exit
+  code 2), so it never offers more than you asked for. Pre-2.0 tool names are accepted.
+- With `--expose read`, the server prints one line to stderr saying what it exposes.
+- Flags and environment variables are not mixed: if either flag is given, both environment variables are
+  ignored, so a leftover `_ALLOW_WRITE` in the shell cannot widen `--expose read`. A blank flag value counts as
+  not given.
+- A tool that runs other steps (a plan, workflow or batch tool) carries every write it can execute, including
+  writes this setting hides. Expose such a tool only if you would expose those writes too.
+- A launcher that imports the server object can call
+  `vmware_policy.exposure.restrict_tools(mcp, skill="aiops", expose="read", allow_write=[...])` before running it,
+  instead of editing the SDK's tool registry.
+- This limits what clients are offered. It is **not** authorization: whether a call may change anything is decided by
+  the account's permissions, and deny rules in `~/.vmware/rules.yaml` still apply to every exposed tool.
+- An agent that can run shell commands can also reach the platform without MCP (SSH, curl, govc, PowerCLI). So
+  the service account itself must be least-privilege: exposure and deny rules are guardrails, not the boundary.
+
+## Serving MCP over HTTPS
+
+By default the MCP server speaks stdio to one local client. To let clients on other machines reach it, serve it over
+HTTPS. Every caller then needs a bearer token.
+
+```bash
+vmware-audit token create alice                      # prints the token once; give it to alice
+vmware-aiops mcp --transport https --host 0.0.0.0 --port 8443 \
+    --cert /etc/vmware-mcp/server.pem --key /etc/vmware-mcp/server-key.pem \
+    --public-name mcp.example.com
+```
+
+- Clients connect to `https://mcp.example.com:8443/mcp` and send `Authorization: Bearer <token>`.
+- `--public-name` lists every host name clients use (comma-separated); requests for any other Host or Origin are
+  refused. Use a certificate your clients trust for those names.
+- Behind a reverse proxy that terminates TLS (Nginx, HAProxy) on the same machine, use
+  `--transport http --host 127.0.0.1 --public-name mcp.example.com` (the names the proxy forwards in `Host`), and
+  have the proxy pass the `Authorization` header through.
+- Behind a load balancer or gateway on another machine, keep `--transport https` (a self-signed certificate is
+  fine: the balancer is the client that has to trust it), list in `--public-name` the host name the balancer sends
+  as `Host`, and have it forward `Authorization`. Point its health probe at `GET /healthz`: it needs no token, returns
+  only `{"status": "ok"}` and accepts any `Host` (vmware-policy ≥ 1.23.0). Every other path still needs the token.
+- Correlation: each audit row stores the caller's `traceparent` trace-id, else its `X-Request-ID` /
+  `X-Correlation-ID`. Have the agent platform send one, and `vmware-audit log --correlation-id ID` lists the calls
+  behind one platform request.
+- Tools that read or write files on this server (here: guest file upload/download, OVA and deployment-spec files) never touch its configuration, tokens, audit log or
+  TLS key, and over the network they are off unless `VMWARE_MCP_FILE_ROOT` names a directory for them
+  (vmware-policy ≥ 1.23.1).
+- `vmware-audit token list` / `token revoke NAME` manage callers; a revoked token is refused from its next request.
+  Replace a leaked token under a new name.
+- The server will not start without at least one token, and checks before it binds that unauthenticated requests
+  are refused.
+- Each audit row records the caller as `token:<name>`. Calls run side by side, with up to `VMWARE_MCP_POOL_SIZE`
+  (default 2) sessions per target; each session is a login on the target, and a call waits at most 300 s for one.
+- **Everyone who can reach the endpoint acts with this server's account.** Tokens identify callers; they grant
+  nothing on the platform. Run one endpoint per privilege level (for example a read-only account behind
+  `--expose read`, and a separate endpoint for operators).
+- **Several people or roles on one endpoint:** run `vmware-audit roles enable` once, then give each token a role (`vmware-audit token create NAME --role reader`, or a role in `roles.yaml` naming tools and targets; vmware-policy ≥ 1.24.0). A role limits what the token may call on this endpoint; it cannot grant more than the account has. See vmware-policy's README, "Roles for network callers".
+

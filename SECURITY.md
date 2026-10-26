@@ -33,7 +33,7 @@ cluster delete/remove-host, plan apply/rollback, host-network and DRS) take
 `confirm` (default false), which returns a no-write blast-radius preview;
 `confirm=True` is refused, and audited as a failure, on a blocker or an
 unreadable measurement. The other 21 write tools (create, clone, deploy,
-power-on, reconfigure) act on the first call. `vm_delete` also refuses unless the preview's `acknowledge_with` is echoed
+power-on, reconfigure) act on the first call. `delete_vm` also refuses unless the preview's `acknowledge_with` is echoed
 back and still matches, and refuses powered-on or suspended VMs:
 
 1. **`@vmware_tool` decorator** — mandatory on every MCP tool; provides pre-checks, audit logging, data sanitization, and timeout control
@@ -54,7 +54,7 @@ inventory is documented, and machine-checked against the tool registry, in
 
 ### Guest Operations Security
 
-Guest command execution (`vm_guest_exec`) requires:
+Guest command execution (`run_vm_guest_command`) requires:
 - Explicit `vm_name`, `command` (full path to executable), `arguments`, and `username` parameters
 - Valid VMware Tools running inside the guest VM
 - vCenter permissions for Guest Operations (separate from VM lifecycle permissions)
@@ -64,8 +64,8 @@ No implicit or background command execution occurs.
 **This is the widest blast radius in the skill.** The command string is
 caller-supplied and unbounded, and it runs with the guest credentials passed to
 the call — which the documented example makes `root`. The CLI form
-double-confirms. Over MCP, `vm_guest_exec`, `vm_guest_exec_output`,
-`vm_guest_upload` and `vm_guest_provision` return a no-write preview (VM, guest
+double-confirms. Over MCP, `run_vm_guest_command`, `run_vm_guest_command_with_output`,
+`upload_vm_guest_file` and `provision_vm_guest` return a no-write preview (VM, guest
 account, command or files) unless called with `confirm=True`, and refuse a VM
 that is not powered on or has no running VMware Tools. The preview describes the
 command; it does not judge it — once confirmed, nothing in the skill bounds what

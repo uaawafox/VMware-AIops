@@ -8,7 +8,7 @@ teaching message, which ``tool_errors`` turns into the ``{"error": ...}``
 envelope and the audit row records as a failure.
 
 ``acknowledge_blast_radius`` (the echo of stable keys) is required only where a
-tool says so; ``vm_delete`` is the reference.
+tool says so; ``delete_vm`` is the reference.
 """
 
 from __future__ import annotations

@@ -43,7 +43,7 @@ def _tgt(target: str | None, cfg: object) -> str:
 
 @investigate_app.command("vm")
 @cli_errors
-@audited("vm_investigation_bundle")
+@audited("investigate_vm")
 def investigate_vm_cmd(
     vm_name: Annotated[str, typer.Argument(help="Exact VM name to investigate")],
     hours: _Hours = 24,
@@ -60,7 +60,7 @@ def investigate_vm_cmd(
     tgt = _tgt(target, cfg)
     bundle = get_vm_investigation_bundle(si, vm_name, hours=hours)
     _audit.log_query(
-        target=tgt, resource=vm_name, query_type="vm_investigation_bundle", skill="aiops"
+        target=tgt, resource=vm_name, query_type="investigate_vm", skill="aiops"
     )
     if html or html_path is not None:
         write_bundle_html_snapshot(bundle, "vm", tgt, html_path)
@@ -70,7 +70,7 @@ def investigate_vm_cmd(
 
 @investigate_app.command("host")
 @cli_errors
-@audited("host_investigation_bundle")
+@audited("investigate_host")
 def investigate_host_cmd(
     host_name: Annotated[str, typer.Argument(help="Exact ESXi host name to investigate")],
     hours: _Hours = 24,
@@ -87,7 +87,7 @@ def investigate_host_cmd(
     tgt = _tgt(target, cfg)
     bundle = get_host_investigation_bundle(si, host_name, hours=hours)
     _audit.log_query(
-        target=tgt, resource=host_name, query_type="host_investigation_bundle", skill="aiops"
+        target=tgt, resource=host_name, query_type="investigate_host", skill="aiops"
     )
     if html or html_path is not None:
         write_bundle_html_snapshot(bundle, "host", tgt, html_path)
@@ -97,7 +97,7 @@ def investigate_host_cmd(
 
 @investigate_app.command("datastore")
 @cli_errors
-@audited("datastore_investigation_bundle")
+@audited("investigate_datastore")
 def investigate_datastore_cmd(
     datastore_name: Annotated[str, typer.Argument(help="Exact datastore name to investigate")],
     hours: _Hours = 24,
@@ -116,7 +116,7 @@ def investigate_datastore_cmd(
     _audit.log_query(
         target=tgt,
         resource=datastore_name,
-        query_type="datastore_investigation_bundle",
+        query_type="investigate_datastore",
         skill="aiops",
     )
     if html or html_path is not None:
@@ -126,7 +126,7 @@ def investigate_datastore_cmd(
 
 
 @cli_errors
-@audited("cross_vcenter_attention")
+@audited("get_cross_vcenter_attention")
 def attention_cmd(
     cluster: Annotated[
         str | None, typer.Option("--cluster", help="Show only clusters matching this substring")
@@ -148,7 +148,7 @@ def attention_cmd(
         sessions, unreachable=unreachable, cluster_filter=cluster, top_n=top
     )
     _audit.log_query(
-        target="*", resource="all-vcenters", query_type="cross_vcenter_attention", skill="aiops"
+        target="*", resource="all-vcenters", query_type="get_cross_vcenter_attention", skill="aiops"
     )
     if html or html_path is not None:
         write_attention_html_snapshot(data, html_path)

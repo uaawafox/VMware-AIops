@@ -19,16 +19,16 @@ from vmware_aiops.ops.vm_gate import (
     revert_snapshot_radius,
 )
 from vmware_aiops.ops.vm_lifecycle import (
-    clone_vm,
+    clone_vm as _ops_clone_vm,
     create_snapshot,
-    create_vm,
+    create_vm as _ops_create_vm,
     delete_snapshot,
     get_task_status,
     list_snapshots,
-    migrate_vm,
-    power_off_vm,
-    power_on_vm,
-    reconfigure_vm,
+    migrate_vm as _ops_migrate_vm,
+    power_off_vm as _ops_power_off_vm,
+    power_on_vm as _ops_power_on_vm,
+    reconfigure_vm as _ops_reconfigure_vm,
     revert_to_snapshot,
 )
 
@@ -37,30 +37,30 @@ from vmware_aiops.ops.vm_lifecycle import (
 @vmware_tool(
     risk_level="medium",
     undo=lambda params, result: {
-        "tool": "vm_power_off",
+        "tool": "power_off_vm",
         "params": {"vm_name": params.get("vm_name"), "target": params.get("target")},
         "skill": "aiops",
-        "note": "Inverse of vm_power_on: power the VM back off.",
+        "note": "Inverse of power_on_vm: power the VM back off.",
     },
 )
 @tool_errors("str")
-def vm_power_on(vm_name: str, target: Optional[str] = None) -> str:
+def power_on_vm(vm_name: str, target: Optional[str] = None) -> str:
     """[WRITE] Power on a virtual machine.
 
     Returns a status string; an already-on VM is a no-op. Reverse with
-    vm_power_off. Call this first when a VM is off: guest tools such as
-    vm_guest_exec only work once VMware Tools has finished booting.
+    power_off_vm. Call this first when a VM is off: guest tools such as
+    run_vm_guest_command only work once VMware Tools has finished booting.
 
     Args:
         vm_name: Exact name of the virtual machine.
         target: Optional vCenter/ESXi target name from config. Uses default if omitted.
     """
     si = _get_connection(target)
-    return power_on_vm(si, vm_name)
+    return _ops_power_on_vm(si, vm_name)
 
 
 def _undo_power_off(params: dict, result: object) -> Optional[dict]:
-    """Inverse of vm_power_off — only when the call actually powered the VM off.
+    """Inverse of power_off_vm — only when the call actually powered the VM off.
 
     A preview, a no-op on an already-off VM and a shutdown that did not finish
     all return normally, and vmware-policy files an undo token for any normal
@@ -70,17 +70,17 @@ def _undo_power_off(params: dict, result: object) -> Optional[dict]:
     if not isinstance(result, dict) or result.get("action") != "powered_off":
         return None
     return {
-        "tool": "vm_power_on",
+        "tool": "power_on_vm",
         "params": {"vm_name": params.get("vm_name"), "target": params.get("target")},
         "skill": "aiops",
-        "note": "Inverse of vm_power_off: power the VM back on.",
+        "note": "Inverse of power_off_vm: power the VM back on.",
     }
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium", undo=_undo_power_off)
 @tool_errors("dict")
-def vm_power_off(
+def power_off_vm(
     vm_name: str,
     force: bool = False,
     confirm: bool = False,
@@ -98,7 +98,7 @@ def vm_power_off(
     does not finish, action is "still_running". Refused: a graceful shutdown when
     Tools is not running or the VM is suspended (preview force=True instead), and
     a VM whose identity or power state cannot be read. An already-off VM returns
-    action "noop". Use vm_power_on to start a VM; vm_delete requires it off first.
+    action "noop". Use power_on_vm to start a VM; delete_vm requires it off first.
 
     Args:
         vm_name: Exact VM name as shown in vCenter inventory (case-sensitive).
@@ -118,8 +118,8 @@ def vm_power_off(
                 "result": f"VM '{radius['vm']}' is already powered off; nothing changed."}
     if not confirm:
         return preview(radius)
-    refuse_on(radius, "vm_power_off")
-    message = power_off_vm(si, vm_name, force=force)
+    refuse_on(radius, "power_off_vm")
+    message = _ops_power_off_vm(si, vm_name, force=force)
     if read_power_state(vm) == "poweredOff":
         return {"action": "powered_off", "result": message, "blast_radius": radius}
     return {
@@ -132,14 +132,14 @@ def vm_power_off(
 @vmware_tool(
     risk_level="medium",
     undo=lambda params, result: {
-        "tool": "vm_delete",
+        "tool": "delete_vm",
         "params": {"vm_name": params.get("vm_name"), "target": params.get("target")},
         "skill": "aiops",
-        "note": "Inverse of vm_create: delete the VM just created (it is powered off).",
+        "note": "Inverse of create_vm: delete the VM just created (it is powered off).",
     },
 )
 @tool_errors("str")
-def vm_create(
+def create_vm(
     vm_name: str,
     cpu: int = 2,
     memory_mb: int = 4096,
@@ -152,7 +152,7 @@ def vm_create(
     """[WRITE] Create a new empty VM with the given hardware sizing.
 
     Creates a powered-off VM with one disk and one NIC. To populate it, attach an
-    ISO (attach_iso_to_vm) and power it on, or use deploy_vm_from_ova or vm_clone
+    ISO (attach_iso_to_vm) and power it on, or use deploy_vm_from_ova or clone_vm
     for a ready-to-run guest. Fails before creating anything if the datastore is
     not found. Returns a status string with the new VM name.
 
@@ -167,7 +167,7 @@ def vm_create(
         target: vCenter/ESXi target from config.yaml; omit for the default.
     """
     si = _get_connection(target)
-    return create_vm(
+    return _ops_create_vm(
         si, vm_name=vm_name, cpu=cpu, memory_mb=memory_mb,
         disk_gb=disk_gb, network_name=network_name,
         datastore_name=datastore_name, folder_path=folder_path,
@@ -177,7 +177,7 @@ def vm_create(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("str")
-def vm_reconfigure(
+def reconfigure_vm(
     vm_name: str,
     cpu: Optional[int] = None,
     memory_mb: Optional[int] = None,
@@ -187,7 +187,7 @@ def vm_reconfigure(
 
     Pass only the fields you want to change; omitted fields are left untouched.
     Hot-add of CPU/memory requires it to be enabled on the VM and a running guest;
-    otherwise power the VM off first (vm_power_off).
+    otherwise power the VM off first (power_off_vm).
 
     Args:
         vm_name: Exact name of the VM to reconfigure.
@@ -199,21 +199,21 @@ def vm_reconfigure(
         Status string describing the applied change, or a VM-not-found error.
     """
     si = _get_connection(target)
-    return reconfigure_vm(si, vm_name, cpu=cpu, memory_mb=memory_mb)
+    return _ops_reconfigure_vm(si, vm_name, cpu=cpu, memory_mb=memory_mb)
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(
     risk_level="high",
     undo=lambda params, result: {
-        "tool": "vm_delete",
+        "tool": "delete_vm",
         "params": {"vm_name": params.get("new_name"), "target": params.get("target")},
         "skill": "aiops",
-        "note": "Inverse of vm_clone: delete the clone (power it off first if running).",
+        "note": "Inverse of clone_vm: delete the clone (power it off first if running).",
     },
 )
 @tool_errors("str")
-def vm_clone(
+def clone_vm(
     vm_name: str,
     new_name: str,
     to_host: Optional[str] = None,
@@ -237,7 +237,7 @@ def vm_clone(
         target: vCenter/ESXi target name from config.
     """
     si = _get_connection(target)
-    return clone_vm(
+    return _ops_clone_vm(
         si, vm_name, new_name,
         target_host=to_host,
         target_datastore=to_datastore,
@@ -248,7 +248,7 @@ def vm_clone(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="high")
 @tool_errors("dict")
-def vm_migrate(
+def migrate_vm(
     vm_name: str,
     to_host: str,
     to_datastore: Optional[str] = None,
@@ -265,11 +265,11 @@ def vm_migrate(
     the preview yet.
 
     Refused: a target host that is not found, not connected, in maintenance mode
-    or outside a cluster; a target datastore that is not found; a target host
+    or has no resource pool; a target datastore that is not found; a target host
     that does not mount the VM's datastores when to_datastore is omitted (vCenter
     rejects cross-host vMotion without shared storage — pass to_datastore); and
     anything above that cannot be read. The VM's current host with no
-    to_datastore returns action "noop". Run cluster_info first for host names.
+    to_datastore returns action "noop". Run get_cluster_info first for host names.
 
     Args:
         vm_name: VM to migrate.
@@ -288,17 +288,17 @@ def vm_migrate(
                 "result": f"VM '{radius['vm']}' is already on host '{to_host}'; nothing changed."}
     if not confirm:
         return preview(radius)
-    refuse_on(radius, "vm_migrate")
-    message = migrate_vm(si, vm_name, to_host, target_datastore=to_datastore)
+    refuse_on(radius, "migrate_vm")
+    message = _ops_migrate_vm(si, vm_name, to_host, target_datastore=to_datastore)
     if " migrated from " not in message:
-        raise did_not_act("vm_migrate", message)
+        raise did_not_act("migrate_vm", message)
     return {"action": "migrated", "result": message, "blast_radius": radius}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="critical")
 @tool_errors("dict")
-def vm_delete(
+def delete_vm(
     vm_name: str,
     confirm: bool = False,
     acknowledge_blast_radius: Optional[dict] = None,
@@ -317,9 +317,9 @@ def vm_delete(
     first; if it changed (another snapshot, a different VM under the same
     name), nothing is deleted and you must preview again.
 
-    Refused outright: a powered-on or suspended VM (power it off with vm_power_off first),
+    Refused outright: a powered-on or suspended VM (power it off with power_off_vm first),
     a VM whose disks or identity cannot be read, and a name that matches more
-    than one VM. Use vm_set_ttl instead when the VM should only expire later.
+    than one VM. Use set_vm_ttl instead when the VM should only expire later.
 
     Args:
         vm_name: Exact name of the VM to delete.
@@ -348,18 +348,18 @@ def vm_delete(
 @vmware_tool(
     risk_level="medium",
     undo=lambda params, result: {
-        "tool": "vm_delete_snapshot",
+        "tool": "delete_vm_snapshot",
         "params": {
             "vm_name": params.get("vm_name"),
             "snapshot_name": params.get("snapshot_name"),
             "target": params.get("target"),
         },
         "skill": "aiops",
-        "note": "Inverse of vm_create_snapshot: delete the snapshot just created.",
+        "note": "Inverse of create_vm_snapshot: delete the snapshot just created.",
     },
 )
 @tool_errors("str")
-def vm_create_snapshot(
+def create_vm_snapshot(
     vm_name: str,
     snapshot_name: str,
     description: str = "",
@@ -369,8 +369,8 @@ def vm_create_snapshot(
 ) -> str:
     """[WRITE] Create a snapshot of a VM.
 
-    Returns a status string. Use this before a risky change so vm_revert_snapshot
-    can undo it, then reclaim the space with vm_delete_snapshot — snapshots left
+    Returns a status string. Use this before a risky change so revert_vm_snapshot
+    can undo it, then reclaim the space with delete_vm_snapshot — snapshots left
     for days grow delta disks and must not be treated as backups.
 
     Args:
@@ -391,7 +391,7 @@ def vm_create_snapshot(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="high")
 @tool_errors("dict")
-def vm_revert_snapshot(
+def revert_vm_snapshot(
     vm_name: str,
     snapshot_name: str,
     confirm: bool = False,
@@ -408,9 +408,9 @@ def vm_revert_snapshot(
     Irreversible — everything written since the snapshot is lost. Refused: a
     snapshot name that is not found, a name that matches more than one snapshot
     on the VM (vSphere allows duplicates; rename one first), and a VM whose
-    snapshot tree, identity or power state cannot be read. Run vm_list_snapshots
+    snapshot tree, identity or power state cannot be read. Run list_vm_snapshots
     first for exact names. To reclaim space without changing state use
-    vm_delete_snapshot.
+    delete_vm_snapshot.
 
     Args:
         vm_name: VM to revert.
@@ -425,19 +425,19 @@ def vm_revert_snapshot(
     radius = revert_snapshot_radius(si, vm_name, snapshot_name)
     if not confirm:
         return preview(radius)
-    refuse_on(radius, "vm_revert_snapshot")
+    refuse_on(radius, "revert_vm_snapshot")
     message = revert_to_snapshot(si, vm_name, snapshot_name)
     # Success is recognised, not failure: the executor answers every refusal
     # (not found, ambiguous) with a sentence, and a new one must not read as done.
     if " reverted to snapshot " not in message:
-        raise did_not_act("vm_revert_snapshot", message)
+        raise did_not_act("revert_vm_snapshot", message)
     return {"action": "reverted", "result": message, "blast_radius": radius}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="high")
 @tool_errors("dict")
-def vm_delete_snapshot(
+def delete_vm_snapshot(
     vm_name: str,
     snapshot_name: str,
     remove_children: bool = False,
@@ -455,18 +455,18 @@ def vm_delete_snapshot(
     not seen the preview yet.
 
     Frees disk space and does NOT change the VM's current state (unlike
-    vm_revert_snapshot). Works while the VM is powered on. Refused: a snapshot
+    revert_vm_snapshot). Works while the VM is powered on. Refused: a snapshot
     name that is not found, a name that matches more than one snapshot on the VM
     (vSphere allows duplicates; rename one first), and a snapshot tree that cannot
-    be read. Run vm_list_snapshots first for exact names.
+    be read. Run list_vm_snapshots first for exact names.
 
     Consolidation is slow for old/large deltas (often minutes). By default (wait=False)
     this returns a task id immediately so it does not block your context — poll it with
-    vm_task_status. Set wait=True only for small snapshots (blocks up to 30 min).
+    get_vm_task_status. Set wait=True only for small snapshots (blocks up to 30 min).
 
     Args:
         vm_name: Exact name of the VM owning the snapshot.
-        snapshot_name: Exact snapshot name from vm_list_snapshots output.
+        snapshot_name: Exact snapshot name from list_vm_snapshots output.
         remove_children: False (default) = children are kept and consolidated;
             True = delete the entire snapshot subtree below this one as well.
         wait: False (default) = async, return task id at once; True = block.
@@ -475,13 +475,13 @@ def vm_delete_snapshot(
 
     Returns:
         Dict with action (preview, snapshot_delete_started, snapshot_deleted),
-        blast_radius, and result (carries the task id to poll via vm_task_status).
+        blast_radius, and result (carries the task id to poll via get_vm_task_status).
     """
     si = _get_connection(target)
     radius = delete_snapshot_radius(si, vm_name, snapshot_name, remove_children)
     if not confirm:
         return preview(radius)
-    refuse_on(radius, "vm_delete_snapshot")
+    refuse_on(radius, "delete_vm_snapshot")
     message = delete_snapshot(
         si, vm_name, snapshot_name, remove_children=remove_children, wait=wait
     )
@@ -490,19 +490,20 @@ def vm_delete_snapshot(
     elif "Snapshot delete started" in message or "is still running" in message:
         action = "snapshot_delete_started"
     else:
-        raise did_not_act("vm_delete_snapshot", message)
+        raise did_not_act("delete_vm_snapshot", message)
     return {"action": action, "result": message, "blast_radius": radius}
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def vm_task_status(task_id: str, target: Optional[str] = None) -> dict:
-    """[READ] Poll a long-running vSphere task by its id (from an async vm_delete_snapshot).
+def get_vm_task_status(task_id: str, target: Optional[str] = None) -> dict:
+    """[READ] Poll a long-running vSphere task by its id (from an async delete_vm_snapshot).
 
-    Use after vm_delete_snapshot returns a task id, instead of re-running the delete.
+    Use after delete_vm_snapshot returns a task id, instead of re-running the delete.
     Returns state (queued/running/success/error/gone), progress percent, and the entity
-    name. 'gone' means vCenter already garbage-collected a completed task — re-list the
+    name. 'gone' means vCenter does not know the id: the task finished and was
+    garbage-collected, or the id is wrong. It says nothing about success — re-list the
     resource to confirm the final state. A failed task reports its fault under
     'task_error'; a top-level 'error' key would mean this poll itself failed.
 
@@ -521,10 +522,10 @@ def vm_task_status(task_id: str, target: Optional[str] = None) -> dict:
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def vm_list_snapshots(vm_name: str, target: Optional[str] = None) -> dict:
+def list_vm_snapshots(vm_name: str, target: Optional[str] = None) -> dict:
     """[READ] List the full snapshot tree of a VM, including nested child snapshots.
 
-    Read-only, no side effects. Call this before vm_revert_snapshot, vm_delete_snapshot,
+    Read-only, no side effects. Call this before revert_vm_snapshot, delete_vm_snapshot,
     or deploy_linked_clone to get exact snapshot names. 'items' is empty when the
     VM has no snapshots.
 

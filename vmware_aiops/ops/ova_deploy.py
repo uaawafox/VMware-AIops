@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 from urllib.request import Request, urlopen
 
 from pyVmomi import vim
+from vmware_policy import sanitize
+from vmware_policy.hostpaths import check_host_path
 
 from vmware_aiops.connection import get_verify_ssl
 from vmware_aiops.ops.inventory import (
@@ -30,6 +32,16 @@ if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
 
 _log = logging.getLogger("vmware-aiops.deploy")
+
+
+class DeployError(Exception):
+    """A deploy that did not happen, with the next step in the message.
+
+    Raised, never returned: these functions used to return the failure as a
+    status string, which ``@tool_errors`` cannot tell from a success, so the MCP
+    frame, the audit row, the plan executor and batch deploy all counted a
+    deploy that never ran as done (real hardware, 2026-10-17).
+    """
 
 _HTTP_TIMEOUT = 300  # seconds — VMDK upload urlopen must never hang the MCP server
 
@@ -100,6 +112,7 @@ def _read_ovf_from_ova(ova_path: str) -> tuple[str, dict[str, int]]:
     Returns:
         Tuple of (ovf_xml_string, {vmdk_filename: file_size_bytes})
     """
+    check_host_path(ova_path)  # never this server's own files (HLD §18 step 0)
     disks: dict[str, int] = {}
     ovf_content = ""
 
@@ -157,6 +170,7 @@ def _upload_disk(
     if not upload_url.lower().startswith("https://"):
         raise ValueError(f"Refusing non-HTTPS upload URL: {upload_url}")
 
+    check_host_path(ova_path)  # opened again here; check again (HLD §18 step 0)
     with tarfile.open(ova_path, "r", encoding="utf-8") as tar:
         member = tar.getmember(disk_name)
         if not _safe_tar_member(member):
@@ -238,6 +252,44 @@ def _report_lease_progress(lease: vim.HttpNfcLease, percent: int) -> None:
         _log.debug("Lease progress report failed at %d%%: %s", percent, e)
 
 
+def _ovf_networks(ovf_manager, ovf_content: str) -> list[str]:
+    """Names of the networks the OVF descriptor declares (empty when it declares none)."""
+    parsed = ovf_manager.ParseDescriptor(
+        ovfDescriptor=ovf_content, pdp=vim.OvfManager.ParseDescriptorParams()
+    )
+    if parsed.error:
+        errors = "; ".join(sanitize(str(e.msg), 200) for e in parsed.error)
+        raise InventoryError(
+            f"OVF parse failed: {errors}. Check that the .ova is a valid OVF package."
+        )
+    return [n.name for n in (parsed.network or [])]
+
+
+def _resolve_network(datacenter, network_name: str):
+    """The datacenter's one network named ``network_name``, or a teaching error.
+
+    Standard and distributed port groups share the datacenter's network list and
+    may share a name; a name that matches more than one is refused rather than
+    picking one (the VM would silently land on the wrong segment).
+    """
+    networks = list(datacenter.network or [])
+    matches = [n for n in networks if n.name == network_name]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise InventoryError(
+            f"Network name '{sanitize(network_name, 100)}' matches more than one network "
+            f"in this datacenter ({len(matches)}, e.g. a standard and a distributed port group). "
+            "Rename one, or deploy with a unique port group name."
+        )
+    names = sorted({sanitize(str(n.name), 80) for n in networks})
+    shown = ", ".join(names[:20]) + (f" (+{len(names) - 20} more)" if len(names) > 20 else "")
+    raise InventoryError(
+        f"Network '{sanitize(network_name, 100)}' not found in this datacenter. "
+        f"Available: {shown or 'none'}. Pass one of these as network_name."
+    )
+
+
 def deploy_ova(
     si: ServiceInstance,
     ova_path: str,
@@ -277,14 +329,15 @@ def deploy_ova(
     # Find datastore
     ds = find_datastore_by_name(si, datastore_name)
     if ds is None:
-        return f"Datastore '{datastore_name}' not found."
+        raise DeployError(
+            f"Datastore '{datastore_name}' not found on this target. Run list_all_datastores "
+            "(vmware-monitor skill) and copy an exact, case-sensitive name."
+        )
 
     # Find datacenter, folder, resource pool
-    try:
-        datacenter = resolve_datacenter(si, datacenter_name)
-        compute_resource = find_compute_resource(datacenter, cluster)
-    except InventoryError as e:
-        return str(e)
+    # InventoryError carries its own remedy and reaches the agent unchanged.
+    datacenter = resolve_datacenter(si, datacenter_name)
+    compute_resource = find_compute_resource(datacenter, cluster)
     vm_folder = datacenter.vmFolder
     if folder_path:
         for part in folder_path.split("/"):
@@ -295,7 +348,10 @@ def deploy_ova(
                     found = True
                     break
             if not found:
-                return f"Folder '{folder_path}' not found."
+                raise DeployError(
+                    f"Folder '{folder_path}' not found under the datacenter's VM folder "
+                    f"(no child named '{part}'). Omit folder_path to deploy to the root."
+                )
 
     resource_pool = compute_resource.resourcePool
 
@@ -303,13 +359,23 @@ def deploy_ova(
     ovf_content, disks = _read_ovf_from_ova(ova_path)
     _log.info("OVA parsed: %d disk(s) found", len(disks))
 
-    # Create import spec
+    # Map every network the OVF declares to the requested vSphere network, and
+    # refuse before importing anything when that name does not resolve.
     ovf_manager = content.ovfManager
+    ovf_networks = _ovf_networks(ovf_manager, ovf_content)
+    mapping = []
+    if ovf_networks:
+        network = _resolve_network(datacenter, network_name)
+        mapping = [
+            vim.OvfManager.NetworkMapping(name=name, network=network) for name in ovf_networks
+        ]
+
+    # Create import spec
     import_spec_params = vim.OvfManager.CreateImportSpecParams(
         entityName=vm_name,
+        networkMapping=mapping,
     )
 
-    # Map OVF networks to vSphere networks
     import_spec_result = ovf_manager.CreateImportSpec(
         ovfDescriptor=ovf_content,
         resourcePool=resource_pool,
@@ -319,7 +385,9 @@ def deploy_ova(
 
     if import_spec_result.error:
         errors = "; ".join(str(e.msg) for e in import_spec_result.error)
-        return f"OVF validation failed: {errors}"
+        raise DeployError(
+            f"OVF validation failed, nothing was imported: {errors[:200]}"
+        )
 
     if import_spec_result.warning:
         for w in import_spec_result.warning:
@@ -336,11 +404,21 @@ def deploy_ova(
     start = time.time()
     while lease.state == vim.HttpNfcLease.State.initializing:
         if time.time() - start > timeout:
-            return "Import lease timed out during initialization."
+            # Abort, or the half-created VM shell stays behind holding the lease;
+            # a failed abort must not replace the error that explains the stop.
+            try:
+                lease.Abort()
+            except Exception:  # noqa: BLE001 - logged; the DeployError below is the answer
+                _log.warning("Aborting the import lease for %s failed", vm_name, exc_info=True)
+            raise DeployError(
+                f"Import lease for '{vm_name}' did not become ready within {timeout}s; "
+                "the import was aborted. Check the target host is connected, then retry."
+            )
         time.sleep(2)
 
     if lease.state == vim.HttpNfcLease.State.error:
-        return f"Import lease error: {lease.error.msg if lease.error else 'Unknown'}"
+        detail = lease.error.msg if lease.error else "unknown"
+        raise DeployError(f"Import lease for '{vm_name}' failed: {str(detail)[:200]}")
 
     _ova_verify_ssl = get_verify_ssl(si)
 
@@ -379,7 +457,14 @@ def deploy_ova(
         lease.Complete()
     except Exception as e:
         lease.Abort()
-        return f"OVA deploy failed during upload: {e}"
+        # _upload_disk's own ValueErrors are authored and say what to fix; any
+        # other exception's text (an HTTP error quoting the NFC URL) is not.
+        cause = str(e)[:150] if isinstance(e, ValueError) else type(e).__name__
+        raise DeployError(
+            f"OVA deploy of '{vm_name}' failed during disk upload and was aborted "
+            f"({cause}). Check this server can reach the ESXi host over HTTPS "
+            "(port 443), then retry."
+        ) from e
 
     result_parts = [f"VM '{vm_name}' deployed from OVA successfully."]
 

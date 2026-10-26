@@ -32,8 +32,8 @@ from vmware_aiops.ops.cluster_mgmt import _CREATABLE_RULE_TYPES, _VALID_DRS_BEHA
 from vmware_aiops.ops.network_mgmt import _VALID_BINDINGS
 
 EXPECTED = [
-    ("cluster_create", "drs_behavior", sorted(_VALID_DRS_BEHAVIORS)),
-    ("cluster_configure", "drs_behavior", sorted(_VALID_DRS_BEHAVIORS)),
+    ("create_cluster", "drs_behavior", sorted(_VALID_DRS_BEHAVIORS)),
+    ("configure_cluster", "drs_behavior", sorted(_VALID_DRS_BEHAVIORS)),
     ("create_drs_rule", "rule_type", sorted(_CREATABLE_RULE_TYPES)),
     ("create_dvs_portgroup", "binding", sorted(_VALID_BINDINGS)),
 ]
