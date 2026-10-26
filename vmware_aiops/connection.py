@@ -190,6 +190,8 @@ _ROUTING_BACKENDS = {"uaa-vcenter": "vcenter-v9"}
 # a routed one, so two hub roles never share a vCenter session and a routed
 # session is never handed to an unrouted caller. The pool owns liveness and
 # eviction for both shapes (the fork's own probe/evict block went with 2.3.0).
+# The key is never PARSED: connect() records what each key means before asking
+# the pool, so a target whose own name contains the separator still works.
 _ROUTED_KEY_SEP = "#"
 
 
@@ -205,6 +207,9 @@ class ConnectionManager:
 
     def __init__(self, config: AppConfig) -> None:
         self._config = config
+        # pool key -> (target name, routed 1P item or None); written by connect()
+        # before the pool is asked, read by the create callback and disconnect().
+        self._key_meaning: dict[str, tuple[str, str | None]] = {}
         self._pool: SessionPool[ServiceInstance] = SessionPool(
             "vmware-aiops",
             # Looked up on self at call time so a test can patch _create_connection.
@@ -235,7 +240,16 @@ class ConnectionManager:
             raise uaa_hub_routing.RoutingError(
                 f"target {target.name!r} has no hub-routing backend; routed request denied"
             )
+        # The item must be for THIS target's backend. X-Hub-Roles builds it
+        # from our backend name, but the legacy single-role header carries a
+        # pre-resolved title verbatim; one minted for another vCenter must not
+        # put that vCenter's credentials on this host.
+        if routed is not None and not routed.endswith(f" - {backend}"):
+            raise uaa_hub_routing.RoutingError(
+                f"routing item {routed!r} is not for backend {backend!r}; routed request denied"
+            )
         key = target.name if routed is None else f"{target.name}{_ROUTED_KEY_SEP}{routed}"
+        self._key_meaning[key] = (target.name, routed)
         return self._pool.get(key)
 
     def _create_for_key(self, key: str) -> ServiceInstance:
@@ -246,7 +260,7 @@ class ConnectionManager:
         that account. A routed item missing either half is refused before any
         login (fail closed), exactly as the pre-2.x fork did on a cache miss.
         """
-        name, _, item = key.partition(_ROUTED_KEY_SEP)
+        name, item = self._key_meaning.get(key, (key, None))
         target = self._config.get_target(name)
         if not item:
             return self._create_connection(target)
@@ -260,7 +274,7 @@ class ConnectionManager:
         """Disconnect from a specific target (busy sessions close when their call ends)."""
         self._pool.discard(target_name)
         for key in self._pool.keys():
-            if key.startswith(f"{target_name}{_ROUTED_KEY_SEP}"):
+            if key != target_name and self._key_meaning.get(key, (None,))[0] == target_name:
                 self._pool.discard(key)
 
     def disconnect_all(self) -> None:

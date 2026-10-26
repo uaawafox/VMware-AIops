@@ -95,3 +95,47 @@ def test_backend_cache_keys_stay_per_target_and_account(monkeypatch):
     b = cm.connect("uaa-vcenter")
     assert a is b  # cached per (target, routed account); login not repeated
     assert created == ["svc"]
+
+
+def test_routed_item_for_another_backend_is_denied_before_login(monkeypatch):
+    """Legacy single-role header: a pre-resolved title minted for a different
+    vCenter must not put that vCenter's credentials on this host."""
+    calls, created = [], []
+    cm = _manager(monkeypatch, calls, created)
+    monkeypatch.setattr(
+        conn_mod.uaa_hub_routing, "routing_item",
+        lambda backend, sel: "MCP - syseng_elevated - vcenter-prod",
+    )
+    with pytest.raises(_RoutingError, match="not for backend 'vcenter-v9'"):
+        cm.connect("uaa-vcenter")
+    assert created == []
+
+
+def test_target_name_containing_the_key_separator_still_works(monkeypatch):
+    calls, created = [], []
+    routed = {"on": False}
+
+    def routing_item(backend, sel):
+        return f"MCP - syseng_elevated - {backend}" if routed["on"] else None
+
+    fake_lib = types.SimpleNamespace(
+        routing_item=routing_item,
+        resolve_fields=lambda item: {"username": "svc", "password": "pw"},
+        RoutingError=_RoutingError,
+    )
+    monkeypatch.setattr(conn_mod, "uaa_hub_routing", fake_lib, raising=False)
+    monkeypatch.setattr(conn_mod, "_HUB_ROUTING", True)
+    monkeypatch.setattr(conn_mod, "_VCENTER_SELECTOR", object(), raising=False)
+    monkeypatch.setitem(conn_mod._ROUTING_BACKENDS, "site#1", "site-backend")
+    monkeypatch.setattr(
+        conn_mod.ConnectionManager, "_create_connection",
+        staticmethod(lambda t, *, user=None, pwd=None: (created.append(t.name), FakeSI(user or t.username))[1]),
+    )
+    target = TargetConfig(name="site#1", host="vc.example", config_username="startup", verify_ssl=True)
+    cm = conn_mod.ConnectionManager(AppConfig(targets=(target,)))
+    assert cm.connect("site#1").user == "startup"          # unrouted: whole name kept
+    routed["on"] = True
+    assert cm.connect("site#1").user == "svc"              # routed: same target, routed creds
+    assert created == ["site#1", "site#1"]
+    cm.disconnect("site#1")
+    assert cm.list_connected() == []
