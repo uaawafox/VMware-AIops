@@ -117,7 +117,12 @@ def test_delete_snapshot_wait_timeout_returns_not_failed_string() -> None:
 def test_get_task_status_gone_task_is_not_an_exception() -> None:
     si = MagicMock()
     broken = MagicMock()
-    type(broken).info = property(lambda self: (_ for _ in ()).throw(Exception("gc")))
+    # What vCenter and ESXi both raise for an unknown task id (checked live
+    # 2026-10-17); other read failures are not 'gone' and propagate.
+    from pyVmomi import vmodl
+
+    gone = vmodl.fault.ManagedObjectNotFound()
+    type(broken).info = property(lambda self: (_ for _ in ()).throw(gone))
     with patch.object(vm_lifecycle.vim, "Task", return_value=broken):
         status = get_task_status(si, "task-dead")
     assert status["state"] == "gone"

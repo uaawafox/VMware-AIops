@@ -19,6 +19,11 @@ from vmware_aiops.ops.guest_ops import (
     guest_provision,
     guest_upload,
 )
+from vmware_aiops.ops.step_policy import (
+    authorize_reached,
+    used_by_provision,
+    with_policy_blockers,
+)
 
 # The four tools below hand caller-supplied content to the guest OS — a program
 # to run, or a file to place at a chosen path — and every one of them advertised
@@ -26,7 +31,7 @@ from vmware_aiops.ops.guest_ops import (
 # credentials passed in, which the example here makes root; `rm -rf /` is a
 # well-formed argument. `destructiveHint` is the field a client consults before
 # deciding whether to ask its user, so the label was disarming the one prompt
-# that mattered most. `vm_guest_download` below keeps `false`: it reads the
+# that mattered most. `download_vm_guest_file` below keeps `false`: it reads the
 # guest and writes the *caller's* disk, which is a different hazard with its own
 # guard, and a label applied to everything tells a client nothing.
 #
@@ -42,7 +47,7 @@ _HINT = (
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="critical", sensitive_params=['password'])
 @tool_errors("dict")
-def vm_guest_exec(
+def run_vm_guest_command(
     vm_name: str,
     command: str,
     username: str,
@@ -66,7 +71,7 @@ def vm_guest_exec(
     read, or a name that matches more than one VM.
 
     Note: the Guest Ops API does not capture stdout/stderr directly, so use this
-    only for fire-and-forget commands — prefer vm_guest_exec_output whenever you
+    only for fire-and-forget commands — prefer run_vm_guest_command_with_output whenever you
     need the output.
 
     Args:
@@ -87,7 +92,7 @@ def vm_guest_exec(
     )
     if not confirm:
         return preview(radius, _HINT)
-    refuse_on(radius, "vm_guest_exec")
+    refuse_on(radius, "run_vm_guest_command")
     result = guest_exec(
         si, vm_name, command, username, password,
         arguments=arguments,
@@ -99,7 +104,7 @@ def vm_guest_exec(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="critical", sensitive_params=['password'])
 @tool_errors("dict")
-def vm_guest_exec_output(
+def run_vm_guest_command_with_output(
     vm_name: str,
     command: str,
     username: str,
@@ -113,7 +118,7 @@ def vm_guest_exec_output(
     Automatically detects guest OS (Linux/Windows) and selects the correct
     shell. Output is captured by redirecting to a temp file, downloading it,
     then cleaning up — no manual redirection needed. Prefer this over
-    vm_guest_exec whenever you need the output. Requires VMware Tools running
+    run_vm_guest_command whenever you need the output. Requires VMware Tools running
     and a writable temp directory in the guest.
 
     Returns exit_code, stdout, stderr, timed_out, os_family, and blast_radius.
@@ -123,8 +128,9 @@ def vm_guest_exec_output(
     through, VMware Tools status and any blockers; nothing runs. Show it to the
     user. Do not set confirm=True on your own because the user asked earlier:
     they have not seen the preview yet. Refused outright: VM not powered on,
-    VMware Tools not running, an unreadable identity or status, or a name that
-    matches more than one VM.
+    VMware Tools not running, an unreadable identity or status, a name that
+    matches more than one VM, or a rules.yaml deny on run_vm_guest_command or
+    download_vm_guest_file (the preview lists it as a blocker).
 
     Args:
         vm_name: Target VM name.
@@ -139,8 +145,12 @@ def vm_guest_exec_output(
     si = _get_connection(target)
     radius = measure_guest_exec_output(si, vm_name, command, username, timeout)
     if not confirm:
-        return preview(radius, _HINT)
-    refuse_on(radius, "vm_guest_exec_output")
+        return preview(with_policy_blockers(radius, "run_vm_guest_command_with_output",
+                                            {"vm_name": vm_name, "username": username},
+                                            target), _HINT)
+    refuse_on(radius, "run_vm_guest_command_with_output")
+    authorize_reached("run_vm_guest_command_with_output",
+                      {"vm_name": vm_name, "username": username}, target)
     result = guest_exec_with_output(si, vm_name, command, username, password, timeout=timeout)
     return {**result, "action": "executed", "blast_radius": radius}
 
@@ -148,7 +158,7 @@ def vm_guest_exec_output(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="high", sensitive_params=['password'])
 @tool_errors("dict")
-def vm_guest_upload(
+def upload_vm_guest_file(
     vm_name: str,
     local_path: str,
     guest_path: str,
@@ -161,8 +171,8 @@ def vm_guest_upload(
 
     Returns a dict with action, message and blast_radius (a status string
     before the confirmation gate). Requires VMware Tools running in the guest
-    OS. An existing file at guest_path is replaced. Use vm_guest_download for
-    the reverse direction, and vm_guest_provision instead when uploads and
+    OS. An existing file at guest_path is replaced. Use download_vm_guest_file for
+    the reverse direction, and provision_vm_guest instead when uploads and
     commands belong to one ordered provisioning run.
 
     Without confirm=True this only previews: blast_radius names the VM (name,
@@ -187,19 +197,19 @@ def vm_guest_upload(
     radius = measure_guest_upload(si, vm_name, local_path, guest_path, username)
     if not confirm:
         return preview(radius, _HINT)
-    refuse_on(radius, "vm_guest_upload")
+    refuse_on(radius, "upload_vm_guest_file")
     message = guest_upload(si, vm_name, local_path, guest_path, username, password)
     return {"action": "uploaded", "message": message, "blast_radius": radius}
 
 
 # Reading a file out of the VM is a read of the VM; writing it to local_path is
 # not, and readOnlyHint is what a client consults before deciding whether to ask
-# the user. Annotated exactly like its mirror vm_guest_upload — same operation,
+# the user. Annotated exactly like its mirror upload_vm_guest_file — same operation,
 # opposite direction.
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="high", sensitive_params=['password'])
 @tool_errors("str")
-def vm_guest_download(
+def download_vm_guest_file(
     vm_name: str,
     guest_path: str,
     local_path: str,
@@ -212,8 +222,8 @@ def vm_guest_download(
 
     Reads from the guest, writes the local filesystem — the write is why this is
     not a read tool. Returns a status string. Requires VMware Tools running in
-    the guest OS. Use vm_guest_upload for the reverse direction; to capture
-    command output use vm_guest_exec_output instead — it redirects and
+    the guest OS. Use upload_vm_guest_file for the reverse direction; to capture
+    command output use run_vm_guest_command_with_output instead — it redirects and
     downloads for you.
 
     Refuses a destination that already exists unless overwrite=True, and never
@@ -239,7 +249,7 @@ def vm_guest_download(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="critical", sensitive_params=['password'])
 @tool_errors("dict")
-def vm_guest_provision(
+def provision_vm_guest(
     vm_name: str,
     username: str,
     password: str,
@@ -250,7 +260,7 @@ def vm_guest_provision(
 ) -> dict:
     """[WRITE] Provision a VM by running an ordered sequence of guest operations.
 
-    Prefer this over repeated vm_guest_exec / vm_guest_upload calls when the steps
+    Prefer this over repeated run_vm_guest_command / upload_vm_guest_file calls when the steps
     form one provisioning run. Steps stop on the first failure, so a partial run
     leaves the guest half-configured. Requires VMware Tools running in the guest.
 
@@ -262,7 +272,10 @@ def vm_guest_provision(
     powered on, VMware Tools not running, an empty step list, a step with an
     unknown type or a missing key, an upload whose local file is missing or
     unreadable, a service step on a Windows guest, an unreadable identity or
-    status, or a name that matches more than one VM.
+    status, a name that matches more than one VM, or a rules.yaml deny on a
+    guest tool these steps run: exec and service steps run_vm_guest_command
+    and run_vm_guest_command_with_output, upload steps upload_vm_guest_file
+    (the preview lists it as a blocker).
 
     Step types:
       - exec:    {"type": "exec", "command": "apt-get install -y nginx"}
@@ -285,7 +298,12 @@ def vm_guest_provision(
     si = _get_connection(target)
     radius = measure_guest_provision(si, vm_name, username, steps, timeout)
     if not confirm:
-        return preview(radius, _HINT)
-    refuse_on(radius, "vm_guest_provision")
+        return preview(with_policy_blockers(radius, "provision_vm_guest",
+                                            {"vm_name": vm_name, "username": username},
+                                            target, used=used_by_provision(steps)), _HINT)
+    refuse_on(radius, "provision_vm_guest")
+    # The password stays out of the policy check and its audit row.
+    authorize_reached("provision_vm_guest", {"vm_name": vm_name, "username": username}, target,
+                      used=used_by_provision(steps))
     result = guest_provision(si, vm_name, username, password, steps, timeout=timeout)
     return {**result, "action": "provisioned", "blast_radius": radius}

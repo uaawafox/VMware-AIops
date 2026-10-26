@@ -25,7 +25,7 @@ cluster_app = typer.Typer(help="Cluster management: create, delete, configure HA
 
 @cluster_app.command("info")
 @cli_errors
-@audited("cluster_info")
+@audited("get_cluster_info")
 def cluster_info_cmd(
     name: str,
     target: TargetOption = None,
@@ -41,7 +41,13 @@ def cluster_info_cmd(
         if k == "hosts":
             console.print(f"  [cyan]hosts:[/]")
             for h in v:
-                state_style = "green" if h["connection_state"] == "connected" else "red"
+                # Red only for a host vCenter reports as down; an unreadable
+                # state is unknown, not an outage.
+                state_style = {
+                    "connected": "green",
+                    "disconnected": "red",
+                    "notResponding": "red",
+                }.get(str(h["connection_state"]), "yellow")
                 maint = " [yellow](maintenance)[/]" if h["maintenance_mode"] else ""
                 console.print(
                     f"    - {h['name']} [{state_style}]{h['connection_state']}[/]{maint}"
@@ -52,7 +58,7 @@ def cluster_info_cmd(
 
 @cluster_app.command("create")
 @cli_errors
-@guarded('cluster_create', risk_level='medium')
+@guarded('create_cluster', risk_level='medium')
 def cluster_create_cmd(
     name: str,
     ha: Annotated[bool, typer.Option("--ha", help="Enable HA")] = False,
@@ -91,7 +97,7 @@ def cluster_create_cmd(
 
 @cluster_app.command("delete")
 @cli_errors
-@guarded('cluster_delete', risk_level='high')
+@guarded('delete_cluster', risk_level='high')
 def cluster_delete_cmd(
     name: str,
     target: TargetOption = None,
@@ -122,7 +128,7 @@ def cluster_delete_cmd(
 
 @cluster_app.command("add-host")
 @cli_errors
-@guarded('cluster_add_host', risk_level='medium')
+@guarded('add_cluster_host', risk_level='medium')
 def cluster_add_host_cmd(
     name: str,
     host: Annotated[str, typer.Option("--host", help="Host name to add")],
@@ -135,7 +141,7 @@ def cluster_add_host_cmd(
 
     if dry_run:
         _dry_run_print(
-            target=_resolve_target(target), vm_name=name, operation="cluster_add_host",
+            target=_resolve_target(target), vm_name=name, operation="add_cluster_host",
             api_call="cluster.MoveInto_Task()",
             parameters={"host": host},
             resource_label="Cluster",
@@ -146,14 +152,14 @@ def cluster_add_host_cmd(
     result = add_host_to_cluster(si, cluster_name=name, host_name=host)
     console.print(f"[green]{result}[/]")
     _audit.log(
-        target=_resolve_target(target), operation="cluster_add_host",
+        target=_resolve_target(target), operation="add_cluster_host",
         resource=name, parameters={"host": host}, result=result,
     )
 
 
 @cluster_app.command("remove-host")
 @cli_errors
-@guarded('cluster_remove_host', risk_level='medium')
+@guarded('remove_cluster_host', risk_level='medium')
 def cluster_remove_host_cmd(
     name: str,
     host: Annotated[str, typer.Option("--host", help="Host name to remove")],
@@ -166,7 +172,7 @@ def cluster_remove_host_cmd(
 
     if dry_run:
         _dry_run_print(
-            target=_resolve_target(target), vm_name=name, operation="cluster_remove_host",
+            target=_resolve_target(target), vm_name=name, operation="remove_cluster_host",
             api_call="datacenter.hostFolder.MoveIntoFolder_Task(list=[host])",
             parameters={"host": host},
             resource_label="Cluster",
@@ -177,14 +183,14 @@ def cluster_remove_host_cmd(
     result = remove_host_from_cluster(si, cluster_name=name, host_name=host)
     console.print(f"[green]{result}[/]")
     _audit.log(
-        target=_resolve_target(target), operation="cluster_remove_host",
+        target=_resolve_target(target), operation="remove_cluster_host",
         resource=name, parameters={"host": host}, result=result,
     )
 
 
 @cluster_app.command("configure")
 @cli_errors
-@guarded('cluster_configure', risk_level='medium')
+@guarded('configure_cluster', risk_level='medium')
 def cluster_configure_cmd(
     name: str,
     ha: Annotated[bool | None, typer.Option("--ha/--no-ha", help="Enable/disable HA")] = None,

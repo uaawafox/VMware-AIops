@@ -1,7 +1,7 @@
 """The blast-radius gate in front of plan apply and rollback (HLD §7).
 
 A plan can delete VMs, power them off, revert snapshots and run guest commands,
-so ``vm_apply_plan`` and ``vm_rollback_plan`` preview first. A plan must not be
+so ``apply_vm_plan`` and ``rollback_vm_plan`` preview first. A plan must not be
 a way around the gate of the tool that does the same thing on its own:
 
 * The preview lists every step with its full parameters (secrets redacted), so
@@ -26,6 +26,13 @@ refused), or ``NON_DESTRUCTIVE_ACTIONS`` with the reason it needs no check.
 ``check_step`` fails closed: an action in none of them, or a gated action that
 has lost its measurement, is refused rather than run unchecked. Rollback steps
 go through the same check.
+
+Separately from the blast radius, every step -- forward or rollback, destructive
+or not -- is authorized by vmware-policy under the name and risk level of the
+tool that does the same thing (``ACTION_TOOLS``), at preview and again just
+before it runs. Without it a ``rules.yaml`` deny on ``delete_vm`` stopped the
+``delete_vm`` tool and not a plan step ``delete_vm`` (real hardware, 2026-10-17);
+the TTL daemon already asked the policy the same way.
 """
 
 from __future__ import annotations
@@ -39,6 +46,8 @@ from vmware_policy import sanitize
 
 from vmware_aiops.ops.gate import GateRefusedError, refusal_message
 from vmware_aiops.ops.planner import _ACTION_SCHEMA, load_plan
+from vmware_aiops.ops.step_policy import STEP_RISK, tool_refusal, used_by_options
+from vmware_aiops.policy_roles import ACTION_TOOLS
 
 if TYPE_CHECKING:
     from pyVmomi.vim import ServiceInstance
@@ -59,11 +68,11 @@ DESTRUCTIVE_ACTIONS = frozenset({
 #: Actions that run unchecked, each with the reason no check is needed. A new
 #: action lands here only with a reason; otherwise it is refused.
 NON_DESTRUCTIVE_ACTIONS: dict[str, str] = {
-    "power_on": "Starts a stopped VM; nothing is removed, and vm_power_on is not gated.",
+    "power_on": "Starts a stopped VM; nothing is removed, and power_on_vm is not gated.",
     "create_vm": "Creates a new VM; nothing existing changes, and rollback deletes "
                  "only the VM it created (checked by instance UUID).",
     "reconfigure": "Changes CPU/memory of one VM, shown in full in the preview; "
-                   "vm_reconfigure is not gated.",
+                   "reconfigure_vm is not gated.",
     "create_snapshot": "Adds a restore point; nothing is removed.",
     "clone": "Copies a VM under a new name; the source is only read.",
     "deploy_ova": "Creates a new VM from an OVA; nothing existing changes.",
@@ -73,7 +82,7 @@ NON_DESTRUCTIVE_ACTIONS: dict[str, str] = {
     "convert_to_template": "Marks a powered-off VM as a template; its disks are kept.",
     "create_cluster": "Creates an empty cluster; nothing existing changes.",
     "configure_cluster": "Changes HA/DRS settings shown in the preview; "
-                         "cluster_configure is not gated.",
+                         "configure_cluster is not gated.",
     "cluster_add_host": "Moves a host into a cluster; no VM or data is removed.",
 }
 
@@ -81,10 +90,10 @@ NON_DESTRUCTIVE_ACTIONS: dict[str, str] = {
 #: the dispatch table so existing plan files load, but a plan holding one is
 #: refused at preview, at apply and at rollback. Value: the tool to use instead.
 REFUSED_ACTIONS: dict[str, str] = {
-    "iscsi_enable": "storage_iscsi_enable",
-    "iscsi_add_target": "storage_iscsi_add_target",
-    "iscsi_remove_target": "storage_iscsi_remove_target",
-    "storage_rescan": "storage_rescan",
+    "iscsi_enable": "enable_iscsi",
+    "iscsi_add_target": "add_iscsi_target",
+    "iscsi_remove_target": "remove_iscsi_target",
+    "storage_rescan": "rescan_storage",
 }
 
 #: Step parameters that identify what a step acts on. Credentials never appear.
@@ -369,12 +378,100 @@ def _step_label(step: dict[str, Any]) -> str:
     return f"Step {step.get('index')} ({kind}{step.get('action')})"
 
 
+def step_risk_level(action: Any) -> str:
+    """The risk a step is authorized at; unknown actions at the highest."""
+    return STEP_RISK.get(action, "critical")
+
+
+def policy_refusal(step: dict[str, Any], target: str | None, *, record: bool) -> str | None:
+    """Ask vmware-policy about one step as its own tool; the refusal, or ``None``.
+
+    ``record`` files the ``denied`` audit row: set when the plan is about to run,
+    not on a preview. An action with no tool of its own is refused here (fail
+    closed), except the storage actions, which the gate refuses with its own
+    message pointing at vmware-storage.
+    """
+    action = step.get("action")
+    tool = ACTION_TOOLS.get(action)
+    if tool is None:
+        if action in REFUSED_ACTIONS:
+            return None
+        return (f"{_step_label(step)} refused: no tool is known to authorize this "
+                "action under, so it is not run unchecked.")
+    params = step.get("params") or {}
+    for inner in sorted({tool} | _follow_ups(action, params)):
+        refused = tool_refusal(inner, params, target, label=_step_label(step),
+                               record=record, audit_params=redact(params))
+        if refused:
+            return refused
+    return None
+
+
+def _rollback_power_off_refusal(
+    si: Any, step: dict[str, Any], target: str | None, *, record: bool,
+) -> str | None:
+    """A rollback delete powers a running VM off first: that is power_off_vm's work.
+
+    Asked only when the VM is on, or its power state cannot be read (fail
+    closed); a VM that is off is deleted without a power-off, and a VM that is
+    gone fails the delete on its own.
+    """
+    from pyVmomi import vim
+
+    from vmware_aiops.ops.inventory import find_vm_by_name
+
+    params = step.get("params") or {}
+    try:
+        vm = find_vm_by_name(si, params.get("vm_name"))
+        if vm is None or vm.config.instanceUuid != params.get("instance_uuid"):
+            return None  # the executor refuses it as a different VM, with that reason
+        running = vm.runtime.powerState == vim.VirtualMachine.PowerState.poweredOn
+    except Exception:  # noqa: BLE001 - unreadable: ask, never power off unchecked
+        running = True
+    if not running:
+        return None
+    return tool_refusal("power_off_vm", params, target, label=_step_label(step),
+                        record=record, audit_params=redact(params))
+
+
+def rollback_power_off_check(target: str | None) -> Callable[[dict[str, Any]], None]:
+    """The ``power_off_check`` for ``rollback_plan``: power_off_vm, recorded.
+
+    Called by the executor after its identity check and just before it powers
+    off a VM the plan created, so nothing changes between the check and the act.
+    """
+    def check(params: dict[str, Any]) -> None:
+        step = {"action": "delete_vm", "rollback": True, "params": params}
+        refused = tool_refusal("power_off_vm", params, target, label=_step_label(step),
+                               record=True, audit_params=redact(params))
+        if refused:
+            raise GateRefusedError(refused)
+    return check
+
+
+def _follow_ups(action: Any, params: dict[str, Any]) -> set[str]:
+    """Tools a deploy step also runs when its parameters ask (as the tools check)."""
+    if action not in ("deploy_ova", "deploy_template", "linked_clone"):
+        return set()
+    # A linked clone's snapshot_name is the SOURCE snapshot it clones from; only
+    # baseline_snapshot takes a new one (narrow review 2026-10-17).
+    new_snapshot = params.get("baseline_snapshot" if action == "linked_clone" else "snapshot_name")
+    return used_by_options(
+        (),
+        reconfigure=params.get("cpu") is not None or params.get("memory_mb") is not None,
+        snapshot=bool(new_snapshot),
+        power_on=bool(params.get("power_on")),
+    )
+
+
 #: A measurement whose action would change nothing (VM already off, already on
 #: that host) passes, as its MCP tool returns ``noop`` before any refusal.
 _NOOP_NOTE = "noop: nothing would change (as its tool reports), so this step is not refused."
 
 
-def check_step(si: ServiceInstance, step: dict[str, Any]) -> None:
+def check_step(
+    si: ServiceInstance, step: dict[str, Any], *, target: str | None = None,
+) -> None:
     """Run a step's check immediately before it runs; raise to stop the plan.
 
     Fails closed: only an action classified non-destructive runs unchecked.
@@ -384,10 +481,13 @@ def check_step(si: ServiceInstance, step: dict[str, Any]) -> None:
     against the instance UUID it recorded, not here.
     """
     action = step.get("action")
+    refused = policy_refusal(step, target, record=True)
+    if refused:
+        raise GateRefusedError(refused)
     if action in NON_DESTRUCTIVE_ACTIONS:
         return
     if step.get("rollback") and action == "delete_vm":
-        return
+        return  # its power-off is checked by rollback_power_off_check, just before it
     label = f"{_step_label(step)}, checked just before it would run,"
     if action in REFUSED_ACTIONS:
         raise GateRefusedError(f"{label} refused: {_refused_blocker(action)}")
@@ -408,7 +508,7 @@ def _load(plan_id: str, status: str, wrong_status: str) -> dict[str, Any]:
     plan = load_plan(plan_id)
     if plan is None:
         raise PlanStateError(
-            f"Plan '{sanitize(plan_id, 100)}' not found. Run vm_list_plans for the "
+            f"Plan '{sanitize(plan_id, 100)}' not found. Run list_vm_plans for the "
             "plan ids that exist."
         )
     if plan.get("status") != status:
@@ -440,6 +540,7 @@ def _target_blocker(plan: dict[str, Any], target: str | None) -> list[str]:
 
 def _step_entry(
     step: dict[str, Any], steps: list[dict[str, Any]], position: int, si: Any,
+    target: str | None = None, record: bool = False,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
     """One step as the preview shows it, plus its blockers and unmeasured fields."""
     index, action, params = step.get("index"), step.get("action"), step.get("params") or {}
@@ -456,32 +557,41 @@ def _step_entry(
     if action not in _ACTION_SCHEMA:
         blockers.append(
             f"Step {index} has unknown action '{sanitize(str(action), 60)}'. "
-            "Create the plan again with vm_create_plan."
+            "Create the plan again with create_vm_plan."
         )
         return entry, blockers, []
     if action == "delete_vm" and not isinstance(params.get("acknowledge_blast_radius"), dict):
         blockers.append(
             f"Step {index} (delete_vm '{sanitize(str(params.get('vm_name')), 200)}') has "
             "no acknowledge_blast_radius, so it would be refused after the earlier "
-            "steps ran. Preview that VM with vm_delete, put its acknowledge_with into "
+            "steps ran. Preview that VM with delete_vm, put its acknowledge_with into "
             "the step, and create the plan again."
         )
-    fields, gate_blockers, unmeasured = _gate(steps, position, si)
+    fields, gate_blockers, unmeasured = _gate(steps, position, si, target, record)
     return {**entry, **fields}, blockers + gate_blockers, unmeasured
 
 
 def _gate(
     steps: list[dict[str, Any]], position: int, si: Any,
+    target: str | None = None, record: bool = False,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
     """How one step (forward or rollback) is checked: preview fields, blockers, unmeasured.
 
-    The same rule as ``check_step``: non-destructive actions pass, refused and
-    unclassified ones block, gated ones are measured now or deferred.
+    The same rule as ``check_step``: the policy is asked first, then
+    non-destructive actions pass, refused and unclassified ones block, gated
+    ones are measured now or deferred.
     """
     step = steps[position]
     action, index = step.get("action"), step.get("index")
     prefix = f"{_step_label(step)}: "
-    if action in NON_DESTRUCTIVE_ACTIONS or (step.get("rollback") and action == "delete_vm"):
+    refused = policy_refusal(step, target, record=record)
+    if refused:
+        return {"check": "refused by policy"}, [refused], []
+    if step.get("rollback") and action == "delete_vm":
+        refused = None if si is None else _rollback_power_off_refusal(
+            si, step, target, record=record)
+        return ({"check": "refused by policy"}, [refused], []) if refused else ({}, [], [])
+    if action in NON_DESTRUCTIVE_ACTIONS:
         return {}, [], []
     if action in REFUSED_ACTIONS:
         return {"check": "refused"}, [prefix + _refused_blocker(action)], []
@@ -513,7 +623,7 @@ def _gate(
 
 
 def measure_apply(
-    plan_id: str, target: str | None, connect: Callable[[], Any],
+    plan_id: str, target: str | None, connect: Callable[[], Any], *, record: bool = False,
 ) -> dict[str, Any]:
     """Every step the plan would run, with its parameters and its tool's measurement.
 
@@ -523,14 +633,15 @@ def measure_apply(
     plan = _load(
         plan_id, "pending",
         "Plan '{plan_id}' status is '{status}', expected 'pending'. Only a pending plan "
-        "can be applied; create a new one with vm_create_plan.",
+        "can be applied; create a new one with create_vm_plan.",
     )
     blockers = _target_blocker(plan, target)
     si = None if blockers else connect()
     steps = [s for s in plan.get("steps") or [] if isinstance(s, dict)]
     entries, unmeasured = [], []
     for position, step in enumerate(steps):
-        entry, step_blockers, step_unmeasured = _step_entry(step, steps, position, si)
+        entry, step_blockers, step_unmeasured = _step_entry(
+            step, steps, position, si, target, record)
         entries.append(entry)
         blockers += step_blockers
         unmeasured += step_unmeasured
@@ -554,6 +665,7 @@ def measure_apply(
 
 def measure_rollback(
     plan_id: str, target: str | None, connect: Callable[[], Any] | None = None,
+    *, record: bool = False,
 ) -> dict[str, Any]:
     """The rollback steps that would run, in order, each checked as a forward step is.
 
@@ -595,7 +707,7 @@ def measure_rollback(
             "destructive": rb_action in DESTRUCTIVE_ACTIONS,
         }
         position = len(would_run)
-        fields, step_blockers, step_unmeasured = _gate(runs, position, si)
+        fields, step_blockers, step_unmeasured = _gate(runs, position, si, target, record)
         entry.update(fields)
         blockers += step_blockers
         unmeasured += step_unmeasured
@@ -607,7 +719,7 @@ def measure_rollback(
                 if uuid else
                 "The instance UUID of the VM this step created was not recorded, so "
                 "this rollback step will be refused; check the VM in vCenter and delete "
-                "it with vm_delete if it is the one."
+                "it with delete_vm if it is the one."
             )
         would_run.append(entry)
     return {

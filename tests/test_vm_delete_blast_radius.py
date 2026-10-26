@@ -1,4 +1,4 @@
-"""vm_delete is the reference implementation of HLD §7 (revised 2026-09-16).
+"""delete_vm is the reference implementation of HLD §7 (revised 2026-09-16).
 
 Three levels, all on one vocabulary (``confirm: bool = False``):
 
@@ -111,7 +111,7 @@ def test_find_vm_by_name_still_returns_a_unique_match_and_none(inventory_of):
 
 def test_ambiguous_name_reaches_the_caller_not_a_generic_failure(inventory_of):
     a, b = inventory_of(_vm("web-01"), _vm("web-01", instance_uuid="5012-bbbb"))
-    out = vm_tools.vm_delete("web-01", confirm=True,
+    out = vm_tools.delete_vm("web-01", confirm=True,
                              acknowledge_blast_radius={"instance_uuid": "5012-aaaa"})
     assert "2 VMs are named 'web-01'" in out["error"]
     a.Destroy_Task.assert_not_called()
@@ -123,7 +123,7 @@ def test_ambiguous_name_reaches_the_caller_not_a_generic_failure(inventory_of):
 
 def test_bare_call_previews_and_destroys_nothing(inventory_of):
     (vm,) = inventory_of(_vm())
-    out = vm_tools.vm_delete("web-01")
+    out = vm_tools.delete_vm("web-01")
     vm.Destroy_Task.assert_not_called()
     vm.PowerOff.assert_not_called()
     assert out["action"] == "preview"
@@ -134,7 +134,7 @@ def test_bare_call_previews_and_destroys_nothing(inventory_of):
 
 def test_preview_states_the_blast_radius(inventory_of):
     inventory_of(_vm())
-    br = vm_tools.vm_delete("web-01")["blast_radius"]
+    br = vm_tools.delete_vm("web-01")["blast_radius"]
     assert br["vm"] == "web-01"
     assert br["instance_uuid"] == "5012-aaaa"
     assert br["host"] == "esx-01"
@@ -151,7 +151,7 @@ def test_acknowledgement_carries_only_stable_keys(inventory_of):
     """Power state and host drift on their own; echoing them would make the
     acknowledgement fail for reasons unrelated to what is being destroyed."""
     inventory_of(_vm())
-    ack = vm_tools.vm_delete("web-01")["blast_radius"]["acknowledge_with"]
+    ack = vm_tools.delete_vm("web-01")["blast_radius"]["acknowledge_with"]
     assert set(ack) == {"instance_uuid", "disk_count", "snapshot_count"}
 
 
@@ -160,7 +160,7 @@ def test_acknowledgement_carries_only_stable_keys(inventory_of):
 
 def test_confirm_without_acknowledgement_is_refused(inventory_of):
     (vm,) = inventory_of(_vm())
-    out = vm_tools.vm_delete("web-01", confirm=True)
+    out = vm_tools.delete_vm("web-01", confirm=True)
     vm.Destroy_Task.assert_not_called()
     assert "acknowledge_blast_radius" in out["error"]
 
@@ -168,7 +168,7 @@ def test_confirm_without_acknowledgement_is_refused(inventory_of):
 def test_confirm_with_a_stale_acknowledgement_is_refused(inventory_of):
     """The preview said 2 snapshots; someone took a third since."""
     (vm,) = inventory_of(_vm(snapshots=3))
-    out = vm_tools.vm_delete(
+    out = vm_tools.delete_vm(
         "web-01", confirm=True,
         acknowledge_blast_radius=PREVIEWED,
     )
@@ -179,7 +179,7 @@ def test_confirm_with_a_stale_acknowledgement_is_refused(inventory_of):
 def test_confirm_on_a_different_vm_with_the_same_name_is_refused(inventory_of):
     """Deleted and recreated between preview and confirm: same name, new VM."""
     (vm,) = inventory_of(_vm(instance_uuid="5012-cccc"))
-    out = vm_tools.vm_delete(
+    out = vm_tools.delete_vm(
         "web-01", confirm=True,
         acknowledge_blast_radius=PREVIEWED,
     )
@@ -190,8 +190,8 @@ def test_confirm_on_a_different_vm_with_the_same_name_is_refused(inventory_of):
 def test_matching_acknowledgement_destroys_once_and_reports_what(inventory_of, monkeypatch):
     monkeypatch.setattr(vm_lifecycle, "_wait_for_task", lambda _t, **_k: None)
     (vm,) = inventory_of(_vm())
-    ack = vm_tools.vm_delete("web-01")["blast_radius"]["acknowledge_with"]
-    out = vm_tools.vm_delete("web-01", confirm=True, acknowledge_blast_radius=ack)
+    ack = vm_tools.delete_vm("web-01")["blast_radius"]["acknowledge_with"]
+    out = vm_tools.delete_vm("web-01", confirm=True, acknowledge_blast_radius=ack)
     vm.Destroy_Task.assert_called_once()
     assert out["action"] == "deleted"
     assert out["blast_radius"]["total_disk_gb"] == 140
@@ -208,8 +208,8 @@ def test_the_vm_destroyed_is_the_vm_that_was_measured(monkeypatch):
         inventory, "_collect",
         lambda _si, _types, _props: [(vm := next(served), {"name": vm.name})],
     )
-    ack = vm_tools.vm_delete("web-01")["blast_radius"]["acknowledge_with"]
-    vm_tools.vm_delete("web-01", confirm=True, acknowledge_blast_radius=ack)
+    ack = vm_tools.delete_vm("web-01")["blast_radius"]["acknowledge_with"]
+    vm_tools.delete_vm("web-01", confirm=True, acknowledge_blast_radius=ack)
     measured.Destroy_Task.assert_called_once()
     recreated.Destroy_Task.assert_not_called()
 
@@ -218,20 +218,20 @@ def test_powered_on_vm_is_refused_even_when_confirmed(inventory_of):
     """The docstring always said 'must be powered off'; the code powered it off
     for you. A running VM is serving something — deleting it is two decisions."""
     (vm,) = inventory_of(_vm(power=ON))
-    preview = vm_tools.vm_delete("web-01")
+    preview = vm_tools.delete_vm("web-01")
     assert preview["blast_radius"]["blockers"]
     ack = preview["blast_radius"]["acknowledge_with"]
-    out = vm_tools.vm_delete("web-01", confirm=True, acknowledge_blast_radius=ack)
+    out = vm_tools.delete_vm("web-01", confirm=True, acknowledge_blast_radius=ack)
     vm.PowerOff.assert_not_called()
     vm.Destroy_Task.assert_not_called()
-    assert "vm_power_off" in out["error"]
+    assert "power_off_vm" in out["error"]
 
 
 def test_unreadable_identity_is_refused(inventory_of):
     (vm,) = inventory_of(_vm(instance_uuid=None))
-    preview = vm_tools.vm_delete("web-01")
+    preview = vm_tools.delete_vm("web-01")
     assert preview["blast_radius"]["unmeasured"]
-    out = vm_tools.vm_delete(
+    out = vm_tools.delete_vm(
         "web-01", confirm=True,
         acknowledge_blast_radius={"instance_uuid": None, "disk_count": None, "snapshot_count": 0},
     )
@@ -259,7 +259,7 @@ def test_schema_defaults_confirm_to_false():
 
     from vmware_aiops.mcp_server.server import mcp
 
-    tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "vm_delete")
+    tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "delete_vm")
     props = tool.inputSchema["properties"]
     assert props["confirm"]["default"] is False
     assert "acknowledge_blast_radius" in props
@@ -272,8 +272,8 @@ def test_schema_defaults_confirm_to_false():
 def test_suspended_vm_is_refused(inventory_of):
     """Deleting a suspended VM discards the paused workload in its memory."""
     (vm,) = inventory_of(_vm(power=vim.VirtualMachine.PowerState.suspended))
-    preview = vm_tools.vm_delete("web-01")
-    out = vm_tools.vm_delete("web-01", confirm=True,
+    preview = vm_tools.delete_vm("web-01")
+    out = vm_tools.delete_vm("web-01", confirm=True,
                              acknowledge_blast_radius=preview["blast_radius"]["acknowledge_with"])
     vm.Destroy_Task.assert_not_called()
     assert "suspended" in out["error"]
@@ -283,7 +283,7 @@ def test_a_disk_without_device_info_is_unmeasured_not_a_crash(inventory_of):
     vm = _vm()
     vm.config.hardware.device[0].deviceInfo = None
     inventory_of(vm)
-    out = vm_tools.vm_delete("web-01", confirm=True, acknowledge_blast_radius=PREVIEWED)
+    out = vm_tools.delete_vm("web-01", confirm=True, acknowledge_blast_radius=PREVIEWED)
     vm.Destroy_Task.assert_not_called()
     assert "Could not read disks" in out["error"]
 
@@ -296,7 +296,7 @@ def test_only_power_state_unreadable_is_still_refused(inventory_of):
 
     type(vm.runtime).powerState = property(unreadable)
     inventory_of(vm)
-    out = vm_tools.vm_delete("web-01", confirm=True, acknowledge_blast_radius=PREVIEWED)
+    out = vm_tools.delete_vm("web-01", confirm=True, acknowledge_blast_radius=PREVIEWED)
     vm.Destroy_Task.assert_not_called()
     assert "power_state" in out["error"]
 
@@ -304,7 +304,7 @@ def test_only_power_state_unreadable_is_still_refused(inventory_of):
 def test_a_changed_disk_count_is_refused(inventory_of):
     three = (("Hard disk 1", 40), ("Hard disk 2", 100), ("Hard disk 3", 1))
     (vm,) = inventory_of(_vm(disks=three))
-    out = vm_tools.vm_delete("web-01", confirm=True, acknowledge_blast_radius=PREVIEWED)
+    out = vm_tools.delete_vm("web-01", confirm=True, acknowledge_blast_radius=PREVIEWED)
     vm.Destroy_Task.assert_not_called()
     assert "disk_count" in out["error"]
 
@@ -312,7 +312,7 @@ def test_a_changed_disk_count_is_refused(inventory_of):
 def test_a_boolean_is_not_a_count(inventory_of):
     (vm,) = inventory_of(_vm(disks=(("Hard disk 1", 40),), snapshots=0))
     ack = {"instance_uuid": "5012-aaaa", "disk_count": True, "snapshot_count": False}
-    out = vm_tools.vm_delete("web-01", confirm=True, acknowledge_blast_radius=ack)
+    out = vm_tools.delete_vm("web-01", confirm=True, acknowledge_blast_radius=ack)
     vm.Destroy_Task.assert_not_called()
     assert "error" in out
 
@@ -322,7 +322,7 @@ def test_total_size_counts_disks_beyond_the_listed_cap(inventory_of):
 
     n = MAX_LISTED_DISKS + 4
     inventory_of(_vm(disks=tuple((f"Hard disk {i}", 1) for i in range(n))))
-    br = vm_tools.vm_delete("web-01")["blast_radius"]
+    br = vm_tools.delete_vm("web-01")["blast_radius"]
     assert len(br["disks"]) == MAX_LISTED_DISKS
     assert br["disk_count"] == n and br["total_disk_gb"] == n
 
@@ -343,7 +343,7 @@ def test_a_plan_delete_step_on_a_running_vm_is_refused(inventory_of):
     from vmware_aiops.ops import plan_executor
 
     (vm,) = inventory_of(_vm(power=ON))
-    ack = vm_tools.vm_delete("web-01")["blast_radius"]["acknowledge_with"]
+    ack = vm_tools.delete_vm("web-01")["blast_radius"]["acknowledge_with"]
     with pytest.raises(Exception, match="powered on"):
         plan_executor._dispatch(MagicMock(), "delete_vm",
                                 {"vm_name": "web-01", "acknowledge_blast_radius": ack})

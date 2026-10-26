@@ -2,7 +2,7 @@
 
 AIops is the family's conversational entry point, so "what's wrong in my
 environment?" must work from an AIops conversation too. The aggregation lives in
-vmware-monitor (a dependency); AIops registers a thin ``cluster_health_summary``
+vmware-monitor (a dependency); AIops registers a thin ``get_cluster_health_summary``
 MCP tool and ``summary`` CLI command that call it with AIops's own connection —
 no logic is duplicated. These tests lock that wiring so a refactor on either side
 cannot silently drop it.
@@ -70,7 +70,7 @@ def test_mcp_tool_registered_and_read_only() -> None:
     from vmware_aiops.mcp_server.server import mcp
 
     tools = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert "cluster_health_summary" in tools, "AIops must re-expose cluster_health_summary"
+    assert "get_cluster_health_summary" in tools, "AIops must re-expose get_cluster_health_summary"
 
 
 def test_mcp_tool_delegates_to_monitor() -> None:
@@ -79,9 +79,9 @@ def test_mcp_tool_delegates_to_monitor() -> None:
 
     with (
         patch.object(tool_mod, "_get_connection", return_value=object()) as conn,
-        patch.object(tool_mod, "get_cluster_health_summary", return_value=_SAMPLE) as agg,
+        patch.object(tool_mod, "_ops_get_cluster_health_summary", return_value=_SAMPLE) as agg,
     ):
-        out = tool_mod.cluster_health_summary(target="prod-vc", top_n=5)
+        out = tool_mod.get_cluster_health_summary(target="prod-vc", top_n=5)
     assert out is _SAMPLE
     conn.assert_called_once()
     # include_vms + top_n threaded through to the monitor function.
@@ -95,16 +95,16 @@ def test_investigation_tools_registered() -> None:
 
     tools = {t.name for t in asyncio.run(mcp.list_tools())}
     for name in (
-        "vm_investigation_bundle",
-        "host_investigation_bundle",
-        "datastore_investigation_bundle",
-        "cross_vcenter_attention",
+        "investigate_vm",
+        "investigate_host",
+        "investigate_datastore",
+        "get_cross_vcenter_attention",
     ):
         assert name in tools, f"AIops must re-expose {name}"
 
 
 def test_vm_bundle_delegates_to_monitor() -> None:
-    """vm_investigation_bundle calls the monitor aggregation with AIops's connection."""
+    """investigate_vm calls the monitor aggregation with AIops's connection."""
     from vmware_aiops.mcp_server.tools import summary as tool_mod
 
     sentinel = {"object": {"name": "web-01"}}
@@ -112,23 +112,23 @@ def test_vm_bundle_delegates_to_monitor() -> None:
         patch.object(tool_mod, "_get_connection", return_value=object()) as conn,
         patch.object(tool_mod, "get_vm_investigation_bundle", return_value=sentinel) as agg,
     ):
-        out = tool_mod.vm_investigation_bundle(vm_name="web-01", hours=48)
+        out = tool_mod.investigate_vm(vm_name="web-01", hours=48)
     assert out is sentinel
     conn.assert_called_once()
     assert agg.call_args.kwargs["hours"] == 48
 
 
 def test_attention_delegates_via_connect_all() -> None:
-    """cross_vcenter_attention resolves all targets and delegates to monitor."""
+    """get_cross_vcenter_attention resolves all targets and delegates to monitor."""
     from vmware_aiops.mcp_server.tools import summary as tool_mod
 
     mgr = type("_Mgr", (), {"connect_all": lambda self: ([("prod", object())], [("dr", "TimeoutError")])})()
     sentinel = {"targets": [], "top_issues": []}
     with (
         patch.object(tool_mod, "_ensure_conn_mgr", return_value=mgr),
-        patch.object(tool_mod, "get_cross_vcenter_attention", return_value=sentinel) as agg,
+        patch.object(tool_mod, "_ops_get_cross_vcenter_attention", return_value=sentinel) as agg,
     ):
-        out = tool_mod.cross_vcenter_attention(top_n=5)
+        out = tool_mod.get_cross_vcenter_attention(top_n=5)
     assert out is sentinel
     # sessions + unreachable from connect_all threaded through to the aggregator.
     assert agg.call_args.kwargs["unreachable"] == [("dr", "TimeoutError")]

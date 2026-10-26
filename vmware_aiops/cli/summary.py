@@ -25,7 +25,7 @@ from vmware_policy import audited
 
 
 @cli_errors
-@audited("cluster_health_summary")
+@audited("get_cluster_health_summary")
 def cluster_summary_cmd(
     cluster: Annotated[
         str | None,
@@ -67,7 +67,7 @@ def cluster_summary_cmd(
     tgt = target or getattr(getattr(cfg, "default_target", None), "name", "default")
     data = get_cluster_health_summary(si, cluster_filter=cluster, include_vms=not no_vms, top_n=top)
     _audit.log_query(
-        target=tgt, resource="clusters", query_type="cluster_health_summary", skill="aiops"
+        target=tgt, resource="clusters", query_type="get_cluster_health_summary", skill="aiops"
     )
 
     if html or html_path is not None:

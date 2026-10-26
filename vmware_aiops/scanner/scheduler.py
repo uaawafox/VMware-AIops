@@ -7,13 +7,14 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from vmware_policy.guard import audit_call, guard
 from vmware_policy.policy import PolicyDenied
+from vmware_policy.pool import call_scope
 from vmware_policy.sanitize import sanitize
 
 from vmware_aiops.config import AppConfig, load_config
@@ -27,6 +28,7 @@ from vmware_aiops.ops.ttl import (
     remove_entry,
     verify_ttl_identity,
 )
+from vmware_aiops.ops.step_policy import TOOL_RISK
 from vmware_aiops.ops.vm_lifecycle import VMNotFoundError, delete_vm
 from vmware_aiops.scanner.alarm_scanner import scan_alarms
 from vmware_aiops.scanner.log_scanner import scan_host_logs_since, scan_logs
@@ -129,8 +131,9 @@ def _audit(
 
     The daemon is neither an MCP tool nor a CLI command, so no decorator writes
     its rows. Until 2026-09-15 nothing did: a TTL delete, a scan cycle against
-    vCenter and a webhook send left no row in either audit trail. The status is
-    passed explicitly, so this needs nothing newer than vmware-policy 1.15.0.
+    vCenter and a webhook send left no row in either audit trail. The surface is
+    passed explicitly (HLD §16 D-14, vmware-policy >= 1.18.0): without it the
+    row inherited the process default and read as an MCP stdio call.
     """
     audit_call(
         _SKILL,
@@ -140,6 +143,7 @@ def _audit(
         status=status,
         duration_ms=int((time.time() - started) * 1000),
         risk_level=risk_level,
+        surface="daemon",
     )
 
 
@@ -170,7 +174,7 @@ def _audit_ttl(
         _last_ttl_outcome = {k: v for k, v in _last_ttl_outcome.items() if k != vm_name}
     else:
         _last_ttl_outcome = {**_last_ttl_outcome, vm_name: signature}
-    _audit("vm_delete", params, status, result, started, risk_level)
+    _audit("delete_vm", params, status, result, started, risk_level)
 
 
 def _send_webhook(webhook: WebhookNotifier, paged: list[dict]) -> None:
@@ -268,6 +272,50 @@ def _run_scan(
         _audit("daemon_scan", {"targets": targets}, status, outcome, started)
 
 
+def _own_sessions(job: Callable[..., None]) -> Callable[..., None]:
+    """Run each scheduled job in its own session scope.
+
+    APScheduler runs jobs on a thread pool, so the scan and the TTL check can
+    overlap. Outside a call scope both would get the target's one cached session
+    and interleave SOAP on it (D-13(2)); inside one, each run holds its own.
+    """
+
+    def run(*args: object) -> None:
+        with call_scope():
+            job(*args)
+
+    return run
+
+
+class _PowerOffRefused(Exception):
+    """The policy refused (or could not check) the power-off before a TTL delete."""
+
+    def __init__(self, status: str, detail: dict) -> None:
+        super().__init__(detail.get("error", ""))
+        self.status, self.detail = status, detail
+
+
+def _check_ttl_power_off(params: dict, target: str | None) -> None:
+    """A running VM is powered off before its TTL delete: power_off_vm's work.
+
+    Asked without recording; the caller records one deduped delete_vm row,
+    since a row per cycle under power_off_vm would add 1440 a day.
+    """
+    try:
+        guard(_SKILL, "power_off_vm", params, risk_level=TOOL_RISK["power_off_vm"],
+              target=target or "")
+    except PolicyDenied as exc:
+        raise _PowerOffRefused("denied", {
+            "error": sanitize(f"power-off before the TTL delete refused by policy: "
+                              f"{exc.result.reason or ''}", 500),
+            "rule": exc.result.rule,
+        }) from None
+    except Exception as exc:  # noqa: BLE001 - an unreadable rule set must not power off
+        raise _PowerOffRefused("error", {
+            "error": sanitize(f"policy check for power_off_vm failed: {exc}", 500),
+        }) from None
+
+
 def _run_ttl_check(conn_mgr: ConnectionManager) -> None:
     """Check for expired VM TTLs and delete them."""
     global _last_ttl_outcome
@@ -281,10 +329,10 @@ def _run_ttl_check(conn_mgr: ConnectionManager) -> None:
         params = {"vm_name": vm_name, "target": target, "trigger": "ttl_expiry",
                   "instance_uuid": entry.instance_uuid}
         started = time.time()
-        # The same authorization as the vm_delete MCP tool and CLI command
-        # (HLD I-3): a deny rule on vm_delete must stop an expiry too.
+        # The same authorization as the delete_vm MCP tool and CLI command
+        # (HLD I-3): a deny rule on delete_vm must stop an expiry too.
         try:
-            guard(_SKILL, "vm_delete", params, risk_level="critical", target=target or "")
+            guard(_SKILL, "delete_vm", params, risk_level="critical", target=target or "")
         except PolicyDenied as exc:
             _audit_ttl(vm_name, params, "denied",
                    {"error": exc.result.reason, "rule": exc.result.rule}, started, "critical")
@@ -302,8 +350,17 @@ def _run_ttl_check(conn_mgr: ConnectionManager) -> None:
             # The VM must still be the one the TTL was set on, not another
             # that has since taken its name.
             verify_ttl_identity(si, entry)
-            result = delete_vm(si, vm_name)
+            result = delete_vm(si, vm_name,
+                               before_power_off=lambda: _check_ttl_power_off(params, target))
             logger.info("TTL expired: %s", result)
+        except _PowerOffRefused as exc:
+            # Nothing was changed. Kept, like a deny on delete_vm, so it expires as
+            # set once the rule is lifted. One row per change of outcome, under
+            # delete_vm, through the same dedupe (the job runs every minute).
+            _audit_ttl(vm_name, params, exc.status, exc.detail, started, "critical")
+            logger.warning("TTL deletion of running VM '%s' refused: %s; keeping entry",
+                           vm_name, exc.detail["error"])
+            continue
         except TTLIdentityError as exc:
             # Not transient: the entry's VM is gone and another holds its name.
             # Nothing is deleted; the entry goes, and the row says why.
@@ -338,7 +395,12 @@ def _run_ttl_check(conn_mgr: ConnectionManager) -> None:
         else:
             _audit_ttl(vm_name, params, "ok",
                    {"result": sanitize(str(result), 500)}, started, "critical")
-        remove_entry(vm_name)
+        try:
+            remove_entry(vm_name)
+        except Exception as exc:  # noqa: BLE001 - one entry must not stop the batch
+            # The next cycle finds the VM gone (or a different VM) and removes it.
+            logger.warning("TTL entry for '%s' not removed this cycle: %s", vm_name, exc)
+            continue
         _last_ttl_outcome = {k: v for k, v in _last_ttl_outcome.items() if k != vm_name}
 
 
@@ -365,8 +427,9 @@ def start_scheduler(config_path: Path | None = None) -> None:
     # in one cycle rather than in every cycle it stays within the last 500.
     cursors = HostLogCursors()
     scheduler = BlockingScheduler()
+
     scheduler.add_job(
-        _run_scan,
+        _own_sessions(_run_scan),
         trigger=IntervalTrigger(minutes=config.scanner.interval_minutes),
         args=[config, conn_mgr, cursors],
         id="vmware_scan",
@@ -375,7 +438,7 @@ def start_scheduler(config_path: Path | None = None) -> None:
         next_run_time=None,  # Scheduler interval starts after manual first run below
     )
     scheduler.add_job(
-        _run_ttl_check,
+        _own_sessions(_run_ttl_check),
         trigger=IntervalTrigger(minutes=1),
         args=[conn_mgr],
         id="vmware_ttl",

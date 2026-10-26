@@ -89,7 +89,7 @@ def test_tls_failure_does_not_hand_the_agent_the_certificate_subject() -> None:
     )
     assert LEAKY_HOST in str(exc), "fixture must actually carry the hostname"
 
-    out = _safe_error(exc, "vm_power_on")
+    out = _safe_error(exc, "power_on_vm")
     assert out == "SSLCertVerificationError: operation failed."
     assert LEAKY_HOST not in out
 
@@ -146,7 +146,7 @@ def test_failed_browse_task_keeps_its_remedy_through_the_wrapper() -> None:
 
 def test_task_still_running_keeps_its_not_a_failure_message():
     """It exists to say "keep polling"; reduced to a class name it says the opposite."""
-    out = _safe_error(TaskStillRunning("task-42", 300), "vm_clone")
+    out = _safe_error(TaskStillRunning("task-42", 300), "clone_vm")
     assert "NOT a failure" in out
     assert "task-42" in out
 
@@ -217,7 +217,7 @@ def test_connect_failures_are_translated_rather_than_dropped(
         with pytest.raises(OSError) as caught:  # noqa: PT011 — type varies by case
             ConnectionManager._create_connection(target)
 
-    out = _safe_error(caught.value, "vm_power_on")
+    out = _safe_error(caught.value, "power_on_vm")
     assert expected_remedy in out
     assert str(CONFIG_FILE) in out
     assert LEAKY_HOST not in out
@@ -239,4 +239,4 @@ def test_missing_password_is_not_relabelled_as_a_connection_failure(monkeypatch)
         with pytest.raises(ConfigError) as caught:
             ConnectionManager._create_connection(unconfigured)
 
-    assert ENV_KEY in _safe_error(caught.value, "vm_power_on")
+    assert ENV_KEY in _safe_error(caught.value, "power_on_vm")

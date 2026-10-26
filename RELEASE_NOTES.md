@@ -1,3 +1,281 @@
+## v2.4.2 — a login refused for lack of a role says so; an unreadable host is not called unreachable (2026-10-19)
+
+Needs vmware-monitor 2.4.2 (now the floor). Found on a vCenter 8.0.3 lab with two restricted SSO accounts
+(follow-up to AIops#47).
+
+* **A login vCenter refuses with `NoPermission` gets the role error, not the raw fault.** For an account with no
+  permission anywhere, vCenter refuses the login itself (`System.View` on the root folder), so the post-login
+  no-role check never ran and `doctor` and every tool showed the raw fault with a connectivity hint. It now raises
+  the no-role error: the "no vSphere role / Global Permissions" remedy only for a vCenter target and `System.View`;
+  an ESXi target or another privilege gets a neutral text naming the (sanitized) privilege. A wrong password
+  (`InvalidLogin`) is unchanged. Same text as vmware-monitor.
+* **vmk tools and `cluster info` no longer call an unreadable host unreachable.** When the account cannot read a
+  host's connection state, `list_host_vmks` rows and the vmk write tools' refusal say the account cannot read the
+  host (`reachable: false` means "not read"), instead of advising a reconnect. `cluster info` colours the state
+  yellow, not red.
+* **From vmware-monitor 2.4.2 (through `get_cluster_health_summary` / `get_cross_vcenter_attention`):** a host this
+  account cannot read is counted `hosts_unreadable` with a warning issue `host_unreadable`, not ranked as a
+  critical `host_down`.
+
+## Unreleased — follow-ups to the 2.4.1 review
+
+* **Previews show policy refusals.** `restore_vm_clean_slate`, `provision_vm_guest` and
+  `run_vm_guest_command_with_output` were refused by `rules.yaml` only at `confirm=True`; the preview now lists that
+  refusal in `blast_radius.blockers`, so the user sees it before agreeing.
+* **A delete that powers the VM off first is checked as `power_off_vm` too:** the CLI `vm delete`, the TTL daemon,
+  and a plan rollback deleting the VM it created (checked when the VM is running or its state cannot be read). The
+  TTL daemon records one `delete_vm` row per change of outcome, as for a deny on `delete_vm`, and keeps the entry.
+  **Behaviour change for custom network roles:** a role that allows `set_vm_ttl` must also allow `power_off_vm`.
+* **Image cache:** writes take a lock across processes (a CLI and an MCP scan at the same time lost one side's
+  rows); a scan keeps rows on datastores it failed to browse (its own or legacy ones) and drops this target's rows
+  on datastores that no longer exist. A cache that cannot be written no longer fails the scan: the images come back
+  with a `cache_note`, as in vmware-storage.
+* **Each call is checked for what it will do, at the moment it does it.** `restore_vm_clean_slate` asks about
+  `power_off_vm` only when it actually powers the VM off; `provision_vm_guest` asks about the guest tools its step
+  types use (an exec-only provision is not refused by a deny on `upload_vm_guest_file`); a plan rollback asks about
+  the power-off after confirming it is the VM the plan created, just before powering it off.
+* **`set_vm_ttl` is checked as the deletion it schedules:** the preview lists a deny on `delete_vm` (and on
+  `power_off_vm` for a running VM), and `confirm=True` refuses it, instead of scheduling a TTL the daemon can never
+  act on. The daemon still asks again at expiry.
+* **`migrate_vm` previews run vCenter's own vMotion compatibility check** (`CheckMigrate_Task`, read-only): its
+  errors (CPU features, devices, networks, datastores) become blockers, with the CPU-feature remedy where it applies,
+  so a move vCenter would refuse is refused in the preview and before the CLI asks for confirmation; warnings are
+  shown and do not block. On a standalone ESXi host, or when the check cannot run, the preview says "not checked"
+  and does not block (vCenter checks again when the move starts). Plan migrate steps get the same check.
+* The TTL store takes the same cross-process lock as the image cache (`set_vm_ttl` and the daemon run in separate
+  processes).
+
+## v2.4.1 — fixes from the 2026-10-17 real-hardware read and write rounds
+
+* **Tools that run other tools' operations obey `rules.yaml` for those tools**, on the MCP and CLI surfaces.
+  `restore_vm_clean_slate`, the batch tools, `provision_vm_guest`, and the deploy tools' `power_on` / snapshot /
+  CPU-memory follow-ups are refused, with a `denied` audit row, when the policy denies the tool that does that part
+  (a deny on `revert_vm_snapshot` used to leave clean slate working; a deny on `power_on_vm` did not stop
+  `batch_clone_vms(power_on=True)`). A follow-up is checked only when the call asks for it. `run_vm_guest_command_with_output` is
+  checked as `run_vm_guest_command` (and `download_vm_guest_file`) too.
+* **Behaviour change for custom network roles:** a role check reads no arguments, so a role that allows
+  `deploy_vm_from_template`, `deploy_vm_from_ova` or `deploy_linked_clone` must now also allow `power_on_vm`,
+  `create_vm_snapshot` and `reconfigure_vm` (and one allowing `run_vm_guest_command_with_output` must allow
+  `run_vm_guest_command` and `download_vm_guest_file`), or every call is refused. The built-in `reader` and `admin`
+  roles are unaffected.
+* **Plan steps obey `rules.yaml`.** Each step of `apply_vm_plan` / `rollback_vm_plan` is authorized by vmware-policy
+  under the tool that does the same thing (a `delete_vm` step as `delete_vm`, `power_off` as `power_off_vm`, the
+  rollback that deletes a VM the plan created as `delete_vm`), at that tool's risk level — in the preview and again
+  just before the step runs, with a `denied` audit row. A deny on `delete_vm` used to stop the tool but not a plan step.
+* **Failures are failures.** Deploy, clone, linked clone, template conversion, ISO attach, `create_vm`, `migrate_vm`,
+  `reconfigure_vm` and `configure_cluster` with nothing to change returned their refusals as status strings, which
+  the MCP frame and the audit recorded as success; they now raise. A plan that stops part-way, a rollback that leaves
+  a step not undone, and a plan that fails validation now carry the family `error` key.
+* **`deploy_vm_from_template` works on a vCenter with standalone hosts**: the clone gets the template's resource
+  pool (it failed with `spec.location.pool`), and the tool now takes `target_host`.
+* **`scan_all_datastore_images` keeps each target's images**: the cache was one list replaced by every scan, so
+  scanning `datastore1` on an ESXi host erased what a vCenter scan had found. Entries now carry `target`; a corrupt
+  cache file is rebuilt by the next scan and explained by the error instead of a bare JSON error.
+* **`browse_datastore` sees every file** (`.ova`, `.ovf`, `.vmx`, `.log` were filtered out), `ds_path` is well formed
+  for ESXi and vCenter folder paths, and a leading `/` is refused with the corrected path, as vmware-storage does.
+* Error text names MCP tools and parameters (CLI form in brackets); doctor is suggested only for connectivity errors;
+  a CPU-feature vMotion refusal leads with the remedy; `get_vm_task_status` no longer says an unknown id means the
+  task finished; powering off a VM that is already off is a plain `noop`.
+
+## v2.4.0 — roles for network callers (HLD §18)
+
+* Declares the role metadata vmware-policy ≥ 1.24.0 needs to apply **roles** to this server over HTTPS
+  (HLD §18): how a missing target resolves, the guest and host-file tools that escape a role, and what each composite tool can run — `apply_vm_plan` and `rollback_vm_plan` reach every tool a plan step maps to plus `delete_vm` (rollback), `set_vm_ttl` reaches `delete_vm`, the batch tools reach the deploy and clone tools and the follow-up steps their arguments ask for (`reconfigure_vm`, `create_vm_snapshot`, `power_on_vm`, and `attach_iso_to_vm` for a deployment spec); a test derives these from what the batch code calls. A role may allow a composite only if it allows all of them. A test fails when a new plan action is not mapped to a tool. With an older vmware-policy nothing changes. Once an operator runs
+  `vmware-audit roles enable`, a token's role decides which tools and targets it may use here; a refused call is
+  audited as `denied`. See vmware-policy's README, "Roles for network callers".
+* A target-limited role is checked against the same config the connection uses: the copy the server's connection manager loaded on its first connection. Edit `config.yaml` and restart for both to see the change.
+* README and setup guide: one endpoint for several people or roles (run `vmware-audit roles enable` first).
+
+## v2.3.2 — tools may not touch this server's own control files
+
+* **Security fix (HLD §18 step 0).** guest file download/upload, OVA and deployment-spec paths could name this server's own files, so over HTTPS a token holder could
+  overwrite `$OPS_HOME/mcp-tokens` or `rules.yaml`, or read a skill's `.env`. A path that resolves into `$OPS_HOME`,
+  a `~/.vmware-*` directory, a `VMWARE_*_CONFIG` directory, or the server's token file or TLS key/certificate is now
+  refused before anything is read or written. Over a network transport these tools read and write host files only
+  inside `VMWARE_MCP_FILE_ROOT` (unset: refused). Needs vmware-policy 1.23.1.
+* `download_vm_guest_file` writes without following a link swapped in during the transfer (`O_NOFOLLOW`, a
+  re-check after the transfer) and refuses a hard-linked destination; the `provision_vm_guest` preview no longer
+  reports the size of a file the run would refuse. Uploads read the source the same way, and a FIFO no longer
+  blocks either direction.
+* **`plan_id` can no longer name a path.** `apply_vm_plan` / `rollback_vm_plan` / `list`/`delete` built the plan file
+  name from the caller's `plan_id`, and saving used the id stored in the file, so a crafted plan could be written to
+  any `*.json` on the host. Plan ids are now `plan-` plus letters, digits and hyphens, and a plan file whose stored id
+  differs from its name is refused.
+
+## v2.3.1 — an account with no vSphere role is named, not passed (AIops#47)
+
+Needs vmware-policy 1.23.0, and the vmware-monitor release with the same fix for the `attention` part.
+
+* **A login with no vSphere role fails at connect time with the reason.** vCenter accepts the login but shows no
+  session for it, and every call then fails with `NotAuthenticated`. The connection is now closed at once and
+  `doctor`, the CLI and MCP tools say the account most likely has no vSphere role and to assign one (Read-Only or
+  higher). Reported on vCenter 8.0.3; not yet reproduced on our own hardware.
+* Refused only when two signals agree: no session, **and** vCenter refuses a view of the root folder
+  (`NotAuthenticated` / `NoPermission`). An account scoped to one folder can also show no session, and still
+  connects; anything the check cannot read lets the login through.
+* **`NotAuthenticated` later on names both causes**: the session expired (retry), or the account's role was
+  removed. It no longer says "verify connectivity and credentials".
+* **Every CLI command prints one line for a vSphere fault.** `summary` (and any other command) printed a raw
+  traceback for faults other than a failed login; they now print the fault's message and what to check.
+* **`attention` never reports OK for targets it could not read** (computed by vmware-monitor): any unread target
+  makes the overall status at least WARN, none read makes it CRITICAL, and the console and HTML say how many were
+  not read. A role-less target is listed as unreachable with reason `NoVSphereRoleError`.
+
+## Unreleased — OVA deploy honours `network_name`
+
+* **`deploy_vm_from_ova` / `deploy ova --network` now attach the NICs to the network you name.** The import spec
+  carried no network mapping, so the argument had no effect and each NIC landed on whatever network the OVF
+  descriptor named. Every network the OVF declares is now mapped to the named port group (standard or distributed).
+  A name that matches no network, or more than one (a standard and a distributed port group can share a name), is
+  refused before anything is imported, with the available names in the error. An OVF descriptor the server cannot
+  parse is refused the same way. Found in the 2026-10-16 pre-release review.
+
+## v2.3.0 — calls on one target run side by side; `get_access_info`
+
+Needs vmware-policy 1.22.0.
+
+* **Calls no longer queue behind each other on a shared server.** Served over `--transport https`/`http`,
+  calls run side by side with up to `VMWARE_MCP_POOL_SIZE` (default 2) sessions per target; each call holds its
+  own session for its whole run, so two calls never share one. Each session is a login on the target. A call
+  that finds every session busy waits at most 300 s, then fails with a message saying so. stdio and the CLI
+  keep one session per target, as before.
+* **Side-by-side calls no longer race on local state.** Two TTL changes at once could drop each other's entry
+  (and a reader catching the file mid-write saw no entries at all); the TTL store and the image registry are now
+  written atomically and TTL updates are serialized. One plan can no longer be applied or rolled back by two
+  calls at once: the second is refused with a message, and nothing runs twice.
+* **The daemon's scan and TTL check each use their own session.** They run on APScheduler's thread pool and
+  could overlap on one pyVmomi session.
+* **New tool `get_access_info`** (CLI `vmware-aiops access-info [--tool X] [--target T]`): which account the
+  server uses on a target, and whether it holds the privileges each tool needs, e.g. `--tool clone_vm`. It asks
+  vCenter about its own session (System.View is enough). Checked on the root folder: `not_granted_at_root` can
+  still be granted on a cluster, folder or VM, and `undetermined` is never read as granted. 61 tools (was 60).
+
+## v2.2.0 — serve MCP over HTTPS
+
+`vmware-aiops mcp` can now serve the network as well as stdio (HLD §16, via vmware-policy 1.21.0):
+
+```bash
+vmware-audit token create alice          # once per caller; shown once
+vmware-aiops mcp --transport https --host 0.0.0.0 --port 8443 \
+    --cert server.pem --key server-key.pem --public-name mcp.example.com
+```
+
+Connect a client and manage callers (Claude Code shown; any MCP client with streamable HTTP and custom headers works):
+
+```bash
+claude mcp add --transport http vmware-aiops https://mcp.example.com:8443/mcp \
+    --header "Authorization: Bearer $VMWARE_MCP_TOKEN"
+vmware-audit token list                  # names only
+vmware-audit token revoke alice          # refused from its next request, no restart
+```
+
+* Every request needs `Authorization: Bearer <token>`; the server will not start without a token, refuses Host or
+  Origin values outside `--public-name`, and checks itself (unauthenticated requests must get 401) before it
+  binds. `--transport http` binds loopback only, for a TLS-terminating reverse proxy.
+* Audit rows record the caller as `token:<name>` and the surface as `mcp-https`. Calls naming different targets
+  run in parallel; calls naming no target run one at a time.
+* stdio remains the default; the `vmware-aiops-mcp` console script and `python -m` are unchanged.
+* Everyone who can reach the endpoint acts with this server's account; run one endpoint per privilege level.
+* Requires `vmware-policy>=1.21.0` and `mcp>=1.28`.
+
+## v2.1.0 — offer only read tools, plus chosen write tools
+
+`vmware-aiops mcp` can now offer a subset of this server's tools (HLD §17 D-16, via vmware-policy 1.20.0):
+
+```bash
+vmware-aiops mcp --expose read --allow-write acknowledge_vcenter_alarm
+```
+
+* `--expose read` (or `VMWARE_AIOPS_MCP_EXPOSE=read`) keeps only tools annotated `readOnlyHint: true`; `--allow-write a,b`
+  (or `VMWARE_AIOPS_MCP_ALLOW_WRITE`) keeps chosen write tools on top. The default is unchanged: every tool.
+* A bad value, or a name that is not a write tool of this server, stops the server before it serves (exit 2).
+  Flags and environment variables are not mixed; a blank flag counts as not given. Pre-2.0 names are accepted.
+* This limits what clients are offered; it is not authorization. See "Limiting which tools are offered" in
+  `references/setup-guide.md`, which also notes that an agent with a shell can bypass MCP, so the account itself
+  must be least-privilege.
+* Requires `vmware-policy>=1.20.0`.
+
+## v2.0.0 — MCP tools renamed verb-first
+
+**Breaking for MCP clients: 38 of the 60 tools have new names.** The family now names every MCP tool one way —
+verb first (`power_on_vm`, `get_cluster_info`, `investigate_vm`) — with a domain word where two skills would
+otherwise collide (`scan_all_datastore_images` here, because vmware-storage's `scan_datastore_images` scans one
+datastore). Parameters, annotations and behaviour are unchanged; no tool was added or removed. The six
+triage/investigation tools that reuse vmware-monitor's code (`get_cluster_health_summary`,
+`get_cross_vcenter_attention`, `investigate_vm`, `investigate_host`, `investigate_datastore`, `list_vm_snapshots`)
+carry the same names and parameters as Monitor's.
+
+| Old name | New name |
+|---|---|
+| `cluster_add_host` | `add_cluster_host` |
+| `cluster_configure` | `configure_cluster` |
+| `cluster_create` | `create_cluster` |
+| `cluster_delete` | `delete_cluster` |
+| `cluster_health_summary` | `get_cluster_health_summary` |
+| `cluster_info` | `get_cluster_info` |
+| `cluster_remove_host` | `remove_cluster_host` |
+| `cross_vcenter_attention` | `get_cross_vcenter_attention` |
+| `datastore_investigation_bundle` | `investigate_datastore` |
+| `host_investigation_bundle` | `investigate_host` |
+| `vm_investigation_bundle` | `investigate_vm` |
+| `vm_apply_plan` | `apply_vm_plan` |
+| `vm_cancel_ttl` | `cancel_vm_ttl` |
+| `vm_clean_slate` | `restore_vm_clean_slate` |
+| `vm_clone` | `clone_vm` |
+| `vm_create` | `create_vm` |
+| `vm_create_plan` | `create_vm_plan` |
+| `vm_create_snapshot` | `create_vm_snapshot` |
+| `vm_delete` | `delete_vm` |
+| `vm_delete_snapshot` | `delete_vm_snapshot` |
+| `vm_guest_download` | `download_vm_guest_file` |
+| `vm_guest_exec` | `run_vm_guest_command` |
+| `vm_guest_exec_output` | `run_vm_guest_command_with_output` |
+| `vm_guest_provision` | `provision_vm_guest` |
+| `vm_guest_upload` | `upload_vm_guest_file` |
+| `vm_list_plans` | `list_vm_plans` |
+| `vm_list_snapshots` | `list_vm_snapshots` |
+| `vm_list_ttl` | `list_vm_ttls` |
+| `vm_migrate` | `migrate_vm` |
+| `vm_power_off` | `power_off_vm` |
+| `vm_power_on` | `power_on_vm` |
+| `vm_reconfigure` | `reconfigure_vm` |
+| `vm_revert_snapshot` | `revert_vm_snapshot` |
+| `vm_rollback_plan` | `rollback_vm_plan` |
+| `vm_set_ttl` | `set_vm_ttl` |
+| `vm_task_status` | `get_vm_task_status` |
+| `vmk_ping` | `ping_from_vmk` |
+| `scan_datastore_images` | `scan_all_datastore_images` |
+
+* **CLI commands are unchanged.** The audit record a CLI command writes carries its MCP twin's new name.
+* Deny rules in `~/.vmware/rules.yaml` written with old names keep working with vmware-policy ≥ 1.18.0 (it matches
+  both names); `vmware-audit policy` lists any rule that now matches more.
+* Plan files are unaffected: plan step actions (`cluster_add_host`, `storage_rescan`, …) are action names, not
+  tool names, and keep their spelling.
+
+* **Daemon audit rows say `daemon`.** The TTL / scan daemon's audit rows carried no surface and read as MCP
+  stdio calls; they now record `surface=daemon` (vmware-policy 1.18.0 audit column, HLD §16 D-14).
+
+* Requires **vmware-monitor 2.0**: the investigation and summary tools reuse Monitor's ops layer, whose drill-down
+  hints now name the 2.0 tools.
+
+## v1.12.1 — `reset_vcenter_alarm` previews before it clears
+
+* **`reset_vcenter_alarm` cleared alarms on the first MCP call.** vSphere has no per-alarm clear:
+  `ClearTriggeredAlarms` clears every triggered alarm with the named alarm's status on its entity type (host / VM /
+  all), usually far more than the one named. The tool was published `destructiveHint: False`, so it sat outside the
+  HLD §7 confirmation gate. It is now `destructiveHint: True` and takes `confirm: bool = False`. A bare call returns
+  `blast_radius` with `will_clear_count` and up to 50 of the alarms it would clear, measured the way the filter
+  matches (same status, same entity type, de-duplicated), and changes nothing. `confirm=True` re-measures and clears;
+  it is refused when the alarm list cannot be read. The CLI's `alarm reset` is unchanged (it already confirms
+  twice). Raised by ClawHub's review of 1.12.0.
+* **The clear uses exactly the filter the preview measured.** A confirmed call no longer looks the alarm up a second
+  time and rebuilds the filter. Alarm names are read only for the 50 listed, so one unreadable alarm definition
+  shows as `<unreadable>` instead of failing the call.
+* **CLI `alarm reset`** now prints the same list (in `--dry-run` and before its double confirmation), refuses when
+  it cannot read which alarms it would clear, clears with the measured filter, and reports how many it cleared.
+* Gate inventory: 23 of the 43 write tools now preview by default (was 22); 20 act on the first call.
+* vmware-pilot 1.12.1 labels the tool `high`, matching the new annotation.
+
 ## v1.12.0 — the MCP instructions name the configured targets
 
 `initialize` hands the client this server's `instructions`, and for a skill whose every tool takes a target that

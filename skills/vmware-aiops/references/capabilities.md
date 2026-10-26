@@ -6,16 +6,16 @@ Each operation is classified by autonomy level per the Enterprise Harness Engine
 
 | Level | Meaning | Agent autonomy | Examples in this skill |
 |:-:|---|---|---|
-| **L1** | Read-only, raw data | Always auto-run | `cluster_info`, `browse_datastore`, `scan_datastore_images`, `list_vcenter_alarms`, `vm_list_snapshots`, `vm_list_ttl`, `vm_task_status` |
-| **L2** | Read + analysis / recommendation | Always auto-run | `cluster_health_summary`, `cross_vcenter_attention`, `vm_investigation_bundle`, `host_investigation_bundle`, `datastore_investigation_bundle`; scheduled scan reports, alarm/event correlation, log pattern analysis |
-| **L3** | Single write | The level is a statement about blast radius, not about an enforced gate. On the CLI the destructive ones double-confirm (`vm power-on` and `vm snapshot-create` do not); over MCP every destructive one (`vm_power_off`, `vm_delete`, `vm_migrate`, …) returns a no-write preview of its blast radius unless called with `confirm=True`, while `vm_power_on`, `vm_create_snapshot` and `vm_clone` act on the first call — see [What gates a write](#what-gates-a-write) | `vm_power_on`, `vm_power_off`, `vm_delete`, `vm_create_snapshot`, `vm_clone`, `vm_migrate` |
-| **L4** | Multi-step plan / apply workflow | Plan generation auto. Review with the user before applying — an agent convention, not enforced: `vm_apply_plan` takes only a plan id | `vm_create_plan` → `vm_apply_plan` → `vm_rollback_plan`, batch-clone, batch-deploy YAML |
+| **L1** | Read-only, raw data | Always auto-run | `get_cluster_info`, `browse_datastore`, `scan_all_datastore_images`, `list_vcenter_alarms`, `list_vm_snapshots`, `list_vm_ttls`, `get_vm_task_status` |
+| **L2** | Read + analysis / recommendation | Always auto-run | `get_cluster_health_summary`, `get_cross_vcenter_attention`, `investigate_vm`, `investigate_host`, `investigate_datastore`; scheduled scan reports, alarm/event correlation, log pattern analysis |
+| **L3** | Single write | The level is a statement about blast radius, not about an enforced gate. On the CLI the destructive ones double-confirm (`vm power-on` and `vm snapshot-create` do not); over MCP every destructive one (`power_off_vm`, `delete_vm`, `migrate_vm`, …) returns a no-write preview of its blast radius unless called with `confirm=True`, while `power_on_vm`, `create_vm_snapshot` and `clone_vm` act on the first call — see [What gates a write](#what-gates-a-write) | `power_on_vm`, `power_off_vm`, `delete_vm`, `create_vm_snapshot`, `clone_vm`, `migrate_vm` |
+| **L4** | Multi-step plan / apply workflow | Plan generation auto. Review with the user before applying — an agent convention, not enforced: `apply_vm_plan` takes only a plan id | `create_vm_plan` → `apply_vm_plan` → `rollback_vm_plan`, batch-clone, batch-deploy YAML |
 | **L5** | Auto-remediation from learned pattern | Pattern library only; requires `risk:low` + `reversible:true` + `repeatable:true` + signed approval | *(roadmap — not implemented; candidates: snapshot consolidation, orphaned VM cleanup)* |
 
 **Notes**:
 - L1/L2 tools are read-only and safe for agents to call unprompted.
 - **The levels describe risk, not enforcement.** The MCP previews stop an agent acting blind, and `confirm=True` is refused on a blocker, but nothing in this skill stops an agent that passes `confirm=True` from calling an L3 or L4 tool the account may call. What decides whether the write lands is the vCenter account — see [What gates a write](#what-gates-a-write).
-- **List envelope**: the read list tools (`browse_datastore`, `list_vcenter_alarms`, `vm_list_plans`, `vm_list_snapshots`, `vm_list_ttl`) return `{items, returned, limit, total, truncated, hint}` instead of a bare array, so an agent can tell a complete answer from a first page rather than inferring it (issue #31). All five enumerate their collection in full before any limit is applied, so `total` is always the real count; only `list_vcenter_alarms` takes a `limit` and can therefore report `truncated: true`. The write `batch_*` tools deliberately keep a bare list — each row is a per-item result of work already done, complete by construction. Errors from these read tools are `{error, hint}` (a dict, not a one-element list).
+- **List envelope**: the read list tools (`browse_datastore`, `list_vcenter_alarms`, `list_vm_plans`, `list_vm_snapshots`, `list_vm_ttls`) return `{items, returned, limit, total, truncated, hint}` instead of a bare array, so an agent can tell a complete answer from a first page rather than inferring it (issue #31). All five enumerate their collection in full before any limit is applied, so `total` is always the real count; only `list_vcenter_alarms` takes a `limit` and can therefore report `truncated: true`. The write `batch_*` tools deliberately keep a bare list — each row is a per-item result of work already done, complete by construction. Errors from these read tools are `{error, hint}` (a dict, not a one-element list).
 - L3+ tools always pass through the `@vmware_tool` decorator: connection check → policy check (opt-in `deny` rules only; nothing is denied by default) → audit log. Confirmation is not in that chain; where a tool has one, it is the tool's own `confirm` argument (see [What gates a write](#what-gates-a-write)).
 - Multi-party approval, where it is genuinely required, is [vmware-pilot](https://github.com/vmware-skills/VMware-Pilot)'s job — it has the state machine and a real human approval step. See it also for cross-skill L4 orchestration and the Dispatcher/Subagent pattern.
 
@@ -28,7 +28,7 @@ Each operation is classified by autonomy level per the Enterprise Harness Engine
 | Surface | Confirmation | Preview |
 |---|---|---|
 | **CLI** | Two interactive `typer.confirm` prompts before every irreversible or guest-writing command. The set is derived from the MCP `destructiveHint` annotations, so a new such command fails the test suite until it has them, and a declined prompt is audited as `rejected`. *Honest limitation:* an agent with a shell satisfies both prompts by piping `yes` into the command. This defends the mistyped command, not a determined caller. | `--dry-run` on every write command except `deploy iso`, `deploy mark-template`, `vm cancel-ttl` and `vm guest-download` |
-| **MCP** | **One argument, `confirm`, defaulting to a no-write preview** (family security HLD §7, revised 2026-09-16). Decision **D-2** (2026-07-21) cut a confirmation handshake as a speed-bump that does not authorize anything; it is superseded. The handshake still is not authorization — the account is (below) — but a preview is what stops an agent acting on a guess, and a refusal is what stops it acting on a guess that has gone stale. The read-only switch removed in v1.8.7 stays removed. Every write tool annotated `destructiveHint: true` takes it: a bare call measures with reads only and returns `{"action": "preview", "blast_radius": {...}}` without changing anything; `confirm=True` re-measures and is refused — a teaching error, audited as a failure — when the measurement found a blocker or could not read a field it needs. `vm_delete` additionally requires echoing the preview's `acknowledge_with` back in `acknowledge_blast_radius`, and is refused if the VM changed since, is powered on or suspended. | 22 of the 43 write tools default to a no-write preview (below) |
+| **MCP** | **One argument, `confirm`, defaulting to a no-write preview** (family security HLD §7, revised 2026-09-16). Decision **D-2** (2026-07-21) cut a confirmation handshake as a speed-bump that does not authorize anything; it is superseded. The handshake still is not authorization — the account is (below) — but a preview is what stops an agent acting on a guess, and a refusal is what stops it acting on a guess that has gone stale. The read-only switch removed in v1.8.7 stays removed. Every write tool annotated `destructiveHint: true` takes it: a bare call measures with reads only and returns `{"action": "preview", "blast_radius": {...}}` without changing anything; `confirm=True` re-measures and is refused — a teaching error, audited as a failure — when the measurement found a blocker or could not read a field it needs. `delete_vm` additionally requires echoing the preview's `acknowledge_with` back in `acknowledge_blast_radius`, and is refused if the VM changed since, is powered on or suspended. | 23 of the 43 write tools default to a no-write preview (below) |
 
 **What actually protects the estate over MCP is the vCenter/ESXi service account.**
 Writes the account may not perform are refused by vCenter itself, whatever the
@@ -51,30 +51,31 @@ unreadable rules file fails closed. It runs in the same process as the tools
 well-meaning agents, not a replacement for RBAC.
 
 - **Write tools: 43** — every tool whose description starts `[WRITE]` and whose `readOnlyHint` is `false`.
-- **Confirm-gated: 22** — `add_host_vmk`, `cluster_delete`, `cluster_remove_host`, `create_drs_rule`, `create_dvs_portgroup`, `delete_drs_rule`, `remove_host_vmk`, `set_drs_rule_enabled`, `set_vmk_service`, `vm_apply_plan`, `vm_clean_slate`, `vm_delete`, `vm_delete_snapshot`, `vm_guest_exec`, `vm_guest_exec_output`, `vm_guest_provision`, `vm_guest_upload`, `vm_migrate`, `vm_power_off`, `vm_revert_snapshot`, `vm_rollback_plan`, `vm_set_ttl`
+- **Confirm-gated: 23** — `add_host_vmk`, `delete_cluster`, `remove_cluster_host`, `create_drs_rule`, `create_dvs_portgroup`, `delete_drs_rule`, `remove_host_vmk`, `reset_vcenter_alarm`, `set_drs_rule_enabled`, `set_vmk_service`, `apply_vm_plan`, `restore_vm_clean_slate`, `delete_vm`, `delete_vm_snapshot`, `run_vm_guest_command`, `run_vm_guest_command_with_output`, `provision_vm_guest`, `upload_vm_guest_file`, `migrate_vm`, `power_off_vm`, `revert_vm_snapshot`, `rollback_vm_plan`, `set_vm_ttl`
   <br>Each takes a `confirm` argument that defaults to false, in which case it measures with reads only and returns `blast_radius` without writing. With `confirm=True` it re-measures and refuses on a blocker or an unreadable field instead of guessing. What each one measures and refuses:
-  - **Guest** (`vm_guest_exec`, `vm_guest_exec_output`, `vm_guest_upload`, `vm_guest_provision`): the VM, its OS family, the guest account, the command or files, each with its full length (`command_length`, `arguments_length`) and `truncated`. Refused when the VM is not powered on, VMware Tools is not running, a local upload source is missing or unreadable, a provision step is malformed, a `service` step targets a Windows guest (it runs `systemctl`), or a command, argument string or path is longer than the preview shows (1000 characters for commands) — put a long command in a script and upload it.
-  - **VM** (`vm_power_off`, `vm_migrate`, `vm_revert_snapshot`, `vm_delete_snapshot`): power state, host, Tools status, the snapshot and what depends on it. Refused on a graceful shutdown without running Tools or of a suspended VM (`force=True` is a hard power-off — preview it), a target host that is missing, disconnected, in maintenance mode or cannot reach the VM's storage, and a snapshot that is not found or whose name is duplicated.
-  - **Cluster** (`cluster_delete`, `cluster_remove_host`): member hosts, VMs, datastores. Refused while hosts or VMs are still in the cluster, or when the host is not in maintenance mode or still runs powered-on VMs.
-  - **Clean Slate / TTL** (`vm_clean_slate`, `vm_set_ttl`): the snapshot and what the revert discards; for a TTL, the VM that will be deleted unattended and when. Clean Slate is refused when the baseline snapshot is missing or its name is ambiguous — before anything is powered off — and reports an error, not `reverted`, if the revert did not happen. The TTL entry records the VM's target and instance UUID; at expiry the daemon deletes only a VM that still has that UUID (another VM under the same name is left alone, the entry dropped and the refusal audited). A TTL is refused on every `vm_delete` blocker except the power state (the daemon powers off first).
-  - **Snapshot names** (`vm_revert_snapshot`, `vm_delete_snapshot`, `vm_clean_slate`): a name matches a snapshot's raw name or the name `vm_list_snapshots` shows (control/invisible characters stripped). Two snapshots matching the same name — duplicates, or names that differ only by stripped characters — are refused by the gate and by the executors, which no longer take the first.
-  - **Plans** (`vm_apply_plan`, `vm_rollback_plan`): every step with its full parameters (passwords and other secret-looking keys redacted), which are destructive and which cannot be rolled back. Each destructive step is measured as its own tool measures it, and that tool's `blockers` / `unmeasured` become the plan's, prefixed `Step N (action):`. A step on an object an earlier step creates or changes (power off, then delete; a VM a step creates) is shown `check: "deferred"` and measured immediately before it runs; every destructive step is re-checked then, and a failed check stops the plan with a teaching error in that step's result. Refused when `target` does not match the plan's (no target is a target of its own), a step would be refused by its tool, or a plan step with action delete_vm carries no `acknowledge_blast_radius`. Every action the executor can run is classified: measured by its tool's gate (including `migrate`, measured as `vm_migrate`), refused, or non-destructive with a stated reason; anything else is refused rather than run unchecked. `iscsi_enable`, `iscsi_add_target`, `iscsi_remove_target` and `storage_rescan` are gated in vmware-storage and cannot be measured here, so a plan containing one is refused at preview, apply and rollback — use `storage_iscsi_*` / `storage_rescan` instead. Rollback steps get the same checks: each destructive rollback step (power off, delete snapshot, cluster delete, host removal) is measured in the `vm_rollback_plan` preview and again just before it runs; a refused check stops the rollback with a teaching error for that step, and the plan stays `failed` so rollback can be run again. A step that creates a VM records its instance UUID; rollback deletes the VM only if it still has that UUID, and refuses that rollback step otherwise. Plan responses never echo step passwords; secret keys are matched as whole name tokens (`password`, `passwd`, `pwd`, `secret`, `token`, `api_key`, `auth`, `credential(s)`, `private_key`).
+  - **Guest** (`run_vm_guest_command`, `run_vm_guest_command_with_output`, `upload_vm_guest_file`, `provision_vm_guest`): the VM, its OS family, the guest account, the command or files, each with its full length (`command_length`, `arguments_length`) and `truncated`. Refused when the VM is not powered on, VMware Tools is not running, a local upload source is missing or unreadable, a provision step is malformed, a `service` step targets a Windows guest (it runs `systemctl`), or a command, argument string or path is longer than the preview shows (1000 characters for commands) — put a long command in a script and upload it.
+  - **VM** (`power_off_vm`, `migrate_vm`, `revert_vm_snapshot`, `delete_vm_snapshot`): power state, host, Tools status, the snapshot and what depends on it. Refused on a graceful shutdown without running Tools or of a suspended VM (`force=True` is a hard power-off — preview it), a target host that is missing, disconnected, in maintenance mode or cannot reach the VM's storage, and a snapshot that is not found or whose name is duplicated.
+  - **Alarm** (`reset_vcenter_alarm`): every triggered alarm the clear would hit — same status, same entity type as the named one — as `will_clear_count` and up to 50 names in `will_clear`. Refused when that list cannot be read.
+  - **Cluster** (`delete_cluster`, `remove_cluster_host`): member hosts, VMs, datastores. Refused while hosts or VMs are still in the cluster, or when the host is not in maintenance mode or still runs powered-on VMs.
+  - **Clean Slate / TTL** (`restore_vm_clean_slate`, `set_vm_ttl`): the snapshot and what the revert discards; for a TTL, the VM that will be deleted unattended and when. Clean Slate is refused when the baseline snapshot is missing or its name is ambiguous — before anything is powered off — and reports an error, not `reverted`, if the revert did not happen. The TTL entry records the VM's target and instance UUID; at expiry the daemon deletes only a VM that still has that UUID (another VM under the same name is left alone, the entry dropped and the refusal audited). A TTL is refused on every `delete_vm` blocker except the power state (the daemon powers off first).
+  - **Snapshot names** (`revert_vm_snapshot`, `delete_vm_snapshot`, `restore_vm_clean_slate`): a name matches a snapshot's raw name or the name `list_vm_snapshots` shows (control/invisible characters stripped). Two snapshots matching the same name — duplicates, or names that differ only by stripped characters — are refused by the gate and by the executors, which no longer take the first.
+  - **Plans** (`apply_vm_plan`, `rollback_vm_plan`): every step with its full parameters (passwords and other secret-looking keys redacted), which are destructive and which cannot be rolled back. Each destructive step is measured as its own tool measures it, and that tool's `blockers` / `unmeasured` become the plan's, prefixed `Step N (action):`. A step on an object an earlier step creates or changes (power off, then delete; a VM a step creates) is shown `check: "deferred"` and measured immediately before it runs; every destructive step is re-checked then, and a failed check stops the plan with a teaching error in that step's result. Refused when `target` does not match the plan's (no target is a target of its own), a step would be refused by its tool, or a plan step with action delete_vm carries no `acknowledge_blast_radius`. Every action the executor can run is classified: measured by its tool's gate (including `migrate`, measured as `migrate_vm`), refused, or non-destructive with a stated reason; anything else is refused rather than run unchecked. The plan actions `iscsi_enable`, `iscsi_add_target`, `iscsi_remove_target` and `storage_rescan` (plan-file action names, not tools) are gated in vmware-storage and cannot be measured here, so a plan containing one is refused at preview, apply and rollback — use `enable_iscsi`, `add_iscsi_target`, `remove_iscsi_target` / `rescan_storage` instead. Rollback steps get the same checks: each destructive rollback step (power off, delete snapshot, cluster delete, host removal) is measured in the `rollback_vm_plan` preview and again just before it runs; a refused check stops the rollback with a teaching error for that step, and the plan stays `failed` so rollback can be run again. A step that creates a VM records its instance UUID; rollback deletes the VM only if it still has that UUID, and refuses that rollback step otherwise. Plan responses never echo step passwords; secret keys are matched as whole name tokens (`password`, `passwd`, `pwd`, `secret`, `token`, `api_key`, `auth`, `credential(s)`, `private_key`).
   - **Refusal messages** lead with the first blocker (problem and remedy) and count the rest ("…and 2 more blockers"), and stay within 480 characters; the preview lists every blocker.
   - **Network / DRS** (`add_host_vmk`, `remove_host_vmk`, `set_vmk_service`, `create_dvs_portgroup`, `create_drs_rule`, `delete_drs_rule`, `set_drs_rule_enabled`): what would be created, changed or removed, with `blockers` and `unmeasured`; `remove_host_vmk` and `set_vmk_service` fail closed on an unreadable service map. Their refusals (a protected or the only management vmk, a VM-Host DRS rule) are reported as blockers in the preview and still raise on `confirm=True`.
-  <br>Only `vm_delete` also requires `acknowledge_blast_radius` to echo the preview's `acknowledge_with` (instance UUID, disk count, snapshot count), refused if those no longer match when re-measured. Undo tokens are filed only when a call actually changed something, never for a preview.
-- **Ungated: 21** — none is annotated destructive, and each acts on the first call: create/clone/deploy (`vm_create`, `vm_clone`, `deploy_vm_from_ova`, the `batch_*` tools, …), `vm_power_on`, `vm_create_snapshot`, `vm_reconfigure`, `cluster_create`, `cluster_configure`, `cluster_add_host`, `attach_iso_to_vm`, `convert_vm_to_template`, `vm_guest_download`, `vm_cancel_ttl`, `vm_create_plan` and the two alarm tools. "Not destructive" is not "harmless": `vm_reconfigure` and `cluster_configure` change live configuration without a preview.
+  <br>Only `delete_vm` also requires `acknowledge_blast_radius` to echo the preview's `acknowledge_with` (instance UUID, disk count, snapshot count), refused if those no longer match when re-measured. Undo tokens are filed only when a call actually changed something, never for a preview.
+- **Ungated: 20** — none is annotated destructive, and each acts on the first call: create/clone/deploy (`create_vm`, `clone_vm`, `deploy_vm_from_ova`, the `batch_*` tools, …), `power_on_vm`, `create_vm_snapshot`, `reconfigure_vm`, `create_cluster`, `configure_cluster`, `add_cluster_host`, `attach_iso_to_vm`, `convert_vm_to_template`, `download_vm_guest_file`, `cancel_vm_ttl`, `create_vm_plan` and `acknowledge_vcenter_alarm`. "Not destructive" is not "harmless": `reconfigure_vm` and `configure_cluster` change live configuration without a preview.
 
-### `vm_guest_exec` deserves naming
+### `run_vm_guest_command` deserves naming
 
-`vm_guest_exec` runs a caller-supplied command inside the guest OS through
+`run_vm_guest_command` runs a caller-supplied command inside the guest OS through
 VMware Tools, with the credentials passed to it — its `username` parameter
 is required — there is no default account. It is the widest blast radius in the
 skill. Over MCP it now previews by default — the VM, the guest account and the
-command as it would run — as do `vm_guest_exec_output`, `vm_guest_upload` and
-`vm_guest_provision`. But the preview describes the command; it does not judge
+command as it would run — as do `run_vm_guest_command_with_output`, `upload_vm_guest_file` and
+`provision_vm_guest`. But the preview describes the command; it does not judge
 it. Nothing in this skill bounds what the command may be once `confirm=True`:
 `rm -rf /` is a well-formed argument, and the same is true of the `exec` steps
-inside `vm_guest_provision`.
+inside `provision_vm_guest`.
 
 Two things follow. First, the guest credentials are a second, separate
 authorization boundary — a read-only vCenter role does not constrain what these
@@ -83,7 +84,7 @@ skill a guest account with the privileges the work actually needs, and pass it �
 `username` has no default, so the account is always a deliberate choice. Over MCP the guest
 password is an ordinary tool argument, so the agent — and its transcript — sees
 it; only the audit row redacts it. The skill stores no guest credentials of its
-own. Relatedly, `vm_guest_upload` and the `upload` steps of `vm_guest_provision`
+own. Relatedly, `upload_vm_guest_file` and the `upload` steps of `provision_vm_guest`
 read any local file the server process can read and copy it into the guest.
 Second, until
 2026-08-30 all four tools that push content into a guest were annotated
@@ -108,13 +109,13 @@ drill-downs collapse via native `<details>`, zero JavaScript).
 
 | Operation | CLI | MCP Tool | vCenter | ESXi |
 |-----------|-----|----------|:-------:|:----:|
-| Cluster health summary | `summary` | `cluster_health_summary` | ✅ | ❌ |
-| Cross-vCenter attention | `attention` | `cross_vcenter_attention` | ✅ | ❌ |
-| VM investigation bundle | `investigate vm <name>` | `vm_investigation_bundle` | ✅ | ✅ |
-| Host investigation bundle | `investigate host <name>` | `host_investigation_bundle` | ✅ | ✅ |
-| Datastore investigation bundle | `investigate datastore <name>` | `datastore_investigation_bundle` | ✅ | ✅ |
+| Cluster health summary | `summary` | `get_cluster_health_summary` | ✅ | ❌ |
+| Cross-vCenter attention | `attention` | `get_cross_vcenter_attention` | ✅ | ❌ |
+| VM investigation bundle | `investigate vm <name>` | `investigate_vm` | ✅ | ✅ |
+| Host investigation bundle | `investigate host <name>` | `investigate_host` | ✅ | ✅ |
+| Datastore investigation bundle | `investigate datastore <name>` | `investigate_datastore` | ✅ | ✅ |
 
-### `cluster_health_summary` — "is anything on fire?"
+### `get_cluster_health_summary` — "is anything on fire?"
 
 The first look. Rolls up hosts, VM power state, live CPU/memory pressure and triggered
 alarms per cluster, assigns an opinionated `ok` / `warn` / `critical` status, and
@@ -133,13 +134,13 @@ snapshot, customization_hint}` — lead with `top_issues`, show `clusters` as co
 with cluster count, not VM count. Aggregation happens in the tool — the model never
 sees raw inventory.
 
-### `cross_vcenter_attention` — "where do I look first, anywhere in the estate?"
+### `get_cross_vcenter_attention` — "where do I look first, anywhere in the estate?"
 
 Merges every configured target's cluster-health summary into a single globally ranked
 `top_issues` list (each item tagged with its `vcenter`) plus a per-target rollup.
 Degrades gracefully: an unreachable target is listed under `unreachable` and the rest
-still aggregate. Use it before `cluster_health_summary` when more than one vCenter is
-configured; with a single target, go straight to `cluster_health_summary`.
+still aggregate. Use it before `get_cluster_health_summary` when more than one vCenter is
+configured; with a single target, go straight to `get_cluster_health_summary`.
 
 | Parameter | Type | Default | Behavior |
 |-----------|------|---------|----------|
@@ -159,9 +160,9 @@ reads. All three accept `hours` (event-timeline look-back, default 24) and an op
 
 | Tool | Required arg | Correlates |
 |------|--------------|------------|
-| `vm_investigation_bundle` | `vm_name` | VM state, the host it runs on, cluster context, backing datastores, snapshots, triggered alarms, live performance, merged event timeline (VM + host + cluster + datastores, newest first) |
-| `host_investigation_bundle` | `host_name` | Connection state, CPU/memory, ESXi version, uptime, cluster context, rollup of VMs it runs, datastores it mounts, alarms across host/cluster/datastore, live performance, merged event timeline |
-| `datastore_investigation_bundle` | `datastore_name` | Capacity/free space/accessibility, hosts that mount it, rollup of VMs it backs, alarms across datastore/host, merged event timeline. (Per-datastore latency is a separate perf report, not included.) |
+| `investigate_vm` | `vm_name` | VM state, the host it runs on, cluster context, backing datastores, snapshots, triggered alarms, live performance, merged event timeline (VM + host + cluster + datastores, newest first) |
+| `investigate_host` | `host_name` | Connection state, CPU/memory, ESXi version, uptime, cluster context, rollup of VMs it runs, datastores it mounts, alarms across host/cluster/datastore, live performance, merged event timeline |
+| `investigate_datastore` | `datastore_name` | Capacity/free space/accessibility, hosts that mount it, rollup of VMs it backs, alarms across datastore/host, merged event timeline. (Per-datastore latency is a separate perf report, not included.) |
 
 **Typical response tokens**: ~400–1200 per bundle (correlated summary + capped event
 timeline); grows with the `hours` window, not with fleet size. Explain the result in
@@ -174,8 +175,8 @@ operational language — do not dump it raw.
 | Power On | `vm power-on <name>` | — | ✅ | ✅ |
 | Graceful Shutdown | `vm power-off <name>` | Double | ✅ | ✅ |
 | Force Power Off | `vm power-off <name> --force` | Double | ✅ | ✅ |
-| Reset | plan action `reset` via `vm_create_plan` (MCP; no CLI command) | — | ✅ | ✅ |
-| Suspend | plan action `suspend` via `vm_create_plan` (MCP; no CLI command) | — | ✅ | ✅ |
+| Reset | plan action `reset` via `create_vm_plan` (MCP; no CLI command) | — | ✅ | ✅ |
+| Suspend | plan action `suspend` via `create_vm_plan` (MCP; no CLI command) | — | ✅ | ✅ |
 | VM Info | `vmware-monitor vm info <name>` (companion skill) | — | ✅ | ✅ |
 | Create VM | `vm create <name> --cpu --memory --disk` | — | ✅ | ✅ |
 | Delete VM | `vm delete <name>` | Double | ✅ | ✅ |
@@ -197,8 +198,8 @@ operational language — do not dump it raw.
 
 > Guest Operations require VMware Tools running inside the guest OS. `--user` is required on all three commands (and `username` on the MCP guest tools): there is no default account, so no call runs as root without choosing root.
 
-> `vm task-status` / `vm_task_status` polls a vSphere task id returned by an async
-> write (today: `vm_delete_snapshot`) instead of re-running the operation. Returns
+> `vm task-status` / `get_vm_task_status` polls a vSphere task id returned by an async
+> write (today: `delete_vm_snapshot`) instead of re-running the operation. Returns
 > state (`queued` / `running` / `success` / `error` / `gone`), progress percent, and
 > the entity name. `gone` means vCenter already garbage-collected a completed task —
 > re-list the resource to confirm the final state. A failed task carries its fault
@@ -211,10 +212,10 @@ For complex operations involving 2+ steps or 2+ VMs, use the plan/apply workflow
 
 | Step | MCP Tool / CLI | Description |
 |------|---------------|-------------|
-| 1. Create Plan | `vm_create_plan` | Validates actions, checks targets in vSphere, generates plan with rollback info |
+| 1. Create Plan | `create_vm_plan` | Validates actions, checks targets in vSphere, generates plan with rollback info |
 | 2. Review | — | AI shows plan to user: steps, affected VMs, irreversible warnings |
-| 3. Apply | `vm_apply_plan` | Executes sequentially; stops on failure |
-| 4. Rollback (if failed) | `vm_rollback_plan` | Asks user, then reverses executed steps (skips irreversible) |
+| 3. Apply | `apply_vm_plan` | Executes sequentially; stops on failure |
+| 4. Rollback (if failed) | `rollback_vm_plan` | Asks user, then reverses executed steps (skips irreversible) |
 
 Plans are stored in `~/.vmware-aiops/plans/`, deleted on success, auto-cleaned after 24h.
 
@@ -232,9 +233,9 @@ Plans are stored in `~/.vmware-aiops/plans/`, deleted on success, auto-cleaned a
 
 ### Guest Operations Notes
 
-`vm_guest_exec_output` — execute a shell command and **capture stdout/stderr** automatically. OS auto-detected (Linux/Windows) via `vm.guest.guestFamily`. No manual redirection needed.
+`run_vm_guest_command_with_output` — execute a shell command and **capture stdout/stderr** automatically. OS auto-detected (Linux/Windows) via `vm.guest.guestFamily`. No manual redirection needed.
 
-`vm_guest_provision` — run an ordered sequence of exec/upload/service steps in one call. Stops on first failure. Typical use: SSH key injection → package install → service start.
+`provision_vm_guest` — run an ordered sequence of exec/upload/service steps in one call. Stops on first failure. Typical use: SSH key injection → package install → service start.
 
 ## Datastore Browser
 
@@ -257,9 +258,9 @@ MCP-only (no CLI subcommand). Seven tools for distributed-switch portgroup and h
 | `add_host_vmk` | W | medium | Static-IP vmk on a DVS portgroup — no gateway, no services (throwaway test-vmk shape). `confirm=False` previews; returns the assigned device (`vmk2`). |
 | `remove_host_vmk` | W | high | Fail-closed removal. Refuses on service selection / non-default netstack / default route / unverifiable state; `force_unprotected=True` overrides all but the only-management-vmk absolute. |
 | `set_vmk_service` | W | medium | Tag/untag a host service (nicType: vmotion, management, vsan, vSphereProvisioning, …) on an existing vmk — completes `add_host_vmk` (adapters are created serviceless). Idempotent; `confirm=False` previews. Fail-closed on unreadable service map; refuses (no override) to untag `management` from the only management-enabled vmk. |
-| `vmk_ping` | R | medium | DF-bit-capable ping sourced from a vmk via esxcli-over-API (no SSH). `df=True size=1572` proves a ≥1600 overlay floor; `size=8972` proves full jumbo. Oversized DF'd packets report `fault` structurally, not as an error. |
+| `ping_from_vmk` | R | medium | DF-bit-capable ping sourced from a vmk via esxcli-over-API (no SSH). `df=True size=1572` proves a ≥1600 overlay floor; `size=8972` proves full jumbo. Oversized DF'd packets report `fault` structurally, not as an error. |
 
-> **Typical response tokens**: `list_*` ~60–400 (one compact row per portgroup/vmk, paginated at 200/100); `create`/`add`/`remove` ~40–120 (preview or result record); `vmk_ping` ~80–200 (request + per-summary stats or the esxcli fault text).
+> **Typical response tokens**: `list_*` ~60–400 (one compact row per portgroup/vmk, paginated at 200/100); `create`/`add`/`remove` ~40–120 (preview or result record); `ping_from_vmk` ~80–200 (request + per-summary stats or the esxcli fault text).
 
 ## Cluster Management
 
@@ -288,7 +289,30 @@ MCP-only (no CLI subcommand). Seven tools for distributed-switch portgroup and h
 | Acknowledge Alarm | `alarm acknowledge <entity> <alarm>` | — | ✅ | ❌ |
 | Clear (Reset) Alarms | `alarm reset <entity> <alarm>` | Double | ✅ | ❌ |
 
-> **Blast radius**: vSphere has no per-alarm clear API. `alarm reset` / `reset_vcenter_alarm` uses `AlarmManager.ClearTriggeredAlarms`, which clears **all** triggered alarms matching the named alarm's entity type (host/VM/all) and current status (red/yellow) — not just the named one. The named alarm is looked up first (typos fail fast), and the result's `scope` field reports exactly what was cleared. Cleared alarms re-trigger automatically if their underlying condition persists.
+> **Blast radius**: vSphere has no per-alarm clear API. `alarm reset` / `reset_vcenter_alarm` uses `AlarmManager.ClearTriggeredAlarms`, which clears **all** triggered alarms matching the named alarm's entity type (host/VM/all) and current status (red/yellow) — not just the named one. The named alarm is looked up first (typos fail fast). Over MCP a bare call previews every alarm it would clear (`blast_radius.will_clear`) and changes nothing; `confirm=True` clears, and the result's `scope` field reports exactly what was cleared. Cleared alarms re-trigger automatically if their underlying condition persists.
+
+## Access self-check — `get_access_info`
+
+`get_access_info(tool=None, target=None)` (CLI `access-info`) asks the target about this
+server's own session (`HasPrivilegeOnEntities`, which needs only System.View) and answers
+which account it acts as and whether that account holds the privileges a tool needs: with
+`tool`, `{name, requires, verdict, meaning, missing_at_root}`; without it, every tool sorted
+into `tools_granted_at_root` / `tools_not_granted_at_root` / `tools_undetermined` /
+`tools_no_privilege_needed`, plus the account's direct permissions. Use it before a write
+the account may not be allowed, or after a NoPermission. The table it reads is
+`vmware_aiops/access_requirements.py`.
+
+- Checked on the **root folder** only. `not_granted_at_root` may still be granted on a
+  cluster, folder or VM; `undetermined` (the platform did not answer) is never granted.
+- Where vSphere checks a privilege inside the method (reconfigure, clone from a template,
+  vMotion, cluster delete, datastore browse), the table lists vSphere's documented id.
+  `ping_from_vmk` (esxcli through the host) is always `undetermined`: what the host checks
+  for it is not documented.
+- `set_vm_ttl` includes what `delete_vm` needs: the daemon deletes later as this account.
+- `apply_vm_plan` / `rollback_vm_plan` list every privilege any plan step could need; a
+  given plan needs only its own steps'.
+
+**Typical response tokens**: ~310 for one tool, ~900 for all 61.
 
 ## Scheduled Scanning & Notifications
 

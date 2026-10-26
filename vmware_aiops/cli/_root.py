@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Optional, Annotated
 
 import typer
 
 from vmware_aiops.cli._common import cli_errors
+from vmware_aiops.cli.access import access_info_cmd
 from vmware_aiops.cli.alarm import alarm_app
 from vmware_aiops.cli.cluster import cluster_app
 from vmware_aiops.cli.deploy import datastore_app, deploy_app
@@ -43,6 +44,7 @@ app.command("summary")(cluster_summary_cmd)
 app.command("attention")(attention_cmd)
 app.add_typer(investigate_app, name="investigate")
 app.command("doctor")(doctor_cmd)
+app.command("access-info")(access_info_cmd)
 
 
 @app.command("init")
@@ -64,13 +66,43 @@ def init_cmd(
 @app.command("mcp")
 @cli_errors
 @cli_local("starts the MCP server; its tools audit themselves")
-def mcp_cmd() -> None:
-    """Start the MCP server (stdio transport).
+def mcp_cmd(
+    expose: Optional[str] = typer.Option(
+        None,
+        "--expose",
+        help="Which tools to offer: all (default) or read. Limits what clients see; "
+        "not authorization: the account's permissions still decide.",
+    ),
+    allow_write: Optional[str] = typer.Option(
+        None,
+        "--allow-write",
+        help="With --expose read: comma-separated write tools to offer as well.",
+    ),
+    transport: Optional[str] = typer.Option(
+        None,
+        "--transport",
+        help="stdio (default), https, or http (loopback only, behind a TLS reverse proxy). "
+        "https/http need a token: 'vmware-audit token create NAME'.",
+    ),
+    host: Optional[str] = typer.Option(None, "--host", help="Bind address (default 127.0.0.1)."),
+    port: Optional[int] = typer.Option(None, "--port", help="Port (default 8443)."),
+    cert: Optional[str] = typer.Option(None, "--cert", help="TLS certificate (PEM) for https."),
+    key: Optional[str] = typer.Option(None, "--key", help="TLS private key (PEM) for https."),
+    public_name: Optional[str] = typer.Option(
+        None,
+        "--public-name",
+        help="Host names clients use, comma-separated; other Host/Origin values are refused.",
+    ),
+    token_file: Optional[str] = typer.Option(
+        None, "--token-file", help="Token hash file (default $OPS_HOME/mcp-tokens)."
+    ),
+) -> None:
+    """Start the MCP server (stdio by default; --transport https serves the network).
 
     Single-command entry point for MCP clients (Claude Desktop, Cursor, etc.):
         vmware-aiops mcp
 
-    Equivalent to the legacy `vmware-aiops-mcp` console script.
+    Equivalent to the legacy `vmware-aiops-mcp` console script for stdio (the console script takes no flags).
     """
     import sys
 
@@ -87,7 +119,10 @@ def mcp_cmd() -> None:
 
     from vmware_aiops.mcp_server.server import main as _mcp_main
 
-    _mcp_main()
+    _mcp_main(
+        expose=expose, allow_write=allow_write, transport=transport, host=host, port=port,
+        cert=cert, key=key, public_name=public_name, token_file=token_file,
+    )
 
 
 if __name__ == "__main__":

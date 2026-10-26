@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+import stat
 import tempfile
 import time
 import uuid
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING
 from pyVmomi import vim
 
 from vmware_policy import sanitize
+from vmware_policy.hostpaths import check_host_path
 
 from vmware_aiops.connection import get_verify_ssl
 from vmware_aiops.ops.inventory import find_vm_by_name
@@ -55,7 +57,7 @@ def _require_vm_with_tools(
     if vm.runtime.powerState != vim.VirtualMachine.PowerState.poweredOn:
         raise GuestOpsError(
             f"VM '{vm_name}' is not powered on. Guest operations need a running guest: "
-            f"run vm_power_on (CLI: vmware-aiops vm power-on '{vm_name}'), wait for the "
+            f"run power_on_vm (CLI: vmware-aiops vm power-on '{vm_name}'), wait for the "
             f"guest to boot, then retry."
         )
     tools_status = vm.guest.toolsRunningStatus if vm.guest else None
@@ -63,7 +65,7 @@ def _require_vm_with_tools(
         raise GuestOpsError(
             f"VMware Tools not running on '{vm_name}' (status: {tools_status}). "
             f"Install or start VMware Tools inside the guest, then check the new status "
-            f"with vm_info (CLI: vmware-monitor vm info '{vm_name}') before retrying."
+            f"with get_vm_info (CLI: vmware-monitor vm info '{vm_name}') before retrying."
         )
     return vm
 
@@ -412,6 +414,8 @@ def guest_upload(
 
     auth = _guest_auth(username, password)
 
+    # Never this server's own config, tokens or audit log (HLD §18 step 0).
+    check_host_path(local_path)
     # Read local file — must be an existing regular file (not a dir/device/fifo).
     local = Path(local_path).expanduser()
     if not local.is_file():
@@ -426,8 +430,7 @@ def guest_upload(
             f"(chmod +r) to the user running vmware-aiops, or pass a readable "
             f"path to --local."
         )
-    with open(local, "rb") as f:
-        file_data = f.read()
+    file_data = _read_upload_source(local)
 
     file_size = len(file_data)
 
@@ -462,6 +465,61 @@ def guest_upload(
     return f"Uploaded {file_size} bytes to {guest_path} on VM '{vm_name}'"
 
 
+def _read_upload_source(local: Path) -> bytes:
+    """Read the upload source without following a link swapped in after the checks.
+
+    ``O_NOFOLLOW`` refuses a final symlink and ``O_NONBLOCK`` keeps a FIFO from
+    blocking the worker; anything but a regular file is refused after opening.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(local, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(
+                f"Local upload source is not a regular file: {local}. Pass a regular file."
+            )
+        if st.st_nlink > 1:  # another path shares it, possibly a protected one
+            raise ValueError(
+                f"Local upload source is a hard link: {local}. Copy the file and upload the copy."
+            )
+        with os.fdopen(fd, "rb") as f:
+            fd = -1
+            return f.read()
+    finally:
+        if fd != -1:
+            os.close(fd)
+
+
+def _write_download(local: Path, data: bytes, *, overwrite: bool) -> None:
+    """Write a downloaded file without following a link swapped in after the checks.
+
+    ``O_NOFOLLOW`` refuses a final symlink; ``O_EXCL`` keeps the no-overwrite
+    promise even if a file appeared meanwhile; and a destination that is not a
+    single regular file (a hard link shares its inode with another path, which
+    may be a protected one) is refused before anything is truncated.
+    """
+    # O_NONBLOCK: an existing FIFO must not block the worker in open().
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    if not overwrite:
+        flags |= os.O_EXCL
+    fd = os.open(local, flags, 0o666)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+            raise ValueError(
+                "Choose a new local path: the destination is a hard link or not a regular "
+                f"file, so writing it would change another file too. Path: {local}"
+            )
+        os.ftruncate(fd, 0)
+        with os.fdopen(fd, "wb") as f:
+            fd = -1
+            f.write(data)
+    finally:
+        if fd != -1:
+            os.close(fd)
+
+
 def _check_download_destination(local_path: str, overwrite: bool) -> None:
     """Refuse a download destination that is not free to write.
 
@@ -487,6 +545,8 @@ def _check_download_destination(local_path: str, overwrite: bool) -> None:
     is caller-supplied and unbounded, so a message that closed with its remedy
     would lose exactly the part the agent needs.
     """
+    # Never this server's own config, tokens or audit log (HLD §18 step 0).
+    check_host_path(local_path)
     local = Path(local_path).expanduser()
     if local.is_symlink():
         raise ValueError(
@@ -566,8 +626,9 @@ def guest_download(
 
     local = Path(local_path).expanduser()
     local.parent.mkdir(parents=True, exist_ok=True)
-    with open(local, "wb") as f:
-        f.write(file_data)
+    # The transfer took time: check again, then write without following a link.
+    check_host_path(local_path)
+    _write_download(local, file_data, overwrite=overwrite)
 
     logger.info(
         "Downloaded %d bytes from '%s:%s' to '%s'",

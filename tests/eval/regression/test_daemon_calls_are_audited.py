@@ -4,7 +4,7 @@ A family survey on 2026-09-15 found that ``scanner/scheduler.py`` deleted VMs wh
 TTL had expired with no row in either audit trail: not on success, not on
 failure. ``daemon start`` was marked ``@cli_local``, so the I-9 gate saw nothing,
 and the scheduler called ``delete_vm`` directly, bypassing the ``guard()`` that
-stops the same deletion over MCP (``vm_delete``) or the CLI. The scan cycle and the
+stops the same deletion over MCP (``delete_vm``) or the CLI. The scan cycle and the
 webhook send reached vCenter and an external endpoint without a row either.
 
 HLD §8.1 / I-8: every call that reaches a remote system or sends data out writes
@@ -71,12 +71,12 @@ def ttl(monkeypatch):
 
 def test_a_ttl_delete_writes_one_vm_delete_row(ttl, monkeypatch):
     scheduler, removed = ttl
-    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name: f"VM '{name}' deleted")
+    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name, **k: f"VM '{name}' deleted")
 
     scheduler._run_ttl_check(MagicMock())
 
-    found = rows("vm_delete")
-    assert len(found) == 1, f"a TTL delete left no vm_delete row: {rows()}"
+    found = rows("delete_vm")
+    assert len(found) == 1, f"a TTL delete left no delete_vm row: {rows()}"
     row = found[0]
     assert row["skill"] == "aiops"
     assert row["status"] == "ok"
@@ -88,14 +88,14 @@ def test_a_ttl_delete_writes_one_vm_delete_row(ttl, monkeypatch):
 def test_a_failed_ttl_delete_is_recorded_as_error_and_the_entry_kept(ttl, monkeypatch):
     scheduler, removed = ttl
 
-    def boom(si, name):
+    def boom(si, name, **k):
         raise RuntimeError("vCenter task timeout")
 
     monkeypatch.setattr(scheduler, "delete_vm", boom)
 
     scheduler._run_ttl_check(MagicMock())
 
-    found = rows("vm_delete")
+    found = rows("delete_vm")
     assert len(found) == 1 and found[0]["status"] == "error", rows()
     assert "vCenter task timeout" in found[0]["result"]
     assert removed == []
@@ -106,14 +106,14 @@ def test_a_ttl_vm_already_gone_is_recorded_and_the_stale_entry_dropped(ttl, monk
 
     scheduler, removed = ttl
 
-    def gone(si, name):
+    def gone(si, name, **k):
         raise VMNotFoundError(f"VM '{name}' not found")
 
     monkeypatch.setattr(scheduler, "delete_vm", gone)
 
     scheduler._run_ttl_check(MagicMock())
 
-    found = rows("vm_delete")
+    found = rows("delete_vm")
     assert len(found) == 1 and found[0]["status"] == "error", rows()
     assert "not found" in found[0]["result"]
     assert removed == ["ttl-vm"]
@@ -122,7 +122,7 @@ def test_a_ttl_vm_already_gone_is_recorded_and_the_stale_entry_dropped(ttl, monk
 def test_a_ttl_delete_refused_by_policy_never_runs(ttl, monkeypatch):
     scheduler, removed = ttl
     deleted: list[str] = []
-    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name: deleted.append(name))
+    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name, **k: deleted.append(name))
 
     def deny(skill, tool, params=None, *, risk_level="low", target=""):
         raise PolicyDenied(
@@ -134,17 +134,17 @@ def test_a_ttl_delete_refused_by_policy_never_runs(ttl, monkeypatch):
     scheduler._run_ttl_check(MagicMock())
 
     assert deleted == [], "a denied TTL delete must not reach vCenter"
-    found = rows("vm_delete")
+    found = rows("delete_vm")
     assert len(found) == 1 and found[0]["status"] == "denied", rows()
     assert removed == [], "a denied delete keeps the entry for when the rule is lifted"
 
 
 def test_a_refused_ttl_entry_writes_one_row_per_outcome_not_one_per_minute(ttl, monkeypatch):
     """The TTL check runs every minute. A review on 2026-09-15 found a denied or
-    failing entry wrote a vm_delete row on every run — 1,440 a day per entry, on
-    this lab whose rules.yaml denies vm_delete — burying real calls."""
+    failing entry wrote a delete_vm row on every run — 1,440 a day per entry, on
+    this lab whose rules.yaml denies delete_vm — burying real calls."""
     scheduler, removed = ttl
-    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name: None)
+    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name, **k: None)
 
     def deny(skill, tool, params=None, *, risk_level="low", target=""):
         raise PolicyDenied(
@@ -156,7 +156,7 @@ def test_a_refused_ttl_entry_writes_one_row_per_outcome_not_one_per_minute(ttl, 
     for _ in range(3):
         scheduler._run_ttl_check(MagicMock())
 
-    found = rows("vm_delete")
+    found = rows("delete_vm")
     assert [r["status"] for r in found] == ["denied"], found
     assert removed == []
 
@@ -165,7 +165,7 @@ def test_a_failing_ttl_delete_writes_again_only_when_its_outcome_changes(ttl, mo
     scheduler, removed = ttl
     attempts: list[str] = []
 
-    def flaky(si, name):
+    def flaky(si, name, **k):
         attempts.append(name)
         if len(attempts) <= 3:
             raise RuntimeError("vCenter task timeout")
@@ -177,7 +177,7 @@ def test_a_failing_ttl_delete_writes_again_only_when_its_outcome_changes(ttl, mo
         scheduler._run_ttl_check(MagicMock())
 
     assert len(attempts) == 4, "every run must still retry the delete"
-    assert [r["status"] for r in rows("vm_delete")] == ["error", "ok"]
+    assert [r["status"] for r in rows("delete_vm")] == ["error", "ok"]
     assert removed == ["ttl-vm"]
 
 
@@ -315,14 +315,28 @@ def test_a_ttl_vm_whose_name_is_ambiguous_is_not_deleted_and_the_entry_dropped(t
 
     scheduler, removed = ttl
 
-    def ambiguous(si, name):
+    def ambiguous(si, name, **k):
         raise AmbiguousVMError(f"2 VMs are named '{name}'.")
 
     monkeypatch.setattr(scheduler, "delete_vm", ambiguous)
 
     scheduler._run_ttl_check(MagicMock())
 
-    found = rows("vm_delete")
+    found = rows("delete_vm")
     assert len(found) == 1 and found[0]["status"] == "error", rows()
     assert "more than one VM" in found[0]["result"]
     assert removed == ["ttl-vm"]
+
+
+def test_daemon_rows_say_daemon_not_mcp(ttl, monkeypatch):
+    """HLD §16 D-14: a TTL delete made by the daemon is not an MCP call. Without
+    an explicit surface the row read `mcp-stdio` — non-empty, and wrong."""
+    scheduler, _removed = ttl
+    monkeypatch.setattr(scheduler, "delete_vm", lambda si, name, **k: f"VM '{name}' deleted")
+
+    scheduler._run_ttl_check(MagicMock())
+
+    db = Path(get_engine()._path)
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+        surfaces = {r[0] for r in con.execute("SELECT surface FROM audit_log")}
+    assert surfaces == {"daemon"}

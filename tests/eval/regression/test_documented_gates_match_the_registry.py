@@ -2,7 +2,7 @@
 
 From the 2026-08-30 real-hardware round. The finding was reported as "36 of 43
 write tools have no confirmation and no dry-run", which is true, and as "the
-tiered-approval machinery v1.8.7 had was removed", which is not: ``vm_delete``
+tiered-approval machinery v1.8.7 had was removed", which is not: ``delete_vm``
 has never taken a confirmation parameter in any revision of this repo, and the
 only structural MCP-side restriction that ever existed — the v1.8.0 read-only
 switch — was removed on purpose in v1.8.7 with the reasoning recorded in the
@@ -139,7 +139,7 @@ def test_the_documented_gate_inventory_matches_the_live_registry() -> None:
         f"{sorted(gated - documented_names)}"
     )
     # And it must not name a tool as gated that is not. Restricted to the line
-    # that lists them so the surrounding prose can mention ``vm_delete`` freely.
+    # that lists them so the surrounding prose can mention ``delete_vm`` freely.
     listed_line = next(
         line for line in block.splitlines() if re.search(r"Confirm-gated:", line)
     )

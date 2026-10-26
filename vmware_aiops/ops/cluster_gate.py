@@ -62,12 +62,12 @@ def measure_cluster_delete(si: ServiceInstance, cluster_name: str) -> dict[str, 
     if hosts is not _UNREAD and hosts:
         blockers.append(
             f"The cluster still has {len(hosts)} host(s): {', '.join(_names(hosts))}. "
-            "Remove each one first with cluster_remove_host (it must be in maintenance "
+            "Remove each one first with remove_cluster_host (it must be in maintenance "
             "mode), then preview the deletion again."
         )
     if vms is not _UNREAD and vms:
         blockers.append(
-            f"{len(vms)} VM(s) still run in the cluster. Migrate them off (vm_migrate) "
+            f"{len(vms)} VM(s) still run in the cluster. Migrate them off (migrate_vm) "
             "before removing the hosts that carry them."
         )
     cluster_id = _read(lambda: cluster._moId)
@@ -119,11 +119,11 @@ def measure_host_removal(
         blockers.append(
             f"Host '{sanitize(host_name, 200)}' must be in maintenance mode before removal. "
             "Enter it from the vSphere Client (Host > Maintenance Mode), confirm with "
-            "cluster_info, then preview the removal again."
+            "get_cluster_info, then preview the removal again."
         )
     if powered_on:
         blockers.append(
-            f"{powered_on} VM(s) on the host are powered on. Migrate them (vm_migrate) or "
+            f"{powered_on} VM(s) on the host are powered on. Migrate them (migrate_vm) or "
             "power them off before removing the host from the cluster."
         )
     host_id = _read(lambda: host._moId)
@@ -136,7 +136,7 @@ def measure_host_removal(
         "powered_on_vm_count": powered_on,
         "vms": _names(vms) if vms is not _UNREAD else [],
         "note": "The host is not deleted: it stays in vCenter as a standalone host "
-                "(cluster_add_host moves it back). It leaves the cluster's HA/DRS.",
+                "(add_cluster_host moves it back). It leaves the cluster's HA/DRS.",
         "unmeasured": unmeasured,
         "blockers": blockers,
     }

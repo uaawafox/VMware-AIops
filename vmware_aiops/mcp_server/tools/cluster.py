@@ -11,7 +11,7 @@ from vmware_aiops.ops.gate import preview, refuse_on
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("str")
-def cluster_create(
+def create_cluster(
     name: str,
     datacenter: Optional[str] = None,
     ha: bool = False,
@@ -22,8 +22,8 @@ def cluster_create(
     """[WRITE] Create a new empty cluster in a datacenter, optionally enabling HA and DRS.
 
     Fails with a clear error (no partial state) if the name already exists or
-    drs_behavior is invalid. Then add hosts with cluster_add_host, change HA/DRS
-    later with cluster_configure, and verify with cluster_info. Returns a status
+    drs_behavior is invalid. Then add hosts with add_cluster_host, change HA/DRS
+    later with configure_cluster, and verify with get_cluster_info. Returns a status
     string naming the features enabled.
 
     Args:
@@ -35,9 +35,9 @@ def cluster_create(
             "manual". Only takes effect when drs=True.
         target: vCenter target from config.yaml; omit for the default target.
     """
-    from vmware_aiops.ops.cluster_mgmt import create_cluster
+    from vmware_aiops.ops.cluster_mgmt import create_cluster as _ops_create_cluster
     si = _get_connection(target)
-    return create_cluster(
+    return _ops_create_cluster(
         si, cluster_name=name, datacenter_name=datacenter,
         ha_enabled=ha, drs_enabled=drs, drs_behavior=drs_behavior,
     )
@@ -46,7 +46,7 @@ def cluster_create(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="high")
 @tool_errors("dict")
-def cluster_delete(
+def delete_cluster(
     name: str,
     confirm: bool = False,
     target: Optional[str] = None,
@@ -60,8 +60,8 @@ def cluster_delete(
     seen the preview yet.
 
     Refused: a cluster that still has hosts or VMs (evacuate members with
-    cluster_remove_host first), or one whose members could not be read.
-    Check cluster_info first. Returns a dict (action, blast_radius).
+    remove_cluster_host first), or one whose members could not be read.
+    Check get_cluster_info first. Returns a dict (action, blast_radius).
 
     Args:
         name: Name of the cluster to delete.
@@ -69,13 +69,13 @@ def cluster_delete(
         target: Optional vCenter target name from config.
     """
     from vmware_aiops.ops.cluster_gate import measure_cluster_delete
-    from vmware_aiops.ops.cluster_mgmt import delete_cluster
+    from vmware_aiops.ops.cluster_mgmt import delete_cluster as _ops_delete_cluster
     si = _get_connection(target)
     radius = measure_cluster_delete(si, name)
     if not confirm:
         return preview(radius)
-    refuse_on(radius, "cluster_delete")
-    result = delete_cluster(si, name)
+    refuse_on(radius, "delete_cluster")
+    result = _ops_delete_cluster(si, name)
     return {"action": "deleted", "deleted": radius["cluster"], "result": result,
             "blast_radius": radius}
 
@@ -83,7 +83,7 @@ def cluster_delete(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("str")
-def cluster_add_host(
+def add_cluster_host(
     cluster_name: str,
     host_name: str,
     target: Optional[str] = None,
@@ -94,11 +94,11 @@ def cluster_add_host(
     this does NOT register brand-new hosts and takes no host credentials; use the
     vCenter UI for first-time registration. Idempotent: a host already in the cluster
     returns success without change. Maintenance mode is not required to join (it IS
-    required by cluster_remove_host). Check membership first with cluster_info.
+    required by remove_cluster_host). Check membership first with get_cluster_info.
     Returns a status string: moved, already-in-cluster, or a not-found error.
 
     Args:
-        cluster_name: Destination cluster (create with cluster_create).
+        cluster_name: Destination cluster (create with create_cluster).
         host_name: Host name as shown in vCenter inventory, usually the FQDN,
             e.g. "esxi-01.lab.local".
         target: vCenter target from config.yaml; omit for the default target.
@@ -111,7 +111,7 @@ def cluster_add_host(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("dict")
-def cluster_remove_host(
+def remove_cluster_host(
     cluster_name: str,
     host_name: str,
     confirm: bool = False,
@@ -126,13 +126,13 @@ def cluster_remove_host(
     have not seen the preview yet.
 
     Refused: a host not in maintenance mode, a host with powered-on VMs, and
-    a host whose state could not be read. Run cluster_info first for the exact
+    a host whose state could not be read. Run get_cluster_info first for the exact
     member host names. The host is not deleted — it stays in vCenter inventory
-    standalone; use cluster_add_host to move it back. Returns a dict.
+    standalone; use add_cluster_host to move it back. Returns a dict.
 
     Args:
         cluster_name: Cluster to remove the host from.
-        host_name: ESXi host name to remove (from cluster_info output).
+        host_name: ESXi host name to remove (from get_cluster_info output).
         confirm: False (default) returns the blast radius and changes nothing. True applies it.
         target: Optional vCenter target name from config.
     """
@@ -142,7 +142,7 @@ def cluster_remove_host(
     radius = measure_host_removal(si, cluster_name, host_name)
     if not confirm:
         return preview(radius)
-    refuse_on(radius, "cluster_remove_host")
+    refuse_on(radius, "remove_cluster_host")
     result = remove_host_from_cluster(si, cluster_name=cluster_name, host_name=host_name)
     return {"action": "removed", "removed": radius["host"], "result": result,
             "blast_radius": radius}
@@ -151,7 +151,7 @@ def cluster_remove_host(
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("str")
-def cluster_configure(
+def configure_cluster(
     name: str,
     ha: Optional[bool] = None,
     drs: Optional[bool] = None,
@@ -161,7 +161,7 @@ def cluster_configure(
     """[WRITE] Reconfigure cluster HA/DRS settings.
 
     Returns a status string naming what changed. Pass only the fields to change;
-    None leaves a setting untouched — then verify with cluster_info. drs_behavior
+    None leaves a setting untouched — then verify with get_cluster_info. drs_behavior
     applies only when DRS is enabled.
 
     Args:
@@ -171,9 +171,9 @@ def cluster_configure(
         drs_behavior: DRS behavior: "fullyAutomated", "partiallyAutomated", or "manual".
         target: Optional vCenter target name from config.
     """
-    from vmware_aiops.ops.cluster_mgmt import configure_cluster
+    from vmware_aiops.ops.cluster_mgmt import configure_cluster as _ops_configure_cluster
     si = _get_connection(target)
-    return configure_cluster(
+    return _ops_configure_cluster(
         si, cluster_name=name,
         ha_enabled=ha, drs_enabled=drs, drs_behavior=drs_behavior,
     )
@@ -182,11 +182,11 @@ def cluster_configure(
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def cluster_info(name: str, target: Optional[str] = None) -> dict:
+def get_cluster_info(name: str, target: Optional[str] = None) -> dict:
     """[READ] Get detailed cluster information: member hosts, HA/DRS config, resource capacity.
 
-    Read-only, no side effects. Use before cluster_add_host / cluster_remove_host (shows
-    membership and per-host maintenance mode) and to verify cluster_configure changes.
+    Read-only, no side effects. Use before add_cluster_host / remove_cluster_host (shows
+    membership and per-host maintenance mode) and to verify configure_cluster changes.
 
     Args:
         name: Exact cluster name.
@@ -197,9 +197,9 @@ def cluster_info(name: str, target: Optional[str] = None) -> dict:
         maintenance_mode), ha_enabled, ha_admission_control, drs_enabled, drs_behavior,
         total/effective CPU (MHz) and memory (GB). Errors return a dict with "error" + hint.
     """
-    from vmware_aiops.ops.cluster_mgmt import get_cluster_info
+    from vmware_aiops.ops.cluster_mgmt import get_cluster_info as _ops_get_cluster_info
     si = _get_connection(target)
-    return get_cluster_info(si, name)
+    return _ops_get_cluster_info(si, name)
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})

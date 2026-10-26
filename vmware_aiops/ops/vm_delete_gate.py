@@ -75,13 +75,13 @@ def power_blockers(power_state: Any) -> list[str]:
     """
     if power_state == vim.VirtualMachine.PowerState.poweredOn:
         return [
-            "The VM is powered on. Power it off first with vm_power_off, "
+            "The VM is powered on. Power it off first with power_off_vm, "
             "then preview the deletion again."
         ]
     if power_state == vim.VirtualMachine.PowerState.suspended:
         return [
             "The VM is suspended: its memory holds a paused running workload that "
-            "deleting would discard. Power it off first with vm_power_off, then "
+            "deleting would discard. Power it off first with power_off_vm, then "
             "preview the deletion again."
         ]
     return []
@@ -143,7 +143,7 @@ def _refusal(radius: dict[str, Any], acknowledge: dict | None) -> str | None:
         )
     if not isinstance(acknowledge, dict):
         return (
-            "confirm=True needs acknowledge_blast_radius: call vm_delete without "
+            "confirm=True needs acknowledge_blast_radius: call delete_vm without "
             "confirm, show the user the blast_radius, then pass its "
             "acknowledge_with object back unchanged."
         )
@@ -171,6 +171,6 @@ def delete_vm_acknowledged(
     radius = measure_vm_delete(vm)
     reason = _refusal(radius, acknowledge)
     if reason:
-        raise DeleteRefusedError(f"vm_delete refused for '{radius['vm']}': {reason}")
+        raise DeleteRefusedError(f"delete_vm refused for '{radius['vm']}': {reason}")
     vm_lifecycle._wait_for_task(vm.Destroy_Task())
     return radius

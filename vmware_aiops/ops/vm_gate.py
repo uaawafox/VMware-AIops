@@ -1,13 +1,13 @@
 """Blast-radius measurement for the gated VM tools (HLD §7, revised 2026-09-16).
 
-``vm_power_off``, ``vm_migrate``, ``vm_revert_snapshot`` and
-``vm_delete_snapshot`` preview by default. This module measures what each would
+``power_off_vm``, ``migrate_vm``, ``revert_vm_snapshot`` and
+``delete_vm_snapshot`` preview by default. This module measures what each would
 change — with reads only — and names what stands in the way (``blockers``) or
 could not be read (``unmeasured``). The MCP tools refuse on either
 (``gate.refuse_on``) and only then call the same ``vm_lifecycle`` executors the
 CLI and the plan executor use, whose behaviour is unchanged.
 
-``vm_delete`` has its own module (``vm_delete_gate``) because it also requires an
+``delete_vm`` has its own module (``vm_delete_gate``) because it also requires an
 acknowledgement echo; these four do not, so Pilot can drive them with
 ``confirm=True`` after its own approval step.
 """
@@ -101,7 +101,12 @@ def power_off_radius(
         unmeasured.append("tools_status")
 
     blockers: list[str] = []
-    if not force and ident["power_state"] == str(_SUSPENDED):
+    already_off = ident["power_state"] == str(_OFF)
+    if already_off:
+        # Nothing would happen, so nothing can block it: a noop with a "Tools not
+        # running" blocker was two answers for one call (2026-10-17).
+        pass
+    elif not force and ident["power_state"] == str(_SUSPENDED):
         blockers.append(
             "The VM is suspended, so a guest shutdown cannot run. force=True powers it "
             "off and discards the suspended memory state — decide that with the user."
@@ -123,7 +128,7 @@ def power_off_radius(
             "data and in-flight writes can be lost." if force else
             "The guest OS is asked to shut down via VMware Tools; its services stop."
         ),
-        "noop": ident["power_state"] == str(_OFF),
+        "noop": already_off,
         "blockers": blockers,
         "unmeasured": unmeasured,
     }
@@ -155,7 +160,7 @@ def _target_host_checks(
     """Readiness of the destination host; appends what blocks it."""
     if host is None:
         blockers.append(
-            f"Target host '{sanitize(to_host, 200)}' not found. Run cluster_info for "
+            f"Target host '{sanitize(to_host, 200)}' not found. Run get_cluster_info for "
             "the exact host names in the cluster, then preview again."
         )
         return None
@@ -167,7 +172,7 @@ def _target_host_checks(
     elif str(state) != "connected":
         blockers.append(
             f"Target host '{sanitize(to_host, 200)}' is {state}, not connected. "
-            "Pick a connected host from cluster_info."
+            "Pick a connected host from get_cluster_info."
         )
     if maintenance is None:
         unmeasured.append("target_in_maintenance_mode")
@@ -180,14 +185,129 @@ def _target_host_checks(
         unmeasured.append("target_resource_pool")
     elif pool is None:
         blockers.append(
-            f"Target host '{sanitize(to_host, 200)}' has no resource pool (standalone "
-            "host outside a cluster?), so it cannot receive a migration."
+            f"Target host '{sanitize(to_host, 200)}' has no resource pool, so it "
+            "cannot receive a migration. Pick a host from get_cluster_info."
         )
     return {
         "name": _name(host),
         "connection_state": str(state) if state is not None else None,
         "in_maintenance_mode": maintenance,
     }
+
+
+#: Every ``vim.vm.check.TestType``. With a target datastore the move takes the
+#: disks along, so whether the target host sees the *current* datastore is moot.
+_CHECK_TESTS = ("sourceTests", "hostTests", "resourcePoolTests", "datastoreTests",
+                "networkTests")
+
+#: How long the preview waits for vCenter's compatibility check (a read-only task).
+CHECK_TIMEOUT_S = 60
+
+_FAULT_TEXT_CHARS = 240
+#: Any failure of this best-effort check is "not checked", never a broken
+#: preview: vCenter checks again when the move starts (review 2026-10-18 found
+#: http.client errors and deserialisation ValueErrors escaping a narrower tuple).
+_CHECK_ERRORS = (Exception,)
+
+
+def _fault_text(fault: Any) -> str:
+    """``Class: message`` for a fault in a check result, sanitized and short."""
+    kind = type(fault).__name__
+    text = _read(lambda: fault.msg)
+    if not isinstance(text, str) or not text.strip():
+        messages = _read(lambda: list(fault.faultMessage or []), [])
+        text = next((m.message for m in messages
+                     if isinstance(getattr(m, "message", None), str) and m.message.strip()),
+                    "")
+    text = sanitize(text, _FAULT_TEXT_CHARS).strip()
+    return f"{kind}: {text}" if text else kind
+
+
+def _not_checked(reason: str) -> dict[str, Any]:
+    return {"checked": False, "reason": reason}
+
+
+def _run_check(si: ServiceInstance, vm: Any, host: Any, tests: list[str]) -> Any:
+    """The raw ``vim.vm.check.Result[]``, or a not-checked dict saying why not."""
+    checker = si.RetrieveContent().vmProvisioningChecker
+    if checker is None:
+        return _not_checked(
+            "not checked: this target has no vMotion compatibility checker "
+            "(standalone ESXi, not vCenter); vCenter checks when the move starts."
+        )
+    task = checker.CheckMigrate_Task(
+        vm=vm, host=host, pool=_read(lambda: host.parent.resourcePool),
+        state=None, testType=tests,
+    )
+    return vm_lifecycle._wait_for_task(task, timeout=CHECK_TIMEOUT_S)
+
+
+def _check_failure(exc: BaseException) -> dict[str, Any]:
+    if isinstance(exc, vm_lifecycle.TaskStillRunning):
+        detail = f"the check was still running after {exc.timeout}s (task {exc.task_id})"
+    elif isinstance(exc, vmodl.MethodFault):
+        detail = f"the check failed ({_fault_text(exc)})"
+    else:
+        detail = (f"the check failed ({type(exc).__name__}: "
+                  f"{sanitize(str(exc), _FAULT_TEXT_CHARS)})")
+    return _not_checked(
+        f"not checked: {detail}. vCenter checks again when the move starts."
+    )
+
+
+def migration_compatibility(
+    si: ServiceInstance, vm: Any, host: Any, to_datastore: str | None
+) -> dict[str, Any]:
+    """Ask vCenter (``CheckMigrate_Task``, read-only) whether this move is accepted.
+
+    ``errors`` are what vCenter would refuse the Relocate for — the caller turns
+    them into blockers. ``warnings`` do not stop it. When the check cannot run,
+    ``checked`` is False and ``reason`` says why: that is deliberately not an
+    unmeasured field, because vCenter re-runs these checks at execution and
+    refuses an incompatible move itself; refusing here would only block every
+    migration on a target without a checker.
+    """
+    tests = [t for t in _CHECK_TESTS if not (to_datastore and t == "datastoreTests")]
+    try:
+        results = _run_check(si, vm, host, tests)
+    except _CHECK_ERRORS as exc:
+        return _check_failure(exc)
+    if isinstance(results, dict):
+        return results
+    if not isinstance(results, (list, tuple)):
+        return _not_checked("not checked: the check task returned no result list.")
+    errors: list[str] = []
+    warnings: list[str] = []
+    for result in results:
+        errors += [_fault_text(f) for f in _read(lambda r=result: list(r.error or []), [])]
+        warnings += [_fault_text(f) for f in _read(lambda r=result: list(r.warning or []), [])]
+    return {"checked": True, "errors": errors[:MAX_LISTED],
+            "warnings": warnings[:MAX_LISTED], "tests": sorted(tests)}
+
+
+def migration_compatibility_by_name(
+    si: ServiceInstance, vm_name: str, to_host: str, to_datastore: str | None
+) -> dict[str, Any]:
+    """``migration_compatibility`` for the CLI, which holds names, not objects."""
+    vm = vm_lifecycle._require_vm(si, vm_name)
+    host = find_host_by_name(si, to_host)
+    if host is None:
+        return _not_checked("not checked: the target host was not found.")
+    if to_datastore is None and _read(lambda: vm.runtime.host) == host:
+        # Already there: nothing moves, as migrate_radius's noop (review 2026-10-18).
+        return _not_checked("not checked: the VM is already on that host.")
+    return migration_compatibility(si, vm, host, to_datastore)
+
+
+def compatibility_blockers(compatibility: dict[str, Any]) -> list[str]:
+    """One blocker per error the compatibility check reported."""
+    return [_compatibility_blocker(e) for e in compatibility.get("errors", [])]
+
+
+def _compatibility_blocker(error: str) -> str:
+    remedy = (f" {vm_lifecycle.CPU_MIGRATION_REMEDY}"
+              if any(f in error for f in vm_lifecycle._CPU_FAULTS) else "")
+    return f"vCenter's vMotion compatibility check refuses this move: {error}.{remedy}"
 
 
 def migrate_radius(
@@ -234,6 +354,11 @@ def migrate_radius(
     target = find_host_by_name(si, to_host)
     radius["target_host"] = _target_host_checks(target, to_host, blockers, unmeasured)
     radius["migration"] = _migration_kind(ident["power_state"], same_host, bool(to_datastore))
+    if target is None:
+        radius["compatibility"] = _not_checked("not checked: the target host was not found.")
+    else:
+        radius["compatibility"] = migration_compatibility(si, vm, target, to_datastore)
+        blockers += compatibility_blockers(radius["compatibility"])
 
     if to_datastore is not None:
         if find_datastore_by_name(si, to_datastore) is None:
@@ -307,7 +432,7 @@ def _locate_snapshot(
         available = ", ".join(sanitize(n.name, 100) for n, _ in nodes[:MAX_LISTED])
         blockers.append(
             f"Snapshot '{shown}' not found on this VM (available: {available}). "
-            "Run vm_list_snapshots for exact names; they are case-sensitive."
+            "Run list_vm_snapshots for exact names; they are case-sensitive."
         )
     elif len(matches) > 1:
         created = ", ".join(str(n.createTime) for n, _ in matches[:MAX_LISTED])

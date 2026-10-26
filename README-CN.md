@@ -7,7 +7,7 @@
 
 [English](README.md) | 中文
 
-AI 驱动的 VMware vCenter/ESXi VM 生命周期管理与部署工具 — 60 个工具。
+AI 驱动的 VMware vCenter/ESXi VM 生命周期管理与部署工具 — 61 个工具。
 
 > **配套技能**负责其他领域：
 >
@@ -23,6 +23,14 @@ AI 驱动的 VMware vCenter/ESXi VM 生命周期管理与部署工具 — 60 个
 [![Skills.sh](https://img.shields.io/badge/Skills.sh-Install-blue)](https://skills.sh/vmware-skills/VMware-AIops)
 [![Claude Code Marketplace](https://img.shields.io/badge/Claude_Code-Marketplace-blueviolet)](https://github.com/vmware-skills/VMware-AIops)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+## 升级到 2.0
+
+2.0 把 MCP 工具名改成动词在前（共改名 38 处）（例如 `cluster_add_host` → `add_cluster_host`, `cluster_configure` → `configure_cluster`, `cluster_create` → `create_cluster`），完整的新旧名对照表见
+[RELEASE_NOTES.md](RELEASE_NOTES.md#v200--mcp-tools-renamed-verb-first)。其他都不变：工具、参数、安全确认门和 CLI 命令都一样。
+如果 agent 提示词、脚本或 `~/.vmware/rules.yaml` 里写了工具名，请改成新名（但已保存计划文件里的 `action` 动作词不要改——`cluster_add_host`、`storage_rescan` 这类是计划动作，不是工具名，保持原样）——不过用旧名写的 deny 规则在
+vmware-policy ≥ 1.18 下仍然生效（`vmware-audit policy` 会列出因改名而多匹配的规则），vmware-pilot ≥ 1.13 也会自动转换已保存工作流里的旧名。
+如果还有 2.0 之前的安装共用这个 `rules.yaml`，请把它的 vmware-policy 也升到 ≥ 1.18.2：它会按新旧两个名字匹配每条规则，一份文件两边都管用。
 
 ## ⚡ 快速调查报告（只读）
 
@@ -42,7 +50,7 @@ vmware-aiops investigate vm web-01 --hours 72     # 一个 VM 的全貌，然后
 vmware-aiops investigate vm web-01 --html         # → 离线快照写入 ~/vmware-health/
 ```
 
-MCP 下对应工具为 `cluster_health_summary`、`cross_vcenter_attention`、`vm_investigation_bundle`、`host_investigation_bundle`、`datastore_investigation_bundle`。（需安装 `vmware-monitor`。）
+MCP 下对应工具为 `get_cluster_health_summary`、`get_cross_vcenter_attention`、`investigate_vm`、`investigate_host`、`investigate_datastore`。（需安装 `vmware-monitor`。）
 
 ### 快速安装（推荐）
 
@@ -110,12 +118,13 @@ pip install --no-index --find-links dist vmware-aiops
 | **集群** | 创建、删除、HA/DRS 配置、添加/移除主机 | 6 |
 | **数据存储** | 浏览文件、扫描镜像 | 2 |
 | **网络** | dvSwitch 端口组 列出/创建、主机 VMkernel 列出/添加/移除、DF 位 MTU 路径 ping | 6 |
+| **权限** | 当前使用哪个账号，以及它是否具备每个工具所需的权限（`get_access_info`，CLI `access-info`） | 1 |
 
 ### CLI vs MCP：如何选择
 
 | 场景 | 推荐模式 | 原因 |
 |------|:-------:|------|
-| **本地/小模型**（Ollama、Qwen <32B） | **CLI** | 上下文占用 ~2K tokens vs MCP ~10K；小模型难以处理 60 个工具的 schema |
+| **本地/小模型**（Ollama、Qwen <32B） | **CLI** | 上下文占用 ~2K tokens vs MCP ~10K；小模型难以处理 61 个工具的 schema |
 | **Token 敏感场景** | **CLI** | SKILL.md + Bash = 最小开销 |
 | **云端大模型**（Claude、GPT-4o） | 均可 | MCP 提供结构化 JSON 输入输出 |
 | **自动化管道 / Agent 链式调用** | **MCP** | 类型安全参数，结构化输出，无需 Shell 解析 |
@@ -164,10 +173,10 @@ ESXi 独立主机 ──→ VM
 
 ### 批量克隆测试
 
-1. 创建计划：`vm_create_plan`，包含多个克隆 + 配置步骤
+1. 创建计划：`create_vm_plan`，包含多个克隆 + 配置步骤
 2. 审查计划（展示受影响的 VM、不可逆操作警告）
-3. 执行：`vm_apply_plan` 顺序执行，失败即停止
-4. 如失败：`vm_rollback_plan` 逆序撤销已执行步骤
+3. 执行：`apply_vm_plan` 顺序执行，失败即停止
+4. 如失败：`rollback_vm_plan` 逆序撤销已执行步骤
 5. 对所有克隆设置 TTL 自动清理
 
 ### 迁移 VM 到另一台主机
@@ -185,8 +194,8 @@ ESXi 独立主机 ──→ VM
 | 开机 | `vm power-on <name>` | — | ✅ | ✅ |
 | 优雅关机 | `vm power-off <name>` | 双重 | ✅ | ✅ |
 | 强制关机 | `vm power-off <name> --force` | 双重 | ✅ | ✅ |
-| 重置 | plan 动作 `reset`，经 `vm_create_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
-| 挂起 | plan 动作 `suspend`，经 `vm_create_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
+| 重置 | plan 动作 `reset`，经 `create_vm_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
+| 挂起 | plan 动作 `suspend`，经 `create_vm_plan`（MCP；无 CLI 命令） | — | ✅ | ✅ |
 | 创建 | `vm create <name> --cpu --memory --disk` | — | ✅ | ✅ |
 | 删除 | `vm delete <name>` | 双重 | ✅ | ✅ |
 | 调整配置 | `vm reconfigure <name> --cpu --memory` | 双重 | ✅ | ✅ |
@@ -202,11 +211,11 @@ ESXi 独立主机 ──→ VM
 | **列出 TTL** | `vm list-ttl` | — | ✅ | ✅ |
 | **Clean Slate** | `vm clean-slate <name> [--snapshot baseline]` | 双重 | ✅ | ✅ |
 | **Guest 执行** | `vm guest-exec <name> --cmd /bin/bash --args "..." --user <account>` | 双重 | ✅ | ✅ |
-| **Guest 执行（含输出）** | 仅 MCP：`vm_guest_exec_output`（`username` 必填）——没有 CLI 命令 | — | ✅ | ✅ |
+| **Guest 执行（含输出）** | 仅 MCP：`run_vm_guest_command_with_output`（`username` 必填）——没有 CLI 命令 | — | ✅ | ✅ |
 | **Guest 上传** | `vm guest-upload <name> --local f.sh --guest /tmp/f.sh --user <account>` | 双重 | ✅ | ✅ |
 | **Guest 下载** | `vm guest-download <name> --guest /var/log/syslog --local ./syslog --user <account>` | — | ✅ | ✅ |
 
-> Guest Operations 需要 VM 内运行 VMware Tools，且客户机账号必须显式指定——CLI 用 `--user`，MCP 用 `username`。没有默认值，所以任何调用都不会在没选 root 的情况下以 root 身份执行。`vm_guest_exec_output`（仅 MCP，CLI 没有对应命令）自动检测 Linux/Windows shell 并捕获 stdout/stderr。
+> Guest Operations 需要 VM 内运行 VMware Tools，且客户机账号必须显式指定——CLI 用 `--user`，MCP 用 `username`。没有默认值，所以任何调用都不会在没选 root 的情况下以 root 身份执行。`run_vm_guest_command_with_output`（仅 MCP，CLI 没有对应命令）自动检测 Linux/Windows shell 并捕获 stdout/stderr。
 
 ### Plan → Apply（多步操作编排）
 
@@ -214,10 +223,10 @@ ESXi 独立主机 ──→ VM
 
 | 步骤 | 说明 |
 |------|------|
-| 1. **创建 Plan** | AI 调用 `vm_create_plan` — 校验操作、检查 vSphere 中目标是否存在、生成带回滚信息的 plan |
+| 1. **创建 Plan** | AI 调用 `create_vm_plan` — 校验操作、检查 vSphere 中目标是否存在、生成带回滚信息的 plan |
 | 2. **审查** | AI 展示 plan 给用户：步骤、影响的 VM、不可逆操作警告 |
-| 3. **执行** | `vm_apply_plan` 先预览；`confirm=True` 时按顺序执行，某步失败立即停止。每个受门控的步骤都按其自身工具的方式检查；iSCSI/重扫步骤会被拒绝（请用 vmware-storage） |
-| 4. **回滚**（如失败） | 询问用户是否回滚，`vm_rollback_plan` 逆序撤销已执行步骤（不可逆操作跳过）；每个破坏性回滚步骤先经检查，检查拒绝即停止回滚 |
+| 3. **执行** | `apply_vm_plan` 先预览；`confirm=True` 时按顺序执行，某步失败立即停止。每个受门控的步骤都按其自身工具的方式检查；iSCSI/重扫步骤会被拒绝（请用 vmware-storage） |
+| 4. **回滚**（如失败） | 询问用户是否回滚，`rollback_vm_plan` 逆序撤销已执行步骤（不可逆操作跳过）；每个破坏性回滚步骤先经检查，检查拒绝即停止回滚 |
 
 Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小时自动清理。
 
@@ -283,7 +292,7 @@ Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小�
 | 预演模式（Dry-Run，**仅 CLI**） | 加 `--dry-run` 只打印将要发出的 API 调用而不执行；除 `deploy iso`、`deploy mark-template`、`vm cancel-ttl`、`vm guest-download` 外，每个 CLI 写操作都支持 |
 | Plan → Confirm → Execute → Log | CLI 工作流：展示当前状态、确认变更、执行、审计日志 |
 | 双重确认（**仅 CLI**） | 破坏性与部署类 CLI 命令（`vm` power-off, delete, reconfigure, snapshot-revert/delete, clone, migrate, set-ttl, clean-slate, guest-exec, guest-upload; `deploy` ova, template, linked-clone, batch, batch-clone, mark-template; `cluster` delete, add-host, remove-host, configure, drs-rule-set/create/delete; `alarm reset`）需连续两次确认，无绕过参数 |
-| MCP 上只有破坏性工具需要确认 | agent 通过 MCP 看到的 43 个写工具里，22 个（所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具）先预览、需 `confirm=True` 才执行；其余 21 个（创建、克隆、部署、开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、告警）**第一次调用就直接执行**。没有审批分级、没有只读开关。决定一次写入能否落地的是 vCenter 账号的权限，记录它的是审计日志。见[真正保护你的是什么](#真正保护你的是什么) |
+| MCP 上只有破坏性工具需要确认 | agent 通过 MCP 看到的 43 个写工具里，23 个（所有标注为破坏性的工具，加上 `migrate_vm` 和网络/DRS 编写类工具）先预览、需 `confirm=True` 才执行；其余 20 个（创建、克隆、部署、开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、确认告警）**第一次调用就直接执行**。没有审批分级、没有只读开关。决定一次写入能否落地的是 vCenter 账号的权限，记录它的是审计日志。见[真正保护你的是什么](#真正保护你的是什么) |
 | 拒绝记录 | 用户在 CLI 拒绝的操作也会记录到审计日志，便于安全审计 |
 | 审计日志 | 所有操作记录到 `~/.vmware-aiops/audit.log`（JSONL），包含操作前后状态 |
 | 输入校验 | VM 名称长度/格式、CPU（1-128）、内存（128-1048576 MB）、磁盘（1-65536 GB）参数校验 |
@@ -319,14 +328,14 @@ Plan 存储在 `~/.vmware-aiops/plans/`，成功后自动删除，超过 24 小�
 `vm cancel-ttl`、`vm guest-download` 外，每个写操作都可用 `--dry-run` 预览。
 这防的是人手误敲的命令，**防不住 agent**——一个 `yes |` 就能同时满足两次确认。
 
-**MCP 上**，所有标注为破坏性的工具，加上 `vm_migrate` 和网络/DRS 编写类工具——43 个写工具中的 22 个，包括 `vm_power_off`、`vm_migrate`、
-`cluster_delete`，以及快照、guest、TTL、Clean Slate 和计划类工具——都接受同一个参数
+**MCP 上**，所有标注为破坏性的工具，加上 `migrate_vm` 和网络/DRS 编写类工具——43 个写工具中的 23 个，包括 `reset_vcenter_alarm`、`power_off_vm`、`migrate_vm`、
+`delete_cluster`，以及快照、guest、TTL、Clean Slate 和计划类工具——都接受同一个参数
 `confirm`，默认是不写入的预览：不带参数调用只返回影响范围（blast radius），什么都不改。
 `confirm=True` 会重新测量；如果预览发现阻断项（VM 里 VMware Tools 没在运行、目标主机处于
 维护模式、集群里还有主机、快照不存在或重名）或有读不到的字段，调用会被拒绝，返回教学性
-错误并在审计中记为失败。`vm_delete` 还要求把预览里的 `acknowledge_with` 原样传回，
-VM 在预览之后变了、处于开机或挂起状态都会被拒绝。其余 21 个写工具——创建、克隆、部署、
-开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、告警——第一次调用就执行。确认不是授权，所以 `VMWARE_READ_ONLY` 开关依然不恢复
+错误并在审计中记为失败。`delete_vm` 还要求把预览里的 `acknowledge_with` 原样传回，
+VM 在预览之后变了、处于开机或挂起状态都会被拒绝。其余 20 个写工具——创建、克隆、部署、
+开机、改配置、创建快照、加主机、模板与 ISO 操作、guest 下载、创建计划、确认告警——第一次调用就执行。确认不是授权，所以 `VMWARE_READ_ONLY` 开关依然不恢复
 （它只在 MCP 路径上生效，有 shell 的 agent 走 CLI 就绕过去了）。预览换来的东西更窄：
 agent 不会销毁一个它没看过的东西。
 
@@ -339,12 +348,12 @@ skill 内部无法绕过。**想让 agent 只读，就给它一个只读的 vCen
 `environment: production` 的目标的写入。随包附带的基线什么都不拒绝，而且规则与工具
 运行在同一进程内：它是 RBAC 之上的护栏，不是替代品。
 
-**`vm_guest_exec` 是最需要想清楚的那个。** 它用传入的凭据在客户机里执行调用方
+**`run_vm_guest_command` 是最需要想清楚的那个。** 它用传入的凭据在客户机里执行调用方
 给的任意命令——它的 `username` 是必填项（没有默认账号）；没有任何东西限制这条命令的内容。
 **客户机账号是与 vCenter 账号相互独立的第二道授权边界**——一个只读的 vCenter
 角色约束不了这个工具在 VM *内部*做什么。skill 自身不保存客户机凭据：在 MCP 上它们是
 agent 看得到的工具参数（审计行里会脱敏密码）。请传入最小权限的客户机账号，不要把
-agent 用不到的客户机凭据交给它。`vm_guest_upload` 能读取 server 进程可读的任何本地文件。
+agent 用不到的客户机凭据交给它。`upload_vm_guest_file` 能读取 server 进程可读的任何本地文件。
 
 哪些工具有闸门、哪些没有，完整清单见
 [references/capabilities.md](skills/vmware-aiops/references/capabilities.md#what-gates-a-write)；
@@ -358,17 +367,20 @@ agent 用不到的客户机凭据交给它。`vm_guest_upload` 能读取 server 
 vSphere 中 VM 名称区分大小写。请使用 `vmware-monitor inventory vms` 获取准确名称。
 
 ### Guest exec 返回空输出
-使用 `vm_guest_exec_output` 而非 `vm_guest_exec` — 前者自动捕获 stdout/stderr。基础版 `vm_guest_exec` 仅返回退出码。
+使用 `run_vm_guest_command_with_output` 而非 `run_vm_guest_command` — 前者自动捕获 stdout/stderr。基础版 `run_vm_guest_command` 仅返回退出码。
 
 ### 部署 OVA 超时
 大型 OVA 文件（>10GB）可能超过默认 120 秒超时。上传通过 HTTP NFC lease 进行 — 确保运行 vmware-aiops 的机器与 ESXi 之间网络稳定。
 
 ### Plan 执行中途失败
-运行 `vmware-aiops plan list` 查看失败的 plan 状态。询问用户是否使用 `vm_rollback_plan` 回滚。不可逆步骤（delete_vm）在回滚时会跳过。
+运行 `vmware-aiops plan list` 查看失败的 plan 状态。询问用户是否使用 `rollback_vm_plan` 回滚。不可逆步骤（delete_vm）在回滚时会跳过。
 
 ### 连接被拒 / SSL 错误
 1. 验证目标可达：`vmware-aiops doctor`
 2. 自签名证书：在 config.yaml 中设置 `verify_ssl: false`（仅限实验环境）
+
+### `doctor` 报 "no vSphere role"，或所有命令都报 "session is not authenticated"
+账号能登录，但没有任何 vSphere 角色，所以 vCenter 不给它会话（AIops#47）。在 vCenter 根文件夹上给它分配角色（Read-Only 或更高）：Administration > Access Control > Global Permissions。改密码没有用。`vmware-aiops doctor` 会直接报出这种情况，`attention` 也会把这样的目标算作未读取（总体状态至少为 WARN）。
 
 ---
 
@@ -657,6 +669,7 @@ aider --conventions skills/vmware-aiops/SKILL.md --model ollama/qwen2.5-coder:32
 # 环境诊断
 vmware-aiops doctor                   # 检查环境、配置、连通性
 vmware-aiops doctor --skip-auth       # 跳过 vSphere 认证检查（更快）
+vmware-aiops access-info [--tool <mcp-tool>] [--target <name>]  # 当前账号 + 每个工具的权限
 
 # MCP 配置生成
 vmware-aiops mcp-config generate --agent goose        # 生成 Goose 配置
@@ -778,6 +791,71 @@ VMware-AIops/
 如果遇到任何报错或问题，请将错误信息、日志或截图发送至 **zhouwei008@gmail.com**。欢迎加入我们，一起维护和改进这个项目！
 
 If you encounter any errors or issues, please send the error message, logs, or screenshots to **zhouwei008@gmail.com**. Contributions are welcome — feel free to join us in maintaining and improving this project!
+
+<!-- usage: remote-and-exposure -->
+## 远程访问（HTTPS）与限制工具
+
+默认情况下 `vmware-aiops mcp` 通过 stdio 服务一个本地客户端，并提供全部工具。以下两个选项可以改变这一点
+（需 vmware-policy ≥ 1.21.0）。
+
+**通过 HTTPS 提供服务**，让其他机器上的客户端连接。每个调用者都需要一个 bearer token：
+
+```bash
+vmware-audit token create alice          # 只显示一次，交给 alice
+vmware-audit token list                  # 只列名字
+vmware-audit token revoke alice          # 下一个请求起即拒绝，无需重启
+vmware-aiops mcp --transport https --host 0.0.0.0 --port 8443 \
+    --cert /etc/vmware-mcp/server.pem --key /etc/vmware-mcp/server-key.pem \
+    --public-name mcp.example.com
+```
+
+连接客户端（以 Claude Code 为例；任何支持 streamable HTTP 和自定义请求头的 MCP 客户端都可以）：
+
+```bash
+claude mcp add --transport http vmware-aiops https://mcp.example.com:8443/mcp \
+    --header "Authorization: Bearer $VMWARE_MCP_TOKEN"
+```
+
+```json
+{
+  "mcpServers": {
+    "vmware-aiops": {
+      "type": "http",
+      "url": "https://mcp.example.com:8443/mcp",
+      "headers": { "Authorization": "Bearer ${VMWARE_MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+- 没有 token 时服务不会启动；`--public-name` 之外的 Host/Origin 一律拒绝；绑定端口前会自检，确认未认证请求得到 401。
+  证书要用客户端信任、且覆盖这些名字的证书。
+- 在同一台机器上由反向代理终结 TLS 时，用 `--transport http --host 127.0.0.1 --public-name mcp.example.com`，
+  并让代理透传 `Authorization` 头。
+- 负载均衡或网关在另一台机器上时，保持 `--transport https`（自签证书也可以），在 `--public-name` 里写上负载均衡
+  转发时带的 `Host` 名，并让它透传 `Authorization`。健康检查可以用 `GET /healthz`：不需要 token，只返回
+  `{"status": "ok"}`（需 vmware-policy ≥ 1.23.0）。
+- 每个请求带上 `traceparent` 或 `X-Request-ID`，它会记进审计记录；用 `vmware-audit log --correlation-id ID`
+  就能查到平台上某一次请求对应的调用。
+- 会读写本机文件的工具（这里是：虚拟机文件上传/下载、OVA 和部署 spec 文件）永远碰不到本机的配置、token、审计日志和 TLS 私钥；通过网络访问时，
+  除非用 `VMWARE_MCP_FILE_ROOT` 指定一个目录，否则这些工具不能访问本机文件（需 vmware-policy ≥ 1.23.1）。
+- 审计日志把每个调用者记为 `token:<名字>`。调用并行执行，每个 target 最多 `VMWARE_MCP_POOL_SIZE`（默认 2）
+  个会话；每个会话都是在该 target 上的一次登录，一个调用最多等待 300 秒拿到会话。
+- **能连到这个端点的人，都以该 server 配置的账号操作。** token 只用来识别调用者，不在平台上授予任何权限。
+  每个权限级别单独起一个端点。
+- **一个端点给多人或多种角色用：** 先运行一次 `vmware-audit roles enable`，再给每个 token 指定角色（`vmware-audit token create 名字 --role reader`，或在 `roles.yaml` 里定义可用的工具和 target；需 vmware-policy ≥ 1.24.0）。角色只能限定这个 token 在本端点上能调用什么，不能超出账号本身的权限。详见 vmware-policy README 的「网络调用者的角色」一节。
+
+**只提供读工具，加上你选定的写工具：**
+
+```bash
+vmware-aiops mcp --expose read --allow-write acknowledge_vcenter_alarm
+# 或：VMWARE_AIOPS_MCP_EXPOSE=read VMWARE_AIOPS_MCP_ALLOW_WRITE=acknowledge_vcenter_alarm vmware-aiops mcp
+```
+
+未提供的工具不会出现在客户端的工具列表里。取值错误或写工具名不存在时服务直接退出（exit 2）。
+这只限制提供给客户端的工具，不是授权；账号本身仍应遵循最小权限。
+
+详见 `skills/vmware-aiops/references/setup-guide.md`（"Serving MCP over HTTPS"、"Limiting which tools are offered"）。
 
 ## 许可证
 

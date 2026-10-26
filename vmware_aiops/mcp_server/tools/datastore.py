@@ -17,10 +17,10 @@ def browse_datastore(
     pattern: str = "*",
     target: Optional[str] = None,
 ) -> dict:
-    """[READ] Browse files in a vSphere datastore directory.
+    """[READ] Search a vSphere datastore folder and all its subfolders for files.
 
     Use this to find OVA/ISO/VMDK paths before calling deploy_vm_from_ova or
-    attach_iso_to_vm; for an estate-wide image sweep use scan_datastore_images.
+    attach_iso_to_vm; for an estate-wide image sweep use scan_all_datastore_images.
 
     Returns the list envelope: 'items' is one row per file, and
     'returned'/'total'/'truncated' state completeness. Every match in the
@@ -28,7 +28,11 @@ def browse_datastore(
 
     Args:
         datastore_name: Name of the datastore to browse.
-        path: Subdirectory path (empty string for root).
+        path: Datastore-relative folder to start from (empty string for
+            root); a leading '/' or '..' is refused. The search is
+            recursive, so the root returns matches from every folder; each
+            row's ds_path ("[ds] dir/file") can be passed as-is to
+            deploy_vm_from_ova or attach_iso_to_vm.
         pattern: Glob pattern to filter files (e.g. "*.ova", "*.iso", "*").
         target: Optional vCenter/ESXi target name from config.
     """
@@ -39,7 +43,7 @@ def browse_datastore(
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 @vmware_tool(risk_level="low")
 @tool_errors("dict")
-def scan_datastore_images(target: Optional[str] = None) -> dict:
+def scan_all_datastore_images(target: Optional[str] = None) -> dict:
     """[READ] Scan all accessible datastores for deployable images (OVA/ISO/OVF/VMDK).
 
     Returns the images found and refreshes the cache at
@@ -55,8 +59,14 @@ def scan_datastore_images(target: Optional[str] = None) -> dict:
         hint} plus `last_scan`; each item is one image. `images` is kept as a
         deprecated alias for `items`.
     """
+    from vmware_aiops.policy_roles import _target_name
+
     si = _get_connection(target)
-    registry = datastore_browser.update_registry(si)
+    try:
+        name = _target_name(target)
+    except Exception:  # noqa: BLE001 - connect already resolved it; keep what was asked
+        name = target
+    registry = datastore_browser.update_registry(si, target=name)
     # The registry dict is also the ON-DISK format, so it is wrapped here rather
     # than changed at the source. It previously reached the agent as
     # {images, last_scan} with no count and no truncation flag — nothing a model
@@ -66,4 +76,6 @@ def scan_datastore_images(target: Optional[str] = None) -> dict:
     result = paginated(images, limit=None, total=len(images))
     result["images"] = result["items"]
     result["last_scan"] = registry.get("last_scan")
+    if registry.get("cache_note"):
+        result["cache_note"] = registry["cache_note"]
     return result

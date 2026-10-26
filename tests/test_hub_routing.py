@@ -4,7 +4,7 @@ Exercises the per-role routing path without touching pyVmomi, 1Password, the
 MCP request context, or a real vCenter: _create_connection is replaced with a
 fake that records the creds it was handed, and the uaa_hub_routing entry points
 are monkeypatched. Mirrors the veeam/a10 resolver tests; vmware fronts the PROD
-vCenter (backend `vcenter-prod`), syseng-only. aiops is write-capable, so the
+vCenter (backend `vcenter-v9`), syseng-only. aiops is write-capable, so the
 fail-closed guarantee matters most here.
 """
 import pytest
@@ -52,7 +52,7 @@ def test_no_routing_signal_uses_startup_target(cm, monkeypatch):
 
 
 def test_routed_uses_per_role_creds(cm, monkeypatch):
-    monkeypatch.setattr(uaa_hub_routing, "routing_item", lambda *a, **k: "MCP - syseng_elevated - vcenter-prod")
+    monkeypatch.setattr(uaa_hub_routing, "routing_item", lambda *a, **k: "MCP - syseng_elevated - vcenter-v9")
     monkeypatch.setattr(uaa_hub_routing, "resolve_fields",
                         lambda title, **k: {"username": "svc-elev", "password": "elev-pw"})
     si = cm.connect()
@@ -61,7 +61,7 @@ def test_routed_uses_per_role_creds(cm, monkeypatch):
 
 
 def test_routed_caches_per_account(cm, monkeypatch):
-    monkeypatch.setattr(uaa_hub_routing, "routing_item", lambda *a, **k: "MCP - syseng_elevated - vcenter-prod")
+    monkeypatch.setattr(uaa_hub_routing, "routing_item", lambda *a, **k: "MCP - syseng_elevated - vcenter-v9")
     calls = {"n": 0}
 
     def resolve(title, **k):
@@ -76,7 +76,7 @@ def test_routed_caches_per_account(cm, monkeypatch):
 
 
 def test_distinct_accounts_get_distinct_connections(cm, monkeypatch):
-    titles = iter(["MCP - syseng_elevated - vcenter-prod", "MCP - syseng_readonly - vcenter-prod"])
+    titles = iter(["MCP - syseng_elevated - vcenter-v9", "MCP - syseng_readonly - vcenter-v9"])
     monkeypatch.setattr(uaa_hub_routing, "routing_item", lambda *a, **k: next(titles))
     monkeypatch.setattr(uaa_hub_routing, "resolve_fields",
                         lambda title, **k: {"username": title, "password": "p"})
@@ -84,12 +84,12 @@ def test_distinct_accounts_get_distinct_connections(cm, monkeypatch):
     b = cm.connect()
     assert a is not b
     assert {a.user, b.user} == {
-        "MCP - syseng_elevated - vcenter-prod", "MCP - syseng_readonly - vcenter-prod"
+        "MCP - syseng_elevated - vcenter-v9", "MCP - syseng_readonly - vcenter-v9"
     }
 
 
 def test_routed_missing_field_fails_closed(cm, monkeypatch):
-    monkeypatch.setattr(uaa_hub_routing, "routing_item", lambda *a, **k: "MCP - syseng_elevated - vcenter-prod")
+    monkeypatch.setattr(uaa_hub_routing, "routing_item", lambda *a, **k: "MCP - syseng_elevated - vcenter-v9")
     monkeypatch.setattr(uaa_hub_routing, "resolve_fields",
                         lambda title, **k: {"username": "u"})   # password missing
     with pytest.raises(uaa_hub_routing.RoutingError):

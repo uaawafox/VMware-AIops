@@ -79,12 +79,12 @@ vmware-aiops mcp-config generate --agent cursor
 | Category | Tools |
 |----------|-------|
 | Inventory | `list_virtual_machines`, `list_esxi_hosts`, `list_all_datastores`, `list_all_clusters` |
-| Health | `get_alarms`, `get_events`, `vm_info` |
-| VM Lifecycle | `vm_power_on`, `vm_power_off`, `vm_set_ttl`, `vm_cancel_ttl`, `vm_list_ttl`, `vm_clean_slate` |
+| Health | `get_alarms`, `get_events`, `get_vm_info` |
+| VM Lifecycle | `power_on_vm`, `power_off_vm`, `set_vm_ttl`, `cancel_vm_ttl`, `list_vm_ttls`, `restore_vm_clean_slate` |
 | Deployment | `deploy_vm_from_ova`, `deploy_vm_from_template`, `deploy_linked_clone`, `batch_clone_vms` |
-| Guest Operations | `vm_guest_exec`, `vm_guest_exec_output`, `vm_guest_upload`, `vm_guest_download` |
-| Plan → Apply | `vm_create_plan`, `vm_apply_plan`, `vm_rollback_plan`, `vm_list_plans` |
-| Datastore | `browse_datastore`, `scan_datastore_images` |
+| Guest Operations | `run_vm_guest_command`, `run_vm_guest_command_with_output`, `upload_vm_guest_file`, `download_vm_guest_file` |
+| Plan → Apply | `create_vm_plan`, `apply_vm_plan`, `rollback_vm_plan`, `list_vm_plans` |
+| Datastore | `browse_datastore`, `scan_all_datastore_images` |
 
 ## Usage Examples
 
@@ -100,7 +100,7 @@ Found 42 powered-on VMs across 3 clusters.
 ```
 You: Check disk usage on vm-linux01
 
-Cursor: [calls vm_guest_exec_output]
+Cursor: [calls run_vm_guest_command_with_output]
 Filesystem      Size  Used Avail Use%
 /dev/sda1        50G   32G   18G  64%
 /dev/sdb1       200G  180G   20G  90% ← nearing capacity
@@ -110,7 +110,7 @@ Filesystem      Size  Used Avail Use%
 ```
 You: Clone dev-template to create a new VM named test-env-01
 
-Cursor: [calls vm_create_plan, then vm_apply_plan]
+Cursor: [calls create_vm_plan, then apply_vm_plan]
 Plan: clone dev-template → test-env-01
 Executing... ✓ VM deployed successfully.
 ```

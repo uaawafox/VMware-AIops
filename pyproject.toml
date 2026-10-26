@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vmware-aiops"
-version = "1.12.0"
+version = "2.4.2"
 description = "VMware vCenter/ESXi AI-powered VM lifecycle and deployment tool"
 readme = "README.md"
 license = "MIT"
@@ -18,16 +18,12 @@ dependencies = [
     "apscheduler>=3.10,<4.0",
     "httpx>=0.27,<1.0",
     "python-dotenv>=1.0,<2.0",
-    "mcp[cli]>=1.10,<2.0",
-    # <1.23.1: from 1.23.1 the host-path guard refuses pytest's tmp dirs, so an
-    # unpinned CI install went red on 2026-10-18 with no change here (hub runs
-    # 1.17.0). Lift the cap together with the upstream 2.x sync, which carries
-    # the matching test fixtures.
-    "vmware-policy>=1.17.0,<1.23.1",
+    "mcp[cli]>=1.30,<2.0",
+    "vmware-policy>=1.23.1,<2.0",
     # Read-only cluster-health triage (summary + HTML snapshot) is owned by
     # vmware-monitor; AIops delegates to it so a conversation with the AIops
     # entry point can produce the same report without duplicating the code.
-    "vmware-monitor>=1.13.0,<2.0",
+    "vmware-monitor>=2.4.2,<3.0",  # unreadable host != down, login refused -> role error
 ]
 
 

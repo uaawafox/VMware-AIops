@@ -7,6 +7,7 @@ from vmware_policy import vmware_tool
 
 from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
 from vmware_aiops.ops import vm_deploy
+from vmware_aiops.ops.step_policy import authorize_reached, used_by_options
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -25,7 +26,7 @@ def deploy_vm_from_ova(
     """[WRITE] Create a new VM by importing a local .ova file (OVF parse + VMDK upload).
 
     Use for local OVA files; for vSphere templates use deploy_vm_from_template, to
-    copy an existing VM vm_clone. Returns a status string naming the new VM. Upload
+    copy an existing VM clone_vm. Returns a status string naming the new VM. Upload
     time scales with OVA size; fails before creating anything if the datastore is
     not found.
 
@@ -33,12 +34,16 @@ def deploy_vm_from_ova(
         ova_path: Local path to the .ova file (must be readable by this server).
         vm_name: Name for the new VM; must not already exist.
         datastore_name: Target datastore (see browse_datastore).
-        network_name: Port group for the NICs (default "VM Network").
+        network_name: Port group every network in the OVF is mapped to (default
+            "VM Network"). Refused before anything is imported if no network, or
+            more than one, has this name in the datacenter.
         folder_path: vCenter folder path; omit for the datacenter root.
         power_on: Power the VM on after import (default False).
         snapshot_name: If set, snapshots the new VM with this name.
         target: vCenter/ESXi target from config.yaml; omit for the default.
     """
+    authorize_reached("deploy_vm_from_ova", {"vm_name": vm_name}, target, used=used_by_options(
+        (), snapshot=bool(snapshot_name), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.deploy_ova(
         si, ova_path=ova_path, vm_name=vm_name,
@@ -59,12 +64,13 @@ def deploy_vm_from_template(
     memory_mb: Optional[int] = None,
     power_on: bool = False,
     snapshot_name: Optional[str] = None,
+    target_host: Optional[str] = None,
     target: Optional[str] = None,
 ) -> str:
     """[WRITE] Deploy a new VM by cloning from a vSphere template.
 
     Returns a status string. Use for VMs marked as templates; for a running
-    source VM use vm_clone. Requires an existing template —
+    source VM use clone_vm. Requires an existing template —
     convert_vm_to_template makes one.
 
     Args:
@@ -75,13 +81,18 @@ def deploy_vm_from_template(
         memory_mb: Override memory in MB (optional).
         power_on: Power on after deployment.
         snapshot_name: Snapshot the new VM with this name.
+        target_host: ESXi host to place the VM on (list_esxi_hosts); omit to
+            use the template's host and its resource pool.
         target: Optional vCenter/ESXi target from config.
     """
+    authorize_reached("deploy_vm_from_template", {"vm_name": new_name}, target,
+                      used=used_by_options((), reconfigure=cpu is not None or memory_mb is not None,
+                                           snapshot=bool(snapshot_name), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.deploy_from_template(
         si, template_name=template_name, new_name=new_name,
         datastore_name=datastore_name, cpu=cpu, memory_mb=memory_mb,
-        power_on=power_on, snapshot_name=snapshot_name,
+        power_on=power_on, snapshot_name=snapshot_name, target_host=target_host,
     )
 
 
@@ -102,12 +113,12 @@ def deploy_linked_clone(
 
     The clone writes to a copy-on-write delta over the source's base disk, so it
     depends on the source staying intact. Fastest provisioning for test/dev fleets;
-    use vm_clone for fully independent copies. Requires the named snapshot — run
-    vm_list_snapshots first. Returns a status string with the new clone name.
+    use clone_vm for fully independent copies. Requires the named snapshot — run
+    list_vm_snapshots first. Returns a status string with the new clone name.
 
     Args:
         source_vm_name: Source VM name (must have at least one snapshot).
-        snapshot_name: Clone base (from vm_list_snapshots).
+        snapshot_name: Clone base (from list_vm_snapshots).
         new_name: Name for the new linked clone; must not already exist.
         cpu: Override vCPU count; omit to keep the source's value.
         memory_mb: Override memory in MB; omit to keep the source's value.
@@ -115,6 +126,9 @@ def deploy_linked_clone(
         baseline_snapshot: If set, snapshots the new clone with this name.
         target: vCenter/ESXi target from config.yaml; omit for the default.
     """
+    authorize_reached("deploy_linked_clone", {"vm_name": new_name}, target,
+                      used=used_by_options((), reconfigure=cpu is not None or memory_mb is not None,
+                                           snapshot=bool(baseline_snapshot), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.linked_clone(
         si, source_vm_name=source_vm_name, new_name=new_name,
@@ -198,6 +212,11 @@ def batch_clone_vms(
         power_on: Power on each clone after creation.
         target: Optional vCenter/ESXi target name from config.
     """
+    authorize_reached("batch_clone_vms",
+                      {"source_vm_name": source_vm_name, "vm_names": vm_names}, target,
+                      used=used_by_options({"clone_vm"},
+                                           reconfigure=cpu is not None or memory_mb is not None,
+                                           snapshot=bool(snapshot_name), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.batch_clone(
         si, source_vm_name=source_vm_name, vm_names=vm_names,
@@ -226,7 +245,7 @@ def batch_linked_clone_vms(
 
     Args:
         source_vm_name: Source VM to clone from.
-        snapshot_name: Clone base (from vm_list_snapshots).
+        snapshot_name: Clone base (from list_vm_snapshots).
         vm_names: Names for the new linked clones.
         cpu: Override CPU count (optional).
         memory_mb: Override memory (optional).
@@ -234,6 +253,11 @@ def batch_linked_clone_vms(
         baseline_snapshot: Snapshot each clone with this name (optional).
         target: Optional vCenter/ESXi target from config.
     """
+    authorize_reached("batch_linked_clone_vms",
+                      {"source_vm_name": source_vm_name, "vm_names": vm_names}, target,
+                      used=used_by_options({"deploy_linked_clone"},
+                                           reconfigure=cpu is not None or memory_mb is not None,
+                                           snapshot=bool(baseline_snapshot), power_on=power_on))
     si = _get_connection(target)
     return vm_deploy.batch_linked_clone(
         si, source_vm_name=source_vm_name, snapshot_name=snapshot_name,
@@ -252,7 +276,7 @@ def batch_deploy_from_spec(
     """[WRITE] Deploy multiple VMs in one call from a declarative YAML spec file.
 
     Use for fleet provisioning (several VMs, shared defaults); for a single VM prefer
-    deploy_vm_from_template, vm_clone, deploy_vm_from_ova, or deploy_linked_clone.
+    deploy_vm_from_template, clone_vm, deploy_vm_from_ova, or deploy_linked_clone.
     The channel is chosen by spec keys: "source" (full clone), "template",
     "linked_clone: {source, snapshot}", per-VM "ova", else empty-VM creation
     (optionally "iso"). A "defaults" block sets cpu/memory_mb/disk_gb/network/
@@ -266,5 +290,6 @@ def batch_deploy_from_spec(
     Returns:
         One dict per VM: name, status ("ok" or "error"), and messages with per-step results.
     """
+    authorize_reached("batch_deploy_from_spec", {"spec_path": spec_path}, target)
     si = _get_connection(target)
     return vm_deploy.batch_deploy(si, spec_path)

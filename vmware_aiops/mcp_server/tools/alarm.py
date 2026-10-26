@@ -5,7 +5,13 @@ from typing import Optional
 from vmware_policy import vmware_tool
 
 from vmware_aiops.mcp_server._shared import _get_connection, mcp, tool_errors
-from vmware_aiops.ops.alarm_mgmt import acknowledge_alarm, list_alarms, reset_alarm
+from vmware_aiops.ops.alarm_mgmt import (
+    acknowledge_alarm,
+    list_alarms,
+    measure_reset,
+    reset_alarm,
+)
+from vmware_aiops.ops.gate import preview, refuse_on
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
@@ -63,12 +69,13 @@ def acknowledge_vcenter_alarm(
     return acknowledge_alarm(si, entity_name, alarm_name, target_name=target or "default")
 
 
-@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
 @vmware_tool(risk_level="medium")
 @tool_errors("dict")
 def reset_vcenter_alarm(
     entity_name: str,
     alarm_name: str,
+    confirm: bool = False,
     target: Optional[str] = None,
 ) -> dict:
     """[WRITE] Clear triggered vCenter alarms back to normal state.
@@ -77,15 +84,28 @@ def reset_vcenter_alarm(
     use acknowledge_vcenter_alarm instead. Get entity_name and alarm_name from
     list_vcenter_alarms first.
 
-    Gotcha: vSphere has no per-alarm clear — this clears ALL triggered alarms
-    matching the named alarm's entity type (host/VM/all) and current status
-    (red/yellow), so confirm the blast radius with the user first. Returns a
-    dict whose 'scope' field states exactly what was cleared.
+    vSphere has no per-alarm clear: this clears EVERY triggered alarm with the
+    named alarm's status (red/yellow) on its entity type (host/VM/all), usually
+    more than the one named. Without confirm=True this only previews: it returns
+    blast_radius with will_clear_count and the alarms it would clear, and changes
+    nothing. Show it to the user and get their decision; do not set confirm=True
+    on your own. Refused when the list of alarms cannot be read.
 
     Args:
         entity_name: Name of the entity with the alarm (VM name, host name, or cluster name).
         alarm_name: Exact alarm definition name from list_vcenter_alarms output.
+        confirm: False (default) returns the blast radius and changes nothing. True clears.
         target: Optional vCenter target name from config.
+
+    Returns:
+        Dict with action (preview, reset), blast_radius, and on reset the scope cleared.
     """
     si = _get_connection(target)
-    return reset_alarm(si, entity_name, alarm_name, target_name=target or "default")
+    radius, filter_spec = measure_reset(si, entity_name, alarm_name)
+    if not confirm:
+        return preview(radius)
+    refuse_on(radius, "reset_vcenter_alarm")
+    result = reset_alarm(
+        si, entity_name, alarm_name, target_name=target or "default", filter_spec=filter_spec
+    )
+    return {**result, "blast_radius": radius}

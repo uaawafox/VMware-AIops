@@ -128,6 +128,11 @@ def _check_env_permissions() -> None:
 _check_env_permissions()
 
 
+
+class UnknownTargetError(KeyError):
+    """A target name that is not in config.yaml. A KeyError, as callers expect,
+    but its own type so the MCP hint can tell it from a programming slip."""
+
 class ConfigError(OSError):
     """A configuration problem the operator can fix, safe to show an agent.
 
@@ -225,9 +230,9 @@ class AppConfig:
             if t.name == name:
                 return t
         available = ", ".join(t.name for t in self.targets)
-        raise KeyError(
+        raise UnknownTargetError(
             f"Target '{name}' not found. Available: {available}. "
-            f"Pass --target with one of those names, or add the target to "
+            f"Pass target=<one of those names> (CLI: --target), or add the target to "
             f"{CONFIG_FILE} and re-run."
         )
 

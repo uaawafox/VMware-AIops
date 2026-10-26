@@ -235,6 +235,11 @@ def test_deploy_ova_maps_device_urls_by_importkey_out_of_order() -> None:
 
     content = MagicMock()
     content.ovfManager.CreateImportSpec.return_value = import_spec_result
+    # A descriptor that parses cleanly and declares no networks (mapping is
+    # covered in test_ova_network_mapping.py).
+    content.ovfManager.ParseDescriptor.return_value = SimpleNamespace(
+        error=None, warning=None, network=[]
+    )
     si = MagicMock()
     si.RetrieveContent.return_value = content
 

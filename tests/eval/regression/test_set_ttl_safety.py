@@ -19,6 +19,18 @@ from typer.testing import CliRunner
 from vmware_aiops.cli import app
 
 
+@pytest.fixture(autouse=True)
+def _measured_vm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """set-ttl measures the VM first (instance UUID, power state), as the MCP tool does."""
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr("vmware_aiops.cli.vm._get_connection",
+                        lambda *a, **k: (MagicMock(), MagicMock()))
+    monkeypatch.setattr("vmware_aiops.ops.ttl.measure_ttl",
+                        lambda si, n, m: {"instance_uuid": "uuid-lab", "power_state": "poweredOff",
+                                          "blockers": [], "unmeasured": []})
+
+
 def _patch_ttl_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point the TTL store at an isolated temp file."""
     from vmware_aiops.ops import ttl

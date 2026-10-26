@@ -12,7 +12,7 @@ exist because of VMware-AIops issue #31, where a model handed a bare list
 the model back in the position of guessing, which is what the envelope was
 introduced to stop.
 
-`scan_datastore_images` was worse: `{images, last_scan}`, with no count at all.
+`scan_all_datastore_images` was worse: `{images, last_scan}`, with no count at all.
 
 The old keys are kept as deprecated aliases so nothing that reads them breaks.
 """
@@ -59,8 +59,8 @@ class TestScannedImages:
         from vmware_aiops.mcp_server.tools import datastore as dt
 
         monkeypatch.setattr(dt, "_get_connection", lambda target: object())
-        monkeypatch.setattr(dt.datastore_browser, "update_registry", lambda si: registry)
-        return dt.scan_datastore_images.__wrapped__(target=None)
+        monkeypatch.setattr(dt.datastore_browser, "update_registry", lambda si, **_k: registry)
+        return dt.scan_all_datastore_images.__wrapped__(target=None)
 
     def test_returns_the_envelope_when_nothing_was_found(self, monkeypatch):
         """The empty path reached the agent as {images: [], last_scan: None} —
