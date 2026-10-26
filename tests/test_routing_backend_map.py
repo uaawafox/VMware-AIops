@@ -139,3 +139,35 @@ def test_target_name_containing_the_key_separator_still_works(monkeypatch):
     assert created == ["site#1", "site#1"]
     cm.disconnect("site#1")
     assert cm.list_connected() == []
+
+
+def test_target_named_like_a_routed_key_cannot_alias_it(monkeypatch):
+    """A target whose NAME equals another target's routed key text must get
+    its own session, never the elevated one (and vice versa)."""
+    item = "MCP - syseng_elevated - vcenter-v9"
+    evil = f"uaa-vcenter#{item}"
+    created = []
+    routed = {"on": True}
+    fake_lib = types.SimpleNamespace(
+        routing_item=lambda backend, sel: item if routed["on"] else None,
+        resolve_fields=lambda i: {"username": "svc-elev", "password": "pw"},
+        RoutingError=_RoutingError,
+    )
+    monkeypatch.setattr(conn_mod, "uaa_hub_routing", fake_lib, raising=False)
+    monkeypatch.setattr(conn_mod, "_HUB_ROUTING", True)
+    monkeypatch.setattr(conn_mod, "_VCENTER_SELECTOR", object(), raising=False)
+    monkeypatch.setattr(
+        conn_mod.ConnectionManager, "_create_connection",
+        staticmethod(lambda t, *, user=None, pwd=None: (created.append((t.name, user)), FakeSI(user or t.username))[1]),
+    )
+    live = TargetConfig(name="uaa-vcenter", host="vc.example", config_username="startup", verify_ssl=True)
+    other = TargetConfig(name=evil, host="vc2.example", config_username="other-startup", verify_ssl=True)
+    cm = conn_mod.ConnectionManager(AppConfig(targets=(live, other)))
+    elevated = cm.connect("uaa-vcenter")           # routed session on the live host
+    routed["on"] = False
+    plain = cm.connect(evil)                       # unrouted session on the other host
+    assert plain is not elevated
+    assert plain.user == "other-startup"
+    assert elevated.user == "svc-elev"
+    assert created == [("uaa-vcenter", "svc-elev"), (evil, None)]
+    assert sorted(cm.list_connected()) == sorted(["uaa-vcenter", evil])

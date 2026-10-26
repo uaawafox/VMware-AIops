@@ -76,7 +76,8 @@ def rig(monkeypatch):
 def test_routed_key_shape(rig):
     cm, _, _ = rig
     cm.connect()
-    assert cm.list_connected() == [f"uaa-vcenter#{ITEM}"]
+    assert cm._pool.keys() == [f"r:uaa-vcenter#{ITEM}"]
+    assert cm.list_connected() == ["uaa-vcenter"]
 
 
 def test_live_routed_session_is_reused(rig):
@@ -104,7 +105,8 @@ def test_unrouted_caller_never_gets_the_routed_session(rig):
     plain_si = cm.connect()
     assert plain_si is not routed_si
     assert created[-1] == (None, None)            # startup credential path
-    assert sorted(cm.list_connected()) == ["uaa-vcenter", f"uaa-vcenter#{ITEM}"]
+    assert sorted(cm._pool.keys()) == [f"r:uaa-vcenter#{ITEM}", "t:uaa-vcenter"]
+    assert cm.list_connected() == ["uaa-vcenter"]
 
 
 def test_disconnect_drops_routed_keys_too(rig):
