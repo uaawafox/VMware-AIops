@@ -51,7 +51,7 @@ def downloadable(monkeypatch):
     transfer = MagicMock()
     transfer.url = "https://esxi.example.com/guestFile?id=1"
     vm = MagicMock()
-    monkeypatch.setattr(guest_ops, "_require_vm_with_tools", lambda si, name: vm)
+    monkeypatch.setattr(guest_ops, "_require_vm_with_tools", lambda si, name, **_k: vm)
     monkeypatch.setattr(guest_ops, "get_verify_ssl", lambda si: True)
     si = MagicMock()
     si.RetrieveContent().guestOperationsManager.fileManager.InitiateFileTransferFromGuest = (

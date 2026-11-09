@@ -1,3 +1,41 @@
+## v2.4.6 — Recheck TTL identity at final deletion lookup
+
+Released 2026-11-09.
+
+* Bind TTL expiry deletion to the recorded VM instance UUID at the final lookup, before power-off or destruction. A same-name replacement is refused, audited as an error, and its stale TTL entry is removed.
+
+## v2.4.5 — Security documentation and Gemini extension packaging
+
+Released 2026-11-09.
+
+Clarify actual capability, credential, local-write and transport boundaries where applicable.
+Pin documented setup/fallback tools and make credential examples owner-only before writing,
+without overwriting existing files. Runtime permissions, TLS defaults and approval behavior are unchanged.
+These edits do not establish a new ClawHub scan verdict.
+
+Add the root Gemini CLI extension manifest and discovery metadata, using the existing canonical skill and exact MCP package version. No duplicate skill entrypoint is introduced.
+
+Runtime infrastructure operations, permissions, TLS defaults and confirmation behavior are unchanged. No new vSphere/VCF 9.x or live product compatibility is claimed. ClawHub skill and bundle verdicts are checked separately after publication; documentation corrections are not a clean-scan claim.
+
+## v2.4.4 — minimize notification and audit secrets (2026-11-08)
+
+* Update public author/project contact metadata to `zhouwei008@gmail.com`.
+
+### notification secret minimization
+* Webhook status/transport logs and unexpected scan/send audit failures retain HTTP status or exception class without raw response/exception text. Connection-failure notifications no longer forward raw exceptions that can contain credential-bearing URLs or opaque tokens.
+
+### scope declaration
+* Explicitly declare the existing datastore browsing/image discovery, multi-alarm reset and user-started scanning/TTL daemon capabilities in the canonical skill description and both READMEs. Runtime behavior, permission boundaries and risk disclosures are unchanged.
+
+
+## v2.4.3 — bind confirmed writes to measured identities; reject ambiguous inventory names (2026-11-08)
+
+* **Confirmed MCP writes re-check the identities measured during that call.** The eight confirm-gated VM and snapshot tools pass the current blast-radius measurement's VM instance UUID and snapshot id into execution, refusing a replacement object found by the executor. Each `confirm=True` invocation measures afresh; the separate earlier preview supplies no identity token. The existing `delete_vm` acknowledgement requirement is unchanged, as are the CLI and plan-executor paths (AIops#49).
+* **Missing objects in delegated investigation tools keep their remedy.** VM, host and datastore lookup errors from vmware-monitor retain the exact-name/listing guidance through AIops MCP and are classified as request errors; unexpected delegate failures remain reduced to their type.
+* **Ambiguous host, cluster, datastore and datacenter names are refused.** A lookup that finds more than one match raises `AmbiguousNameError` with the matching managed-object ids; plan prechecks and CLI output expose the ambiguity instead of selecting the first result (AIops#48).
+* The image-cache and TTL cross-process file lock is exercised on a real Windows GitHub Actions runner: four concurrent writers retain every row, a held lock times out with the lock path, and the lock is released after the holder exits (AIops#51).
+* Require certifi 2026.10.19 or later to exclude the compromised emSign root CA from the TLS trust bundle (GHSA-6q48-6c7w-9gw2). The development lock resolves 2026.10.23 (AIops#53).
+
 ## v2.4.2 — a login refused for lack of a role says so; an unreadable host is not called unreachable (2026-10-19)
 
 Needs vmware-monitor 2.4.2 (now the floor). Found on a vCenter 8.0.3 lab with two restricted SSO accounts
@@ -1944,7 +1982,7 @@ This release tracks vmware-pilot v1.5.17 (new `investigate_alert` template + `re
 - **[READ]/[WRITE] tool prefixes**: All MCP tool descriptions now start with [READ] or [WRITE] to clearly indicate operation type
 - **Read/write split counts**: SKILL.md MCP Tools section header shows exact read vs write tool counts
 - **Negative routing**: Description frontmatter includes "Do NOT use when..." clause to prevent misrouting
-- **Broadcom author attestation**: README.md, README-CN.md, and pyproject.toml include VMware by Broadcom author identity (wei-wz.zhou@broadcom.com) to resolve Snyk E005 brand warnings
+- **Broadcom author attestation**: README.md, README-CN.md, and pyproject.toml include VMware by Broadcom author identity (zhouwei008@gmail.com) to resolve Snyk E005 brand warnings
 
 ### AIops-specific
 
