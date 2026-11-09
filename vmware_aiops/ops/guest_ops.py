@@ -233,6 +233,7 @@ def guest_exec_with_output(
         si, vm_name, program, username, password,
         arguments=shell_arg,
         timeout=timeout,
+        expect_instance_uuid=expect_instance_uuid,
     )
     exit_code = result["exit_code"]
     timed_out = result["timed_out"]
@@ -243,7 +244,8 @@ def guest_exec_with_output(
         local_tmp = tf.name
 
     try:
-        guest_download(si, vm_name, tmp_out, local_tmp, username, password)
+        guest_download(si, vm_name, tmp_out, local_tmp, username, password,
+                       expect_instance_uuid=expect_instance_uuid)
         with open(local_tmp, "r", encoding="utf-8", errors="replace") as f:
             stdout = f.read()
     except Exception as e:
@@ -258,10 +260,12 @@ def guest_exec_with_output(
         try:
             if family == _FAMILY_WINDOWS:
                 guest_exec(si, vm_name, "C:\\Windows\\System32\\cmd.exe",
-                           username, password, arguments=f"/c del {tmp_out}")
+                           username, password, arguments=f"/c del {tmp_out}",
+                           expect_instance_uuid=expect_instance_uuid)
             else:
                 guest_exec(si, vm_name, "/bin/sh", username, password,
-                           arguments=f"-c 'rm -f {tmp_out}'")
+                           arguments=f"-c 'rm -f {tmp_out}'",
+                           expect_instance_uuid=expect_instance_uuid)
         except Exception:
             pass
 
@@ -595,6 +599,7 @@ def guest_download(
     username: str,
     password: str,
     overwrite: bool = False,
+    expect_instance_uuid: str | None = None,
 ) -> str:
     """Download a file from a VM to the local machine via VMware Tools.
 
@@ -620,7 +625,7 @@ def guest_download(
     # paid for the guest read and the HTTPS GET to then throw the bytes away.
     _check_download_destination(local_path, overwrite=overwrite)
 
-    vm = _require_vm_with_tools(si, vm_name)
+    vm = _require_vm_with_tools(si, vm_name, expect_instance_uuid=expect_instance_uuid)
     content = si.RetrieveContent()
     gom = content.guestOperationsManager
     fm = gom.fileManager
