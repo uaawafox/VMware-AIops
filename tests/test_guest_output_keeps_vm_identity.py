@@ -64,7 +64,8 @@ def test_every_nested_call_carries_the_expected_uuid(monkeypatch):
 
     monkeypatch.setattr(guest_ops, "guest_exec", spy_exec)
     monkeypatch.setattr(guest_ops, "guest_download", spy_download)
-    guest_ops.guest_exec_with_output(object(), "web-01", "id", "ops", "pw", expect_instance_uuid="uuid-A")
+    guest_ops.guest_exec_with_output(
+        object(), "web-01", "id", "ops", "pw", expect_instance_uuid="uuid-A")
     assert [kind for kind, _ in seen] == ["exec", "download", "exec"]
     assert all(u == "uuid-A" for _, u in seen), seen
 
@@ -75,6 +76,7 @@ def test_cli_path_without_a_measured_uuid_is_unchanged(monkeypatch):
     monkeypatch.setattr(guest_ops, "guest_exec",
                         lambda *a, **k: seen.append(k.get("expect_instance_uuid"))
                         or {"exit_code": 0, "timed_out": False})
-    monkeypatch.setattr(guest_ops, "guest_download", lambda *a, **k: seen.append(k.get("expect_instance_uuid")))
+    monkeypatch.setattr(guest_ops, "guest_download",
+                        lambda *a, **k: seen.append(k.get("expect_instance_uuid")))
     guest_ops.guest_exec_with_output(object(), "web-01", "id", "ops", "pw")
     assert seen == [None, None, None]
