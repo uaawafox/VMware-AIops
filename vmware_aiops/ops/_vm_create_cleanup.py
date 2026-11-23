@@ -1,4 +1,7 @@
-"""Remove the directory a failed CreateVM_Task leaves behind, and nothing else.
+"""Report the directory a failed CreateVM_Task leaves behind.
+
+UAA fork: this module only reports; it never deletes (see cleanup_failed_create).
+The text below describes upstream's removal rules, kept for the next sync.
 
 A failed ``CreateVM_Task`` can leave an empty ``[ds] <name>/`` directory on
 the datastore (issue #69, standalone ESXi 8.0.1). create_vm removes it only
@@ -87,12 +90,12 @@ def cleanup_failed_create(si, datacenter, ds, ds_name: str | None, vm_name: str,
     if entries:
         return (f"The failed create left '{dir_path}/' with {len(entries)} file(s); it was "
                 "not removed automatically. Inspect and delete it before retrying.")
-    try:
-        wait(si.content.fileManager.DeleteDatastoreFile_Task(name=dir_path, datacenter=datacenter),
-             timeout=_PROBE_TIMEOUT_S)
-    except Exception as exc:  # noqa: BLE001 — report it; the create already failed
-        log.warning("create_vm: could not remove empty %s/: %s", dir_path, exc)
-        return (f"The failed create left an empty '{dir_path}/' directory and create_vm "
-                "could not remove it; delete it before retrying with the same name.")
-    log.info("create_vm: removed empty %s/ left by a failed create", dir_path)
-    return f"Removed the empty '{dir_path}/' directory the failed create left behind."
+    # UAA fork: report, never delete. "Absent before, empty after" does not show
+    # the directory is this create's own: a concurrent create of the same name
+    # can make '<name>/' after the probe (this one then gets '<name>_1/'), and
+    # its directory is empty until its .vmx lands. Deleting here could remove
+    # another create's directory mid-flight. Upstream removes it at this point.
+    log.info("create_vm: empty %s/ left after a failed create; not removed", dir_path)
+    return (f"The failed create left an empty '{dir_path}/' directory; it was not removed "
+            "automatically. Check it is this create's own and delete it before retrying "
+            "with the same name.")

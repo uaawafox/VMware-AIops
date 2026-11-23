@@ -179,14 +179,18 @@ def test_cli_accepts_disk_zero_and_rejects_negative():
 # ─── Cleanup after a failed create ───────────────────────────────────────────
 
 
-def test_failed_create_removes_the_empty_directory_it_left(monkeypatch):
+def test_failed_create_reports_the_empty_directory_and_never_deletes_it(monkeypatch):
+    # UAA fork: absent-before plus empty-after does not prove ownership (a
+    # concurrent same-name create owns '<name>/' while this one got '<name>_1/').
     host = FakeHost(monkeypatch, create_fails=True, before=None, after=[])
     with pytest.raises(vm_lifecycle.TaskFailedError) as exc:
         _create(host)
-    assert host.deleted == ["[datastore1] probe"]
+    assert host.deleted == []
+    host.si.content.fileManager.DeleteDatastoreFile_Task.assert_not_called()
     message = str(exc.value)
     assert "InvalidDeviceSpec" in message
-    assert "Removed the empty '[datastore1] probe/'" in message
+    assert "left an empty '[datastore1] probe/'" in message
+    assert "not removed" in message
 
 
 def test_failed_create_with_nothing_left_behind_deletes_nothing(monkeypatch):
@@ -230,7 +234,8 @@ def test_failed_cleanup_keeps_the_original_error(monkeypatch):
         _create(host)
     message = str(exc.value)
     assert "InvalidDeviceSpec" in message
-    assert "could not remove" in message
+    assert host.deleted == []
+    assert "not removed" in message
 
 
 def test_only_the_vm_directory_is_probed_never_the_datastore_root(monkeypatch):
