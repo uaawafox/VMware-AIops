@@ -220,9 +220,8 @@ def create_vm(
     TaskFailedError.
 
     ``disk_gb=0`` creates the VM without a disk (a cheap write probe). When
-    the create task fails, the empty VM directory it left is removed if this
-    call can show the directory is its own (see ``_vm_create_cleanup``);
-    otherwise the error says what to check.
+    the create task fails, the error names any VM directory it left and what
+    to check (see ``_vm_create_cleanup``); the UAA fork never deletes it.
     """
     if isinstance(disk_gb, bool) or not isinstance(disk_gb, int) or not 0 <= disk_gb <= 65_536:
         raise ValueError(

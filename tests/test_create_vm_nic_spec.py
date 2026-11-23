@@ -235,6 +235,7 @@ def test_failed_cleanup_keeps_the_original_error(monkeypatch):
     message = str(exc.value)
     assert "InvalidDeviceSpec" in message
     assert host.deleted == []
+    host.si.content.fileManager.DeleteDatastoreFile_Task.assert_not_called()
     assert "not removed" in message
 
 

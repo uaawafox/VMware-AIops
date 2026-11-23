@@ -157,8 +157,8 @@ def create_vm(
     To populate it, attach an ISO (attach_iso_to_vm) and power it on, or use
     deploy_vm_from_ova or clone_vm for a ready-to-run guest. Fails before
     creating anything if the datastore is not found. If the create task fails
-    and datastore_name was given, an empty VM directory it provably left is
-    removed; otherwise the error names what to check. Returns a status string
+    and datastore_name was given, the error names any VM directory left behind
+    and what to check; nothing is deleted automatically. Returns a status string
     with the new VM name.
 
     Args:
