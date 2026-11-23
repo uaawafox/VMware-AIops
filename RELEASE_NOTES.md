@@ -1,8 +1,51 @@
+## v2.5.3 (2026-11-19) — Compatible MCP result contracts
+
+Add next_offset to offset-capable listings while retaining existing field names, flags and hints. Requires vmware-policy>=1.26.0. No confirmation bypass or page-default change.
+
+中文：支持 offset 的列表新增 next_offset，保留旧字段名、标记和提示。依赖 vmware-policy>=1.26.0；不增加确认绕过、不改变分页默认值。
+
+## v2.5.2 (2026-11-16) — create VM datastore layout
+
+* With an explicit datastore, pass only `[datastore]` as the create location.
+  vSphere appends the VM directory itself; adding the VM name twice created
+  `<name>/<name>/`, leaving an empty outer directory after VM deletion (#69).
+  This fixes the layout of newly created VMs, not existing nested directories.
+* Clarify the Monitor `vm info` command, MAC assignment possibly at first
+  power-on, VMware Tools versus forced power-off, and interactive CLI
+  confirmations. No `--yes` bypass is added.
+
+中文：显式指定 datastore 时只传 `[datastore]`，由 vSphere 创建 VM 目录，避免双层目录及删除后残留外层空目录；不清理已有双层目录。补充 Monitor 信息查询、MAC 分配时机、Tools/强制关机和交互确认说明，未增加 `--yes` 绕过参数。
+
+## v2.5.1 (2026-11-15) — create_vm on standalone ESXi, diskless creates, cleanup after a failed create
+
+Fixes [#69](https://github.com/vmware-skills/VMware-AIops/issues/69), reported on standalone ESXi 8.0.1.
+
+* `create_vm` no longer sets `addressType="assigned"` on the vNIC. With no MAC supplied, standalone ESXi 8.0.1 rejected every create as `InvalidDeviceSpec`; the host now generates the MAC. CLI and MCP share the fix.
+* `disk_gb=0` (CLI `--disk 0`) creates the VM without a disk, a cheap write-permission probe. `create_vm` validates `disk_gb` (whole number, 0-65536) for every entry point, including batch deploy specs.
+* After a failed create, the empty `[datastore] <name>/` directory it left is removed with `FileManager.DeleteDatastoreFile_Task`, but only when it is provably this create's: plain name, absent just before the create, empty after. Anything else is reported in the error, never deleted.
+* `TaskFailedError.fault` keeps the vSphere fault object.
+
+Validation at release: 1301 tests (26 for these changes), ruff and bandit.
+Follow-up: the reporter confirmed the NIC fix and diskless creation on the
+original standalone ESXi 8.0.1 build 21495797 host in #69 on 2026-11-16.
+The subsequent nested-directory and CLI observations are addressed/tracked
+separately; this confirmation is not validation of the unreleased path fix.
+
+中文：修复单机 ESXi 8.0.1 上 `create_vm` 因网卡 `addressType="assigned"` 全部失败的问题；支持 `--disk 0` 无磁盘创建；创建失败后仅在能确认目录属于本次创建（名称普通、创建前不存在、失败后为空）时自动删除空目录，其余情况只在报错中说明。
+
 ## v2.4.6 — Recheck TTL identity at final deletion lookup
 
 Released 2026-11-09.
 
 * Bind TTL expiry deletion to the recorded VM instance UUID at the final lookup, before power-off or destruction. A same-name replacement is refused, audited as an error, and its stale TTL entry is removed.
+
+## v2.5.0 (2026-11-10) — Enforce backend resize limits and preserve denial audit
+
+Require Policy 1.25.0; enforce configured CPU/memory percentage changes from the final resolved VM configuration and bind ConfigSpec.changeVersion. Refuse missing/invalid required facts before a task. Preserve backend Policy denials through MCP error handling. Extract snapshot/task/VMkernel helpers and guest CLI callbacks without changing the public tool schema.
+
+Validation: existing suites, complete CLI/MCP surface comparison, structural guard checks and security scanning; exact results are retained in the private release record. Live 9.1/Supervisor, PAIS, NSX and Horizon validation is not established by synthetic tests.
+
+中文：本轮修复和重构范围见上述说明；保留既有 Policy、审计及确认门。合成测试不代表 9.1/Supervisor、PAIS、NSX 或 Horizon 正向真机验证。
 
 ## v2.4.5 — Security documentation and Gemini extension packaging
 
